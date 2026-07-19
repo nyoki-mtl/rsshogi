@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-19
+
 ### Added
 
 - Rust crate `rsshogi` for board state, move generation, records, book formats, and training-data formats.
@@ -14,3 +16,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Compatibility
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
+
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.0
