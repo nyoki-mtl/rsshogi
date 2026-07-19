@@ -1,0 +1,22 @@
+# Perft Test Results from YaneuraOu
+# Format: <position_name> | <depth> | <nodes>
+
+# Startpos (initial position) - depths 1-6
+startpos | 1 | 30
+startpos | 2 | 900
+startpos | 3 | 25470
+startpos | 4 | 719731
+startpos | 5 | 19861490
+startpos | 6 | 547581517
+
+# Complex midgame position (YaneuraOu benchmark tactical)
+bench_tactical | 3 | 4809015
+
+# Complex midgame position (YaneuraOu benchmark midgame1)
+bench_midgame1 | 2 | 15850
+
+# Pin/check scenario (used in rsshogi tests)
+pin_checker_test | 3 | 1183354
+
+# Opening position (YaneuraOu benchmark)
+bench_opening | 4 | 1307221

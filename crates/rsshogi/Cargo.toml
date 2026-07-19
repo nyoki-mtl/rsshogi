@@ -1,0 +1,99 @@
+[package]
+name = "rsshogi"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Reusable Rust shogi primitives for board state, move generation, legality, and record parsing."
+repository = "https://github.com/nyoki-mtl/rsshogi"
+keywords = ["shogi"]
+categories = ["games"]
+exclude = ["src/bin/**"]
+
+# We intend to publish only this crate to crates.io (B案).
+# Python bindings are provided separately via crates/rsshogi-py.
+publish = true
+
+[dependencies]
+thiserror = "2"
+log = "0.4"
+# data-only crates: records feature 専用（非 data 利用ゼロを grep 確認済み）。
+# optional 化して `records` の dep: でのみ引くことで、エンジンビルド（data 系 off）では
+# これらの crate を一切コンパイルしない（task 0421 / Decision 4 の compile 削減の要）。
+encoding_rs = { version = "0.8", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+ordered-float = { version = "4.6", optional = true }
+
+[features]
+default = []
+hash-128 = []
+
+# ─── Data ecosystem features (task 0421 / Decision 4: Option B-split) ───
+# エンジン consumer（nnue/dfpn/az）は default（data 系 off）でビルドし、
+# py が必要分を opt-in する。粒度は consumer の実利用に合わせる。
+
+# policy-labels: labels::policy::CompactMoveLabel 等。py + az が使用（az 単独有効化のため独立）。
+policy-labels = []
+
+# position-serialization: packed_sfen / huffman_coded_pos / bit_io。records が require。
+position-serialization = []
+
+# svg: position::to_svg。
+svg = []
+
+# validation: position::validate / is_valid 等（impl block のみ。型は core）。
+validation = []
+
+# initial-positions: InitialPosition enum（駒落ち含む）。平手 SFEN は core 定数 STARTPOS_SFEN で供給。
+initial-positions = []
+
+# book: 定跡 I/O 全体。InitialPosition を使う。SBK/YBB 形式が PackedSfen を使うため
+# position-serialization を require。BookBuilder（records 橋渡し）は records 有効時のみ。
+book = ["initial-positions", "position-serialization"]
+
+# records: 棋譜フォーマット I/O。sbinpack が packed_sfen/huffman を使うため position-serialization を、
+# sazpack が labels::policy::CompactMoveLabel を使うため policy-labels を require。
+# CSA/KIF/JKF/record が encoding_rs/serde/serde_json/ordered-float を dep: で引く。
+records = [
+    "position-serialization",
+    "initial-positions",
+    "policy-labels",
+    "dep:encoding_rs",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:ordered-float",
+]
+
+# python-data: py が使う data ecosystem 一式。
+# policy-labels は records が require するため python-data にも transitively 含まれる
+# （独立 feature なので az は policy-labels 単独で有効化できる、という性質は不変）。
+python-data = ["book", "records", "position-serialization", "svg", "validation"]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+shogi_core = "0.1.5"
+proptest = { version = "1.4", default-features = false, features = ["std"] }
+# 統合テスト（tests/perft.rs・tests/movegen_integration.rs）が JSON 期待値の
+# deserialize で使う。lib の serde は records feature の optional dep だが、テストは
+# default feature でも走るため dev-dependency として常時利用可能にする。
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bench]]
+name = "apply_undo"
+harness = false
+
+[[bench]]
+name = "movegen"
+harness = false
+
+# data 系 API を使う example は records 有効時のみビルドする
+# （default の `cargo test --no-run` で example が落ちないようにする）。
+[[example]]
+name = "sazpack_measure"
+required-features = ["records"]
+
+[[example]]
+name = "sbinpack_size_breakdown"
+required-features = ["records"]

@@ -1,0 +1,235 @@
+name: python-release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    if: github.repository == 'nyoki-mtl/rsshogi'
+    name: Validate Python package versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYPROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rsshogi-py/pyproject.toml | head -n1)"
+          AVX2_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rsshogi-py/pyproject-avx2.toml | head -n1)"
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rsshogi-py/Cargo.toml | head -n1)"
+          INIT_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' crates/rsshogi-py/python/rsshogi/__init__.py | head -n1)"
+          if [ -z "${PYPROJECT_VERSION}" ] || [ -z "${AVX2_VERSION}" ] || [ -z "${CARGO_VERSION}" ] || [ -z "${INIT_VERSION}" ]; then
+            echo "Failed to read one or more Python package versions"
+            exit 1
+          fi
+          if [ "${PYPROJECT_VERSION}" != "${AVX2_VERSION}" ] || [ "${PYPROJECT_VERSION}" != "${CARGO_VERSION}" ] || [ "${PYPROJECT_VERSION}" != "${INIT_VERSION}" ]; then
+            echo "Python package versions differ: pyproject=${PYPROJECT_VERSION}, avx2=${AVX2_VERSION}, cargo=${CARGO_VERSION}, __version__=${INIT_VERSION}"
+            exit 1
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "${TAG_VERSION}" != "${PYPROJECT_VERSION}" ]; then
+              echo "Tag version (${TAG_VERSION}) does not match Python package version (${PYPROJECT_VERSION})"
+              exit 1
+            fi
+          fi
+
+  build-wheels:
+    if: github.repository == 'nyoki-mtl/rsshogi'
+    name: Build Wheels (${{ matrix.os }})
+    needs: validate-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build wheels (manylinux)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          rust-toolchain: 1.95.0
+          manylinux: "2014"
+          args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
+
+      - name: Build wheels (native)
+        if: runner.os != 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          rust-toolchain: 1.95.0
+          args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-standard-${{ matrix.os }}
+          path: dist/*.whl
+
+  build-wheels-avx2:
+    if: github.repository == 'nyoki-mtl/rsshogi'
+    name: Build Wheels AVX2 (${{ matrix.os }})
+    needs: validate-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Switch to AVX2 pyproject
+        shell: bash
+        run: cp crates/rsshogi-py/pyproject-avx2.toml crates/rsshogi-py/pyproject.toml
+
+      - name: Build AVX2 wheels (manylinux)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          rust-toolchain: 1.95.0
+          manylinux: "2014"
+          args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
+
+      - name: Build AVX2 wheels (native)
+        if: runner.os != 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          rust-toolchain: 1.95.0
+          args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
+
+      - name: Upload AVX2 wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-avx2-${{ matrix.os }}
+          path: dist/*.whl
+
+  build-sdist:
+    if: github.repository == 'nyoki-mtl/rsshogi'
+    name: Build Source Distribution
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          rust-toolchain: 1.95.0
+          args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  build-sdist-avx2:
+    if: github.repository == 'nyoki-mtl/rsshogi'
+    name: Build Source Distribution AVX2
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Switch to AVX2 pyproject
+        shell: bash
+        run: cp crates/rsshogi-py/pyproject-avx2.toml crates/rsshogi-py/pyproject.toml
+
+      - name: Build AVX2 sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          rust-toolchain: 1.95.0
+          args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
+
+      - name: Upload AVX2 sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist-avx2
+          path: dist/*.tar.gz
+
+  publish-standard:
+    name: Publish standard distribution to PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheels
+      - build-sdist
+    if: github.repository == 'nyoki-mtl/rsshogi' && startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download standard wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-standard-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Publish standard distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+
+  publish-avx2:
+    name: Publish AVX2 distribution to PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheels-avx2
+      - build-sdist-avx2
+    if: github.repository == 'nyoki-mtl/rsshogi' && startsWith(github.ref, 'refs/tags/v')
+    environment: pypi-avx2
+    permissions:
+      id-token: write
+    steps:
+      - name: Download AVX2 wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-avx2-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download AVX2 sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist-avx2
+          path: dist
+
+      - name: Publish AVX2 distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

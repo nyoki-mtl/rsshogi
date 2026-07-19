@@ -1,0 +1,14 @@
+# Move Sequence Test Data for P3 Board State Tests
+# Format: <test_name> | <sequence>
+
+# Repetition test - 4-fold repetition (千日手)
+# This sequence reaches the same position 4 times
+repetition_4fold | position startpos moves 2g2f 8c8d 2f2e 8d8e 7g7f 4a3b 8h7g 3c3d 7i8h 2b7g+ 8h7g 3a2b 1g1f 9c9d 9g9f 1c1d 3i3h 2b3c 3g3f 7a6b 2i3g 6c6d 4g4f 6b6c 6i7h 5a4b 5i6h 7c7d 3h4g 8a7c 4i4h 6a6b 2h2i 8b8a 4g5f 4b5b 6g6f 5b4b 6h7i 4b5b 7i6h 5b4b 6h7i 4b5b 7i6h 5b4b 6h7i 4b5b 7i6h
+
+# Illegal move sequences
+
+# Double pawn - last move creates illegal position
+double_pawn_illegal | position startpos moves 2g2f 8c8d 2f2e 8d8e 7g7f 4a3b 8h7g 3c3d 7i8h 2b7g+ 8h7g 3a2b 1g1f 9c9d 9g9f 1c1d 3i3h 2b3c 3g3f 7a6b 2i3g 6c6d 4g4f 6b6c 6i7h 5a4b 5i6h 7c7d 3h4g 8a7c 4i4h 6a6b 2h2i 8b8a 4g5f 4b5b 6g6f 5b4b 6h7i 6c5d 3g4e 3c2b 7f7e 7d7e 4e5c+ 4b5c P*7d 4c4d 7d7c+ 6b7c 6f6e 6d6e 4f4e N*6d 2i6i 6d5f 5g5f 7c6d 4e4d 2b3c P*6f 6e6f 5f5e B*4f N*5g 5d5e 7g6f P*6h 6i6h P*6g 7h6g 3c4d P*4e S*5i 4e4d 5i6h+ 7i6h 5e6f 6g6f P*6e 6f5f 4f1i+ S*7c P*6g
+
+# Uchifuzume (pawn drop mate) - last move is illegal pawn drop checkmate
+uchifuzume_illegal | position startpos moves 2g2f 8c8d 2f2e 8d8e 7g7f 4a3b 8h7g 3c3d 7i8h 2b7g+ 8h7g 3a2b 1g1f 9c9d 9g9f 1c1d 3i3h 2b3c 3g3f 7a6b 2i3g 6c6d 4g4f 6b6c 6i7h 5a4b 5i6h 7c7d 3h4g 8a7c 4i4h 6a6b 2h2i 8b8a 4g5f 4b5b 6g6f 5b4b 6h7i 6c5d 3g4e 3c2b 7f7e 7d7e 4e5c+ 4b5c P*7d 4c4d 7d7c+ 6b7c 6f6e 6d6e 4f4e N*6d 2i6i 6d5f 5g5f 7c6d 4e4d 2b3c P*6f 6e6f 5f5e B*4f N*5g 5d5e 7g6f P*6h 6i6h P*6g 7h6g 3c4d P*4e S*5i 4e4d 5i6h+ 7i6h 5e6f 6g6f P*6e 6f5f 4f1i+ S*7c 6d5d P*5e 5c4b 5e5d 4b3a 5d5c+ 1i7c 5g6e R*2g S*4g P*6g 6h5g P*5e 6e7c 5e5f 5g5f S*6d 7c8a+ L*5e 5f6g S*7f 6g6f P*6e

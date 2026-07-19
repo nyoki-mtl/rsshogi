@@ -1,0 +1,65 @@
+name: rust-release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-crate:
+    if: github.repository == 'nyoki-mtl/rsshogi' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Validate tag and crate version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CRATE_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rsshogi/Cargo.toml | head -n1)"
+          if [ -z "${CRATE_VERSION}" ]; then
+            echo "Failed to read version from crates/rsshogi/Cargo.toml"
+            exit 1
+          fi
+          if [ "${TAG_VERSION}" != "${CRATE_VERSION}" ]; then
+            echo "Tag version (${TAG_VERSION}) does not match crate version (${CRATE_VERSION})"
+            exit 1
+          fi
+          echo "CRATE_VERSION=${CRATE_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Skip publish if version already exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if curl -fsS "https://crates.io/api/v1/crates/rsshogi/${CRATE_VERSION}" >/dev/null; then
+            echo "rsshogi ${CRATE_VERSION} already exists on crates.io, skipping publish."
+            echo "SKIP_PUBLISH=1" >> "${GITHUB_ENV}"
+          else
+            echo "SKIP_PUBLISH=0" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Authenticate with crates.io
+        if: env.SKIP_PUBLISH == '0'
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        if: env.SKIP_PUBLISH == '0'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: cargo publish -p rsshogi

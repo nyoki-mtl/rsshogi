@@ -1,0 +1,59 @@
+name: nightly-unsafe
+
+on:
+  schedule:
+    # Weekly memory-safety sweep. Keep this out of required PR checks because
+    # nightly, miri, and sanitizers are intentionally allowed to move.
+    - cron: "17 18 * * 0"
+  workflow_dispatch:
+
+jobs:
+  unsafe-op-lint:
+    name: unsafe_op_in_unsafe_fn inventory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - name: Check unsafe operations inside unsafe functions
+        env:
+          RUSTFLAGS: -W unsafe_op_in_unsafe_fn
+        run: cargo check -p rsshogi --tests --all-features
+
+  miri:
+    name: miri targeted tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install nightly with miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Setup miri
+        run: cargo +nightly miri setup
+      - name: Run targeted miri tests
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: |
+          cargo +nightly miri test -p rsshogi --lib simd::u64x2_ops::tests
+          cargo +nightly miri test -p rsshogi --lib types::bitboard::tests
+          cargo +nightly miri test -p rsshogi --lib board::move_list::tests
+          cargo +nightly miri test -p rsshogi --lib board::bitboard_set::tests
+
+  address-sanitizer:
+    name: address sanitizer
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Zsanitizer=address -Cforce-frame-pointers=yes
+      ASAN_OPTIONS: detect_leaks=0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Run Rust tests with ASan
+        run: cargo +nightly test -p rsshogi --tests --all-features --target x86_64-unknown-linux-gnu

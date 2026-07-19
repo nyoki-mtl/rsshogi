@@ -1,0 +1,23 @@
+[workspace]
+members = [
+    "crates/rsshogi",
+    "crates/rsshogi-py",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Profiling keeps release-like optimization while preserving symbols/debug info
+# for sampling tools. It must not change normal `--release` semantics.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

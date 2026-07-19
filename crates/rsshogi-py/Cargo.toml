@@ -1,0 +1,22 @@
+[package]
+name = "rsshogi-py"
+version = "1.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Python tools for shogi board handling, move legality, records, and training-data formats."
+repository = "https://github.com/nyoki-mtl/rsshogi"
+
+[lib]
+name = "rsshogi"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
+# data ecosystem は default-off feature（task 0421 / Decision 4）。py は学習・棋譜 I/O 一式を使うため
+# python-data（book/records/position-serialization/svg/validation）を有効化する。
+# policy-labels は python-data（records 経由）に transitively 含まれるが、py が直接利用するため明示する。
+rsshogi = { path = "../rsshogi", features = ["python-data", "policy-labels"] }
+
+[features]
+python-tests = ["pyo3/auto-initialize"]

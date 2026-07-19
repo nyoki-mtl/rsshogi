@@ -1,0 +1,7 @@
+:root {
+  --rsshogi-accent: #3d5af1;
+}
+
+.mdbook-header a:hover {
+  color: var(--rsshogi-accent);
+}

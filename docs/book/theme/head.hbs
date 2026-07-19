@@ -1,0 +1,15 @@
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    // Transform fenced code blocks with language-mermaid into mermaid divs
+    document.querySelectorAll('code.language-mermaid').forEach(function (code) {
+      var pre = code.parentElement;
+      var container = document.createElement('div');
+      container.classList.add('mermaid');
+      container.textContent = code.textContent;
+      pre.replaceWith(container);
+    });
+    var theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme) || 'light';
+    mermaid.initialize({ startOnLoad: true, theme: theme === 'ayu' || theme === 'coal' || theme === 'navy' ? 'dark' : 'default' });
+  });
+</script>

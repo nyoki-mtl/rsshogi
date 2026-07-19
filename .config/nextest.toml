@@ -1,0 +1,10 @@
+# nextest configuration
+#
+# This file is intentionally minimal. It exists so that we can tweak behavior
+# (retries, timeouts, test groups, etc.) as the test suite grows.
+#
+# Docs: https://nexte.st/
+
+[profile.default]
+# Keep nextest defaults for now.
+

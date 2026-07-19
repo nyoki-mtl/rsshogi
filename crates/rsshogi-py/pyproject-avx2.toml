@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "rsshogi-avx2"
+version = "1.0.0"
+description = "Python bindings for the rsshogi core library (AVX2 build)."
+readme = "README-avx2.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "rsshogi contributors" }
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+urls = { "Repository" = "https://github.com/nyoki-mtl/rsshogi" }
+
+[tool.maturin]
+module-name = "rsshogi._rsshogi"
+python-source = "python"
+manifest-path = "Cargo.toml"
+rustc-args = ["-C", "target-feature=+avx2"]

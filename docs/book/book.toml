@@ -1,0 +1,18 @@
+[book]
+title = "rsshogi Documentation"
+authors = ["rsshogi Developers"]
+language = "ja"
+description = "rsshogi ライブラリの内部アーキテクチャと将棋プログラミングの基礎技術をまとめたドキュメント。"
+
+[build]
+build-dir = "build"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/nyoki-mtl/rsshogi"
+additional-css = ["theme/custom.css"]
+
+[output.html.print]
+enable = false

@@ -1,0 +1,21 @@
+* text eol=lf
+
+# Binary assets should never be normalized.
+*.pack -text
+*.bin -text
+*.nnue -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.pdf -text
+*.woff -text
+*.woff2 -text
+*.ttf -text
+*.otf -text
+*.zip -text
+*.gz -text
+*.tar -text
+*.xz -text
+*.zst -text

@@ -1,0 +1,103 @@
+"""Type stubs for the SAZ2 self-play training format."""
+
+from collections.abc import Sequence
+
+from rsshogi.core import Move, Move32
+from rsshogi.record import GameResult
+
+MoveLike = Move | Move32 | int | str
+GameResultLike = GameResult | int | str
+
+class SazWdl:
+    def __init__(self, win: int, draw: int, loss: int) -> None: ...
+    @property
+    def win(self) -> int: ...
+    @property
+    def draw(self) -> int: ...
+    @property
+    def loss(self) -> int: ...
+
+class SazPolicyEntry:
+    def __init__(
+        self, mv: MoveLike, prior: int, visits_before: int, visits_after: int, lower: int, upper: int
+    ) -> None: ...
+    @property
+    def mv(self) -> str: ...
+    @property
+    def prior(self) -> int: ...
+    @property
+    def visits_before(self) -> int: ...
+    @property
+    def visits_after(self) -> int: ...
+    @property
+    def lower(self) -> int: ...
+    @property
+    def upper(self) -> int: ...
+
+class SazPosition:
+    def __init__(
+        self,
+        played: MoveLike,
+        root_wdl: SazWdl,
+        outcome_wdl: SazWdl,
+        plies_left: int,
+        requested_visits: int,
+        target_weight_milli: int,
+        exploration_flags: int,
+        policy: Sequence[SazPolicyEntry],
+        mate: int | None = ...,
+    ) -> None: ...
+    @property
+    def played(self) -> str: ...
+    @property
+    def root_wdl(self) -> SazWdl: ...
+    @property
+    def outcome_wdl(self) -> SazWdl: ...
+    @property
+    def plies_left(self) -> int: ...
+    @property
+    def requested_visits(self) -> int: ...
+    @property
+    def target_weight_milli(self) -> int: ...
+    @property
+    def exploration_flags(self) -> int: ...
+    @property
+    def mate(self) -> int | None: ...
+    @property
+    def policy(self) -> list[SazPolicyEntry]: ...
+
+class SazGame:
+    def __init__(
+        self,
+        stem: str | bytes | bytearray,
+        game_result: GameResultLike,
+        termination_reason: int,
+        entering_king_rule: int,
+        positions: Sequence[SazPosition],
+    ) -> None: ...
+    @property
+    def stem_packed_sfen(self) -> bytes: ...
+    @property
+    def game_result(self) -> GameResult: ...
+    @property
+    def termination_reason(self) -> int: ...
+    @property
+    def entering_king_rule(self) -> int: ...
+    @property
+    def positions(self) -> list[SazPosition]: ...
+
+def write_sazpack(games: Sequence[SazGame]) -> bytes: ...
+def write_sazpack_file(path: str | bytes | bytearray, games: Sequence[SazGame]) -> None: ...
+def decode_sazpack(data: bytes | bytearray) -> list[SazGame]: ...
+def decode_sazpack_file(path: str | bytes | bytearray) -> list[SazGame]: ...
+
+__all__ = [
+    "SazGame",
+    "SazPolicyEntry",
+    "SazPosition",
+    "SazWdl",
+    "decode_sazpack",
+    "decode_sazpack_file",
+    "write_sazpack",
+    "write_sazpack_file",
+]
