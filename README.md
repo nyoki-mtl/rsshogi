@@ -1,11 +1,11 @@
 # rsshogi
 
-[![crates.io](https://img.shields.io/crates/v/rsshogi)](https://crates.io/crates/rsshogi)
-[![docs.rs](https://img.shields.io/docsrs/rsshogi)](https://docs.rs/rsshogi)
-[![Docs (GitHub Pages)](https://img.shields.io/badge/docs-github.io-blue)](https://nyoki-mtl.github.io/rsshogi/)
-[![PyPI](https://img.shields.io/pypi/v/rsshogi)](https://pypi.org/project/rsshogi/)
-[![Python](https://img.shields.io/pypi/pyversions/rsshogi)](https://pypi.org/project/rsshogi/)
-[![License](https://img.shields.io/github/license/nyoki-mtl/rsshogi)](LICENSE)
+[crates.io](https://crates.io/crates/rsshogi) |
+[docs.rs](https://docs.rs/rsshogi) |
+[Documentation](https://nyoki-mtl.github.io/rsshogi/) |
+[PyPI](https://pypi.org/project/rsshogi/) |
+[Python 3.10+](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) |
+[MIT License](LICENSE)
 
 Rust で実装された将棋ライブラリです。Python バインディングも提供しており、盤面管理、指し手生成、棋譜処理などの基本機能を高速に利用できます。
 
