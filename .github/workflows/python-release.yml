@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Validate package versions
         shell: bash
@@ -57,11 +57,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build wheels (manylinux)
         if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           rust-toolchain: 1.95.0
@@ -70,14 +70,14 @@ jobs:
 
       - name: Build wheels (native)
         if: runner.os != 'Linux'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           rust-toolchain: 1.95.0
           args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
 
       - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wheels-standard-${{ matrix.os }}
           path: dist/*.whl
@@ -97,7 +97,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Switch to AVX2 pyproject
         shell: bash
@@ -105,7 +105,7 @@ jobs:
 
       - name: Build AVX2 wheels (manylinux)
         if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           rust-toolchain: 1.95.0
@@ -114,14 +114,14 @@ jobs:
 
       - name: Build AVX2 wheels (native)
         if: runner.os != 'Linux'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           rust-toolchain: 1.95.0
           args: --release --manifest-path crates/rsshogi-py/Cargo.toml --out dist --find-interpreter
 
       - name: Upload AVX2 wheel artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wheels-avx2-${{ matrix.os }}
           path: dist/*.whl
@@ -133,17 +133,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           rust-toolchain: 1.95.0
           args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -155,21 +155,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Switch to AVX2 pyproject
         shell: bash
         run: cp crates/rsshogi-py/pyproject-avx2.toml crates/rsshogi-py/pyproject.toml
 
       - name: Build AVX2 sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           rust-toolchain: 1.95.0
           args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
 
       - name: Upload AVX2 sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdist-avx2
           path: dist/*.tar.gz
@@ -186,20 +186,20 @@ jobs:
       id-token: write
     steps:
       - name: Download standard wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: wheels-standard-*
           path: dist
           merge-multiple: true
 
       - name: Download sdist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sdist
           path: dist
 
       - name: Publish standard distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist
           skip-existing: true
@@ -216,20 +216,20 @@ jobs:
       id-token: write
     steps:
       - name: Download AVX2 wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: wheels-avx2-*
           path: dist
           merge-multiple: true
 
       - name: Download AVX2 sdist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sdist-avx2
           path: dist
 
       - name: Publish AVX2 distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist
           skip-existing: true
