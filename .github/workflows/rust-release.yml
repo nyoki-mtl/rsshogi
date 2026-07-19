@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: Published crate version to reconcile
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -64,3 +69,25 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: cargo publish -p rsshogi
+
+  reconcile-deployment:
+    if: github.repository == 'nyoki-mtl/rsshogi' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+    steps:
+      - name: Verify published crate
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          payload="$(curl -A "rsshogi-release-workflow (https://github.com/nyoki-mtl/rsshogi)" \
+            -fsS "https://crates.io/api/v1/crates/rsshogi/${RELEASE_VERSION}")"
+          jq -e --arg version "${RELEASE_VERSION}" '
+            .version.crate == "rsshogi"
+            and .version.num == $version
+            and .version.yanked == false
+          ' <<<"${payload}" >/dev/null
+          echo "Verified rsshogi ${RELEASE_VERSION} on crates.io."
