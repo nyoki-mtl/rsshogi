@@ -46,7 +46,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if curl -fsS "https://crates.io/api/v1/crates/rsshogi/${CRATE_VERSION}" >/dev/null; then
+          if curl -A "rsshogi-release-workflow (https://github.com/nyoki-mtl/rsshogi)" \
+            -fsS "https://crates.io/api/v1/crates/rsshogi/${CRATE_VERSION}" >/dev/null; then
             echo "rsshogi ${CRATE_VERSION} already exists on crates.io, skipping publish."
             echo "SKIP_PUBLISH=1" >> "${GITHUB_ENV}"
           else
