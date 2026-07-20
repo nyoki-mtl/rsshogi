@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rsshogi"
-version = "1.0.0"
+version = "1.0.1"
 description = "Python tools for shogi board handling, move legality, records, and training-data formats."
 readme = "README.md"
 requires-python = ">=3.10"
