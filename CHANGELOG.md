@@ -5,6 +5,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-21
+
+### Fixed
+
+- The SAZ2 self-play codec no longer accepts a forged chunk whose policy `prior` values
+  overflow the running total. The sum was accumulated in a `u32`, so a chunk with 65,539
+  policy entries could wrap to exactly 65535 and pass validation in release builds, where
+  overflow checks are disabled. The same input aborted debug builds with an overflow panic.
+  Both the encoder and the decoder now validate the distribution without any possibility of
+  overflow.
+
+### Compatibility
+
+- The SAZ2 wire format and the public API are unchanged. Any chunk that was valid before
+  remains valid and encodes to the same bytes; only invalid input is affected.
+
 ## [1.0.1] - 2026-07-21
 
 Distribution-only release. The library code, public API, and runtime behavior are
@@ -37,6 +53,7 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.2
 [1.0.1]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.1
 [1.0.0]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.0

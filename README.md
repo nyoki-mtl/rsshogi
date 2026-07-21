@@ -45,7 +45,7 @@ pip install rsshogi-avx2
 
 ```toml
 [dependencies]
-rsshogi = "1.0.1"
+rsshogi = "1.0.2"
 ```
 
 ## クイックスタート
