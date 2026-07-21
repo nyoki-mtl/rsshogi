@@ -121,6 +121,32 @@ impl SazWdl {
     }
 }
 
+/// policy prior の残余。量子化分布の合計が `SazWdl::TOTAL` に一致することを検証する。
+///
+/// 合計を積み上げて比較する形にはしない。entry 数は payload 長でしか縛られず、
+/// 信頼できない入力では u32 累積が 65537 件で `u32::MAX`（= 65535 × 65537）に達し、
+/// それ以降はラップして偽の合計 65535 が成立するため。残余からの減算にすれば
+/// `checked_sub` が超過をその場で捉え、桁溢れが原理的に起きない。
+struct PriorBudget(u32);
+
+impl PriorBudget {
+    const fn new() -> Self {
+        Self(SazWdl::TOTAL)
+    }
+
+    /// prior を 1 件分だけ残余から引く。残余を超えた時点で失敗する。
+    fn take(&mut self, prior: u16) -> Result<(), SazSelfplayError> {
+        self.0 =
+            self.0.checked_sub(u32::from(prior)).ok_or(SazSelfplayError::InvalidDistributionSum)?;
+        Ok(())
+    }
+
+    /// 残余がちょうど 0、すなわち合計が `SazWdl::TOTAL` に一致することを確認する。
+    fn finish(self) -> Result<(), SazSelfplayError> {
+        if self.0 == 0 { Ok(()) } else { Err(SazSelfplayError::InvalidDistributionSum) }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SazSelfplayPolicyEntry {
     pub mv: Move,
@@ -199,10 +225,11 @@ fn serialize_position(
     if position.policy.iter().any(|entry| entry.visits_after < entry.visits_before) {
         return Err(SazSelfplayError::DecreasingVisits);
     }
-    let prior_sum: u32 = position.policy.iter().map(|entry| u32::from(entry.prior)).sum();
-    if prior_sum != SazWdl::TOTAL {
-        return Err(SazSelfplayError::InvalidDistributionSum);
+    let mut prior_budget = PriorBudget::new();
+    for entry in &position.policy {
+        prior_budget.take(entry.prior)?;
     }
+    prior_budget.finish()?;
     out.extend_from_slice(&position.played.raw().to_le_bytes());
     for wdl in [position.root_wdl, position.outcome_wdl] {
         out.extend_from_slice(&wdl.win.to_le_bytes());
@@ -338,14 +365,14 @@ fn deserialize_position(
     };
     let count = read_uleb(input, cursor, end)?;
     let mut policy = Vec::with_capacity((count as usize).min(MAX_PREALLOC));
-    let mut prior_sum = 0u32;
+    let mut prior_budget = PriorBudget::new();
     for _ in 0..count {
         if *cursor + POLICY_ENTRY_MIN_LEN > end {
             return Err(SazSelfplayError::Truncated);
         }
         let mv = Move::from_raw(read_u16(input, cursor));
         let prior = read_u16(input, cursor);
-        prior_sum += u32::from(prior);
+        prior_budget.take(prior)?;
         let visits_before = read_uleb(input, cursor, end)?;
         let visits_after = read_uleb(input, cursor, end)?;
         if visits_after < visits_before {
@@ -367,9 +394,7 @@ fn deserialize_position(
             upper,
         });
     }
-    if prior_sum != SazWdl::TOTAL {
-        return Err(SazSelfplayError::InvalidDistributionSum);
-    }
+    prior_budget.finish()?;
     Ok(SazSelfplayPosition {
         played,
         root_wdl,
@@ -530,5 +555,106 @@ mod tests {
         let mate_tag = position_start + POSITION_FIXED_LEN - 1;
         bytes[mate_tag] = 2;
         assert_eq!(deserialize_selfplay_chunk(&bytes), Err(SazSelfplayError::InvalidMateTag(2)));
+    }
+
+    /// u32 累積をラップさせて偽の合計 65535 を作る prior 列を返す。
+    ///
+    /// 真の合計は `2^32 + 65535`。1 件あたり u16 上限 65535 なので、これを満たす
+    /// 最小 entry 数が 65539 件になる。
+    fn wrapping_priors() -> Vec<u16> {
+        const TARGET: u64 = (1 << 32) + SazWdl::TOTAL as u64;
+        const COUNT: usize = 65_539;
+
+        let mut priors = Vec::with_capacity(COUNT);
+        let mut remaining = TARGET;
+        for index in 0..COUNT {
+            let headroom = (COUNT - index - 1) as u64 * u64::from(u16::MAX);
+            let prior = remaining.saturating_sub(headroom).min(u64::from(u16::MAX)) as u16;
+            remaining -= u64::from(prior);
+            priors.push(prior);
+        }
+        assert_eq!(remaining, 0);
+        assert_eq!(priors.iter().map(|&p| u64::from(p)).sum::<u64>(), TARGET);
+        priors
+    }
+
+    /// policy prior 列だけを差し替えた 1 局面 1 ゲームの chunk を組み立てる。
+    ///
+    /// 不正な合計は serializer が弾くため、decoder の検証には手組みの payload が要る。
+    fn chunk_with_priors(priors: &[u16]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&hirate_position().to_packed_sfen().data);
+        payload.push(GameResult::DrawByMaxPlies as u8);
+        payload.push(SazTerminationReason::MaxGamePlies as u8);
+        payload.push(entering_king_rule_to_u8(EnteringKingRule::Point27));
+        encode_uleb128_u32(1, &mut payload);
+
+        payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
+        for _ in 0..2 {
+            payload.extend_from_slice(&0u16.to_le_bytes());
+            payload.extend_from_slice(&u16::MAX.to_le_bytes());
+            payload.extend_from_slice(&0u16.to_le_bytes());
+        }
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&800u32.to_le_bytes());
+        payload.extend_from_slice(&1000u16.to_le_bytes());
+        payload.push(0);
+        payload.push(0);
+
+        encode_uleb128_u32(u32::try_from(priors.len()).unwrap(), &mut payload);
+        for &prior in priors {
+            payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
+            payload.extend_from_slice(&prior.to_le_bytes());
+            encode_uleb128_u32(0, &mut payload);
+            encode_uleb128_u32(0, &mut payload);
+            payload.push(SazOutcomeBound::Loss as u8);
+            payload.push(SazOutcomeBound::Win as u8);
+        }
+
+        let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
+        bytes.extend_from_slice(&SAZPACK_SELFPLAY_MAGIC);
+        bytes.push(SAZPACK_SELFPLAY_VERSION);
+        bytes.push(0);
+        bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        bytes
+    }
+
+    #[test]
+    fn selfplay_rejects_prior_sum_that_wraps_u32() {
+        let bytes = chunk_with_priors(&wrapping_priors());
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
+    }
+
+    #[test]
+    fn selfplay_serializer_rejects_prior_sum_that_wraps_u32() {
+        let mut game = fixture();
+        game.positions[0].policy = wrapping_priors()
+            .into_iter()
+            .map(|prior| SazSelfplayPolicyEntry {
+                mv: Move::from_usi("7g7f").unwrap(),
+                prior,
+                visits_before: 0,
+                visits_after: 0,
+                lower: SazOutcomeBound::Loss,
+                upper: SazOutcomeBound::Win,
+            })
+            .collect();
+        assert_eq!(
+            serialize_selfplay_chunk(&[game]),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
+    }
+
+    #[test]
+    fn selfplay_rejects_prior_sum_above_total() {
+        let bytes = chunk_with_priors(&[u16::MAX, 1]);
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
     }
 }
