@@ -24,7 +24,7 @@ record = rs.record.Record.from_kif_str(kif_text)
 
 # 情報を表示
 print(f"先手: {record.metadata.black_player}")
-print(f"総手数: {record.move_count()}")
+print(f"総手数: {record.move_count}")
 
 # 指し手を確認
 for move_rec in record.moves:
@@ -45,6 +45,7 @@ print(f"結果: {record.result.name}")
 | `result` | `GameResult` | - | 終局結果（[`GameResult`](game_result.md) 参照） |
 | `result_info` | `GameResultInfo` | - | 終局情報の typed view（`ply_count` / `reason` / `end_time_ms` / `end_comment`） |
 | `main_terminal` | `SpecialMoveEntry \| None` | o | 本手順末尾の終局特殊手（`None` 代入でのクリアは不可） |
+| `move_count` | `int` | - | 指し手数（本手順） |
 
 ### メソッド
 
@@ -52,7 +53,6 @@ print(f"結果: {record.result.name}")
 
 | メソッド | 戻り値 | 説明 |
 |----------|--------|------|
-| `move_count()` | `int` | 指し手数（本手順） |
 | `update_metadata(patch, *, strict=False)` | `None` | メタデータを部分更新（`None` は指定キーをクリア） |
 | `set_metadata_attribute(key, value)` | `None` | metadata.attributes の追加/更新 |
 | `remove_metadata_attribute(key)` | `str \| None` | metadata.attributes から削除 |

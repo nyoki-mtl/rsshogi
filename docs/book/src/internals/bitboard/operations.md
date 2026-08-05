@@ -9,10 +9,13 @@
 - `pop_lsb()` は最下位ビットを取り出して除去し、O(駒数) の列挙を実現する
 - 差分更新は XOR ベースで分岐なし（`move_piece()` が `by_piece` と `by_color` を同時更新）
 
-このページでは、Bitboard の基本的なビット演算、マスク、シフト、列挙ユーティリティをまとめます。
-筋・段マスク（`file_mask` / `rank_mask`）や `between/line` などの基礎 API の使いどころも記載します。
+Bitboard そのものは AND と OR と XOR しか知りません。
+「合駒を置けるマス」「同じ筋にある自分の歩」「次に動かす駒」といった将棋の言葉は、
+マスク、シフト、列挙という 3 つの道具を組み合わせて作ります。
+ここではその道具を、実際の局面図と対応させながら見ていきます。
 
 ## between/line の可視化
+
 以下は 5五の王、5二の敵飛車、間に 5三の自駒がある例です。
 `between(5五,5二)` は 5三と 5四 を含む直線集合になります。
 `line(5五,5二)` は 5筋の直線全体です。
@@ -67,7 +70,7 @@ let evasion_targets = between(king_sq, checker_sq) | checker_sq.to_bb();
 
 ## 実例: 先手の歩を抽出
 
-[Bitboard の概要](./index.md#集合演算--and-でフィルタ) では「集合の交差」として AND を見ました。
+[Bitboard の概要](./index.md#and-でフィルタする) では「集合の交差」として AND を見ました。
 同じ題材を、`Bitboards` が保持する 2 つの中間集合から実際に `black_pawns` を作る手順として見ます。
 
 対象局面には、後手歩が 3三・7三、先手歩が 3七・7七、先手銀が 3九・7九、先手玉が 5九にあります。
@@ -136,7 +139,6 @@ let black_pawns = bitboards.by_piece[PAWN] & bitboards.by_color[BLACK];
 
 配列ベースなら 81 マスを走査して「駒種が歩か」「色が先手か」を毎回判定します。
 Bitboard では、すでに更新済みの集合同士を AND するだけなので、この抽出は 1 つのビット演算になります。
-
 
 ### なぜ高速なのか
 列ごとのテーブル参照や 90° / 45° 回転もビット演算のテクニックで済み、条件分岐をほとんど伴いません。[^cpw-board-definition]
@@ -428,65 +430,31 @@ let legal_targets = attacks & !our_pieces;
 
 ## between/line の基礎ユーティリティ
 
-王手回避などで用いる、2 マス間の経路マスクの例です。
+王手を受けたとき、合駒を置ける範囲は「王と王手駒の間」に、駒を取って解消する手は「王手駒そのもの」に対応します。
+`between` と `line` があれば、この 2 つを 1 行で作れます。
 
 ```rust,ignore
 // 回避可能マスク: 王と利き駒の間 + その駒
-let evasion_targets = between(king, checker) | checker;  // 2 命令
-
-// 二歩判定（筋マスク + POPCNT）
-let has_double_pawn = (pawns & file_mask).count() >= 2;  // 3 命令
+let evasion_targets = Bitboard::between(king, checker) | Bitboard::from_square(checker);
 ```
 
-実装は盤レイアウトとシフト規則に依存するため、`bitboard/sliders` 節の設計と整合させてください。
+### 実行時に計算せずテーブルを引く
 
-### between と line の実装概略
+`between` の中身は、2 マスが同筋か同段か斜めかで場合分けし、その直線上で両端の内側だけを残す幾何計算です。
+ただし引数はどちらも 81 通りしかなく、局面が変わっても答えは変わりません。
+そこで rsshogi は、起動時に一度だけ全組み合わせを計算し、以後は表を引くだけにしています。
 
-以下は縦型 9×9 かつ `u128` 前提の概略です。
-境界処理と盤外マスクは省略しています。
+直線上にない組み合わせは空集合を共有できるため、`between` の実体は 785 個の `Bitboard` で足ります。
+2 次元の `index` 配列がマス対から実体の添字を引き、`bb` 配列がその実体を返します。
 
 ```rust,ignore
-/// 2 つのマスの間にあるビット集合を返す（端点は含まない）。
-/// 直線上にない場合は空集合。
-pub fn between(a: Square, b: Square) -> Bitboard {
-    // 同筋（file が同じ）
-    if a.file() == b.file() {
-        let (lo, hi) = (a.min(b), a.max(b));
-        return Bitboard::file_mask(a.file()) & Bitboard::range_exclusive(lo, hi);
-    }
-    // 同段（rank が同じ）
-    if a.rank() == b.rank() {
-        let (lo, hi) = (a.min(b), a.max(b));
-        return Bitboard::rank_mask(a.rank()) & Bitboard::range_exclusive(lo, hi);
-    }
-    // 斜め（|Δfile| == |Δrank|）
-    if (a.file() as i32 - b.file() as i32).abs() == (a.rank() as i32 - b.rank() as i32).abs() {
-        let diag_mask = Bitboard::diag_mask_through(a) & Bitboard::diag_mask_through(b);
-        let (lo, hi) = (a.min(b), a.max(b));
-        return diag_mask & Bitboard::range_exclusive(lo, hi);
-    }
-    Bitboard::EMPTY
-}
-
-/// a と b を含む直線上の全ビット。
-pub fn line(a: Square, b: Square) -> Bitboard {
-    if a.file() == b.file() {
-        return Bitboard::file_mask(a.file());
-    }
-    if a.rank() == b.rank() {
-        return Bitboard::rank_mask(a.rank());
-    }
-    if (a.file() as i32 - b.file() as i32).abs() == (a.rank() as i32 - b.rank() as i32).abs() {
-        return Bitboard::diag_mask_through(a) & Bitboard::diag_mask_through(b);
-    }
-    Bitboard::EMPTY
-}
+tables.bb[usize::from(tables.index[from.to_index_with_none()][to.to_index_with_none()])]
 ```
 
-実装時の注意:
-- `range_exclusive(lo, hi)` は `lo` と `hi` の間だけを 1 にするヘルパです。
-- 斜め用の `diag_mask_through` は主対角線と副対角線を分けて計算します。
-- 盤外を含む生成は最後に `ALL_SQUARES` と AND して落とします。
+`line` は 1 つ目のマスと方向（縦、横、右上がり、右下がりの 4 種）で決まるため、`81 × 4` の表で足ります。
+
+添字を `SQ_NONE` の分まで広げてあるのは、`to_index_with_none()` を使う呼び出し側で境界チェックを省くためです。
+表は `OnceLock` 越しに遅延初期化され、`Bitboard::init_tables()` で明示的に構築することもできます。
 
 ## 例: 二歩判定（同一筋に 2 枚の歩）
 
@@ -588,13 +556,6 @@ sequenceDiagram
 
 `bitboard << 1`（段方向シフト）を 9 段目のマスに適用すると、隣の筋の 1 段目にビットが移動します。
 端マスでのシフトは必ず `& Bitboard::file_mask(file)` や `& Bitboard::rank_mask(rank)` でマスクしてから行ってください。
-
-## まとめ
-
-- `file_mask` / `rank_mask`（内部テーブル `FILE_MASKS` / `RANK_MASKS`）は筋・段フィルタの基本部品
-- `between` / `line` は合駒・ピン判定のコア（端点の包含に注意）
-- `pop_lsb()` による O(駒数) 列挙が Bitboard の高速性の鍵
-- 差分更新は XOR のみで分岐なし、評価関数との統合も容易
 
 ## 次に読む
 

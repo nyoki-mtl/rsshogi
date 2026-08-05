@@ -43,7 +43,7 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 
 ## 各層の役割
 
-### ルックアップ層 — `MemoryBook` / `StaticBook`
+### ルックアップ層（`MemoryBook` / `StaticBook`）
 
 `Book` トレイトを実装する、**正規化済みの参照表現**です。
 
@@ -57,7 +57,7 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 
 「探索エンジンが現局面の候補手を引く」用途では、この層がほぼ理想形です。
 
-### 外部リーダ層 — `YaneuraOuBook` / `SbkBook` / `YbbBook`
+### 外部リーダ層（`YaneuraOuBook` / `SbkBook` / `YbbBook`）
 
 外部フォーマットの **読み取り専用リーダ**です。`Book` トレイトは実装しません。
 
@@ -73,7 +73,7 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 詳細は [外部定跡（DB2016 / YBB / SBK）](external-books.md) と
 [SBK 形式](sbk.md) を参照してください。
 
-### 編集 IR 層 — `BookDatabase`
+### 編集 IR 層（`BookDatabase`）
 
 外部フォーマットとルックアップ層を **橋渡しする中間表現**です。
 

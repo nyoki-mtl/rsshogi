@@ -1,4 +1,4 @@
-# ゲームステート管理
+# 差分更新と StateInfo
 
 > **前提知識**: [Position 構造体](./index.md)（Position の役割と基本設計）
 
@@ -313,8 +313,6 @@ safe Rust では `current_state_cache()` などの state 由来の borrow 中に
 `undo_null_move()` ではなく通常の `undo_move32()` で戻そうとすると、存在しない駒の移動を復元しようとしてパニックします。
 
 ## まとめ
-
-StateInfo パターンは、将棋エンジンの探索効率を大幅に向上させる重要な設計です：
 
 - **メモリ効率**: Position 全体ではなく変更点だけを保存（400 bytes → 64 bytes）
 - **高速な復元**: 保存した情報から元の状態を再構築

@@ -114,7 +114,7 @@ rsshogi はこのソートを利用して `lookup_sfen()` を二分探索で行�
 
 ## 書き出し（writer）
 
-`YaneuraOuBook` は読み取り専用ですが、編集 IR である [`BookDatabase`](book-architecture.md#編集-ir-層--bookdatabase)
+`YaneuraOuBook` は読み取り専用ですが、編集 IR である [`BookDatabase`](book-architecture.md#編集-ir-層bookdatabase)
 から DB2016 テキストを**書き出す**ことができます。
 
 ```rust,ignore
