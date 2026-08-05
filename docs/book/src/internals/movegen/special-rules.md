@@ -7,7 +7,7 @@
 - 打ち歩詰めは「歩を打って王手 → 玉が逃げられない → 取り返せない」の 3 条件を**すべて**満たす場合のみ禁じ手
 - 二歩判定は `筋マスク & 自歩 Bitboard` の交差で判定できる（最も安価な特殊ルールの一つ）
 - 千日手検出は `apply_move32()` のたびに `repetition_counter` を差分更新し、`is_repetition(threshold)` は O(1) 判定
-- 256 手ルールは大会ごとに最大手数が異なる（WCSC: 320, 電竜戦: 512, floodgate: 256）
+- 最大手数は大会ごとに違うため設定可能にする。引き分け判定は詰み判定より後に置く
 
 将棋のルールの大半は「その駒がどこへ動けるか」で書けます。
 残りが厄介です。
@@ -283,10 +283,9 @@ rsshogi では `apply_move32()` の中で `repetition_counter` を差分更新�
 
 ### 連続王手の千日手判定
 
-連続王手の千日手は `repetition_state()` の戻り値で判定します。
-`is_perpetual_check()` という API は存在しません。
+連続王手の千日手は、専用の判定関数ではなく `repetition_state()` の戻り値で区別します。
 `continuous_check` カウンタが `apply_move32()` のたびに更新され、
-連続王手側は `RepetitionState::Lose` / 受けている側は `RepetitionState::Win` が返ります。
+連続王手をかけた側には `RepetitionState::Lose`、受けていた側には `RepetitionState::Win` が返ります。
 
 ```rust,ignore
 use rsshogi::types::RepetitionState;
@@ -302,80 +301,58 @@ match pos.repetition_state() {
 }
 ```
 
-## 256手ルール（最大手数ルール）
+## 最大手数ルール
 
 ### ルール概要
 
-対局が256手に達した場合、257手目の局面は送信されず、引き分けとなります。
-ただし、256手目で詰みが発生している場合は、その時点で勝敗が決します。
+規定の手数に達しても勝敗が決まらなければ引き分けです。
+手数は大会ごとに決められており、WCSC29 では 320 手、電竜戦では 512 手が使われました。[^yaneuraou-256]
+ただし規定手数の局面で詰んでいれば、引き分けではなく負けです。
 
-### 実装上の落とし穴
-
-256手ルールの実装には、詰み判定との相互作用に関する微妙な問題があります。
-
-#### よくある実装ミス
-
-多くのエンジンは、以下のような単純な実装をしてしまいます：
-
-```rust,ignore
-// ❌ 間違った実装例（is_max_moves_draw() は rsshogi に存在しない）
-if position.game_ply() >= 256 {
-    return Score::DRAW;  // 詰みチェックをせずに引き分け判定
-}
-```
-
-rsshogi では手数は `pos.game_ply()` で取得できます。詰み判定は探索エンジン側で実装します。
-
-この実装の問題点は、256手目で実際には詰んでいるにもかかわらず、引き分けと判定してしまう可能性があることです。
-
-#### 正しい判定順序
-
-理想的には、以下の順序で判定すべきです：
-
-1. **256手に達したかをチェック**
-2. **詰みかどうかをチェック**
-3. 詰みでなければ引き分け
-
-しかし、詰み判定は計算コストが高いため、多くのエンジンは探索の中で段階的に詰みを検出します。
-これにより、256手ルールと詰み判定の順序が曖昧になる可能性があります。
-
-#### 実用的な対処法
-
-やねうら王の開発者が推奨する対処法は、**最大手数を少し高めに設定する**ことです：
-
-```rust,ignore
-const MAX_MOVES_TO_DRAW: usize = 258;  // 256より少し高めに設定
-
-if position.game_ply() >= MAX_MOVES_TO_DRAW {
-    return Score::DRAW;
-}
-```
-
-この方法により、256手ルール付近での詰み判定の曖昧さを回避できます。
-
-#### 大会ごとの最大手数の違い
-
-実際の大会では、最大手数が異なることがあります：
-
-- **WCSC（世界コンピュータ将棋選手権）**: 320手
-- **電竜戦**: 512手
-- **floodgate**: 256手
-
-エンジンは、USI プロトコルを通じて最大手数を設定できるようにすることが推奨されます：
+エンジン側は手数を固定値で埋め込まず、USI の option で受け取れるようにします。
 
 ```text
-# USI setoption での設定例
 setoption name MaxMovesToDraw value 320
 ```
 
-### パフォーマンスと正確性のトレードオフ
+rsshogi は手数を `pos.game_ply()` で返すところまでを担当し、引き分け判定そのものは探索エンジン側の責務です。
 
-詰み判定を毎手実行するのは現実的ではありません。
-そのため、以下のような段階的アプローチが一般的です：
+### 実装上の落とし穴
 
-1. **探索中の詰み検出**: アルファベータ探索で自然に検出
-2. **最大手数付近での特別処理**: 250手を超えたあたりから詰みチェックを強化
-3. **猶予付き最大手数**: 256ではなく258などに設定
+素直に書くと、次のようになります。
+
+```rust,ignore
+if position.game_ply() >= max_moves_to_draw {
+    return Score::DRAW;  // 詰みを見ずに引き分けを返している
+}
+```
+
+これは規定手数の局面で詰まされていても引き分けを返します。
+本来はその局面で詰みかどうかを先に見なければなりません。
+順序が逆になるのは、詰み判定が重いからです。
+探索は枝刈りを済ませて指し手を生成した後にはじめて「合法手なし＝詰み」を知るため、
+安価な手数チェックのほうが自然と手前に来ます。
+
+### 規定手数より数手多く設定する
+
+やねうら王の開発者は、引き分けとみなす手数を規定より 2〜6 手多く設定することを勧めています。[^yaneuraou-256]
+動機は判定順序の修正ではありません。
+規定手数の付近でエンジンが引き分けと誤解したまま頓死するのを防ぐことです。
+
+誤解は 2 つの経路で起こると説明されています。
+1 つは詰み判定の取りこぼしです。
+やねうら王の 1 手詰めルーチンはあらゆる 1 手詰めを解くわけではなく、たとえば離し飛車で合駒が利かない詰みを見落とします。
+見落とせば、本来そこで終わっているはずの局面から先を読み進めてしまいます。
+もう 1 つは置換表です。
+規定手数が絡んで確定した引き分けスコアが登録されると、手数の浅い局面でそれを引いて引き分けと錯覚することがあります。
+
+引き分けとみなす手数を規定より先に置いておけば、エンジン自身の引き分け判定が動く前に対局が終わります。
+誤解が実際の勝敗に届かなくなる、というのがこの設定の効果です。
+
+```rust,ignore
+// 大会規定が 320 手なら、内部では 322〜326 手あたりを使う
+let max_moves_to_draw = tournament_limit + 2;
+```
 
 ## 持将棋（Impasse）
 
@@ -396,22 +373,20 @@ setoption name MaxMovesToDraw value 320
 
 ### 入玉宣言の実装
 
-rsshogi では `can_declare_impasse()` / `calculate_impasse_score()` という API は存在しません。
-入玉宣言の判定は `declaration_win_move()` メソッドで行い、`EnteringKingRule` に応じて
-ポイント制・トライルールを切り替えます。
+入玉宣言の可否は `declaration_win_move()` が返します。
+点数計算と宣言可否を別々の関数に分けず、「宣言勝ちの手」を 1 つ返す形にまとめてあります。
+宣言できない局面では `MOVE_NONE` が返ります。
 
 ```rust,ignore
-use rsshogi::types::{EnteringKingRule, MOVE_NONE};
+use rsshogi::types::MOVE_NONE;
 
-// 入玉宣言勝ちの手を取得（宣言できなければ MOVE_NONE を返す）
 let win_move = pos.declaration_win_move();
 if win_move != MOVE_NONE {
     // 宣言勝ちできる
 }
 ```
 
-実際のソースコードでは、`declaration_win_move` メソッドで入玉宣言勝ちを判定します。
-`EnteringKingRule` に応じてポイント制・トライルールを切り替えます：
+ポイント制とトライルールの切り替えは `EnteringKingRule` に応じて内部で行われます。
 
 ```rust,ignore
 {{#include ../../../../../crates/rsshogi/src/board/position/rules.rs:position_declare_win}}
@@ -424,8 +399,8 @@ if win_move != MOVE_NONE {
 
 - [ ] 千日手検出でハッシュ値の衝突を考慮しているか
 - [ ] 連続王手の千日手を正しく判定しているか
-- [ ] 256手ルールで詰み判定との順序を考慮しているか
-- [ ] 最大手数を設定可能にしているか（WCSC, 電竜戦など）
+- [ ] 最大手数による引き分けを、詰み判定より後に置いているか
+- [ ] 最大手数を USI option で設定可能にしているか
 - [ ] `declaration_win_move()` で入玉宣言勝ちを判定しているか
 - [ ] `EnteringKingRule` の設定（ポイント制 / トライルール / なし）が適切か
 
@@ -446,26 +421,26 @@ fn is_repetition_strict(pos: &Position) -> bool {
 
     // SFEN 文字列で完全比較（重い処理のためデバッグ用途のみ）
     let current_sfen = pos.to_sfen(None);
-    // ... 過去局面と比較するには state_stack を遡る必要があり、
-    // rsshogi の公開 API からは直接アクセスできない。
+    // 過去局面との比較には、エンジン側で指し手と SFEN の履歴を持つ。
     // 通常は repetition_counter の精度で十分。
     true
 }
 ```
 
-### 256手ルール付近のテスト
+### 最大手数付近のテスト
 
-256手付近の局面をテストケースとして用意し、詰みと引き分けの判定が正しいことを確認します：
+規定手数の直前の局面を用意し、詰みと引き分けの判定順序が正しいことを確認します。
 
 ```rust,ignore
 #[test]
-fn test_256_move_rule_with_mate() {
+fn test_mate_takes_precedence_over_max_moves() {
     use rsshogi::movegen::{Legal, generate_moves};
     use rsshogi::board::MoveList;
 
-    let mut pos = position_from_sfen("position at 255 moves").unwrap();
+    let max_moves_to_draw = 320;
+    let mut pos = position_from_sfen(sfen_at_ply(max_moves_to_draw - 1)).unwrap();
 
-    // 256手目で詰みの手を指す
+    // 規定手数ちょうどの局面で詰ます
     let mate_move = /* 合法手リストから詰み手を取得 */;
     pos.apply_move32(mate_move);
 
@@ -475,8 +450,8 @@ fn test_256_move_rule_with_mate() {
     let is_checkmate = moves.is_empty() && pos.is_in_check();
     assert!(is_checkmate);
 
-    // 手数確認は game_ply() で
-    assert_eq!(pos.game_ply(), 256);
+    // 規定手数に到達しているが、引き分けではなく詰みが優先される
+    assert_eq!(pos.game_ply(), max_moves_to_draw);
 }
 ```
 
@@ -505,7 +480,7 @@ fn test_256_move_rule_with_mate() {
 - **二歩判定**: 筋マスクと自歩 Bitboard の交差で判定する
 - **打ち歩詰め**: 取り返しチェック、玉の逃げ場、ピン判定の同筋例外が要点
 - **千日手**: `repetition_counter` の差分更新（O(1)）、連続王手は `RepetitionState::Win/Lose` で判定
-- **256 手ルール**: 詰みとの順序に注意、大会ごとに最大手数が異なる
+- **最大手数**: 引き分け判定は詰み判定の後。規定より数手多めに設定して誤判定の影響を避ける
 - **入玉宣言**: 点数計算（大駒 5 点、小駒 1 点）+ 駒数チェック
 
 ## 次に読む
@@ -514,6 +489,6 @@ fn test_256_move_rule_with_mate() {
 
 ## 参考資料
 
-- [256手ルールの実装を間違えていた話 - やねうら王公式サイト](https://yaneuraou.yaneu.com/2021/01/13/incorrectly-implemented-the-256-moves-rule/) - 256手ルール実装の落とし穴
-- [floodgate ルール](http://wdoor.c.u-tokyo.ac.jp/shogi/floodgate.html) - 最大手数256手の規定
-- [コンピュータ将棋協会 - 大会ルール](https://www.computer-shogi.org/) - WCSC等の最大手数
+- [コンピュータ将棋協会 - 大会ルール](https://www.computer-shogi.org/) - WCSC の規定
+
+[^yaneuraou-256]: やねうら王, [「256手ルールの実装を間違えていた話」](https://yaneuraou.yaneu.com/2021/01/13/incorrectly-implemented-the-256-moves-rule/)（2021-01-13）。記事は規定手数で引き分けとなるルールを「256手ルール」と総称している。

@@ -92,10 +92,9 @@ let key_after = pos.key_after_move(mv);     // Move 版
 let key_after = pos.key_after_null();       // null move 版
 ```
 
-持ち駒だけのハッシュは提供していません。持ち駒の同一性が必要な場合は
-`pos.hand(color)` が返す生の `Hand` を比較してください。
-優等/劣等局面の判定は半順序の比較であり、ハッシュでは表現できないため、
-`Position` 内部の判定も生の `Hand` を使っています。
+持ち駒の同一性が必要な場合は、`pos.hand(color)` が返す生の `Hand` を比較します。
+優等/劣等局面の判定は半順序の比較であり、ハッシュでは表現できません。
+そのため `Position` 内部の判定も生の `Hand` を使っています。
 
 ### 王手・ピン情報
 
