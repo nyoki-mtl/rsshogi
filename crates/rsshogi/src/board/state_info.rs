@@ -195,6 +195,13 @@ impl Default for TacticalCache {
 }
 
 /// 探索ホットパスで頻出する部分ハッシュと駒割り情報のキャッシュ。
+///
+/// この 3 本のキーと駒割り値は、下流の評価関数・探索エンジンが correction history
+/// 等に用いる substrate として意図的に維持している。**crate 内に消費者がいないことを
+/// 削除の根拠として読まないこと。**
+///
+/// かつて同居していた material key（盤上駒の構成だけに依存する加算ハッシュ）は、
+/// 下流にも消費予定がなく維持コストだけが apply ごとに実在したため削除した。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PartialKeys {
     /// 盤上の歩のみから構成される Zobrist キー。
@@ -206,9 +213,6 @@ pub struct PartialKeys {
     /// 色別の「歩以外の盤上駒」から構成される Zobrist キー。
     pub non_pawn: [ZobristKey; Color::COUNT],
 
-    /// 盤上駒の構成だけに依存する material Zobrist キー。
-    pub material: ZobristKey,
-
     /// 先手視点・手駒込みの駒割り評価値。
     pub material_value: i32,
 }
@@ -219,10 +223,9 @@ impl PartialKeys {
         pawn: ZobristKey,
         minor: ZobristKey,
         non_pawn: [ZobristKey; Color::COUNT],
-        material: ZobristKey,
         material_value: i32,
     ) -> Self {
-        Self { pawn, minor, non_pawn, material, material_value }
+        Self { pawn, minor, non_pawn, material_value }
     }
 }
 
@@ -232,7 +235,6 @@ impl Default for PartialKeys {
             pawn: Zobrist::no_pawns(),
             minor: ZobristKey::default(),
             non_pawn: [ZobristKey::default(); Color::COUNT],
-            material: ZobristKey::default(),
             material_value: 0,
         }
     }
@@ -304,11 +306,11 @@ impl Default for NullTacticalPrefix {
 
 #[derive(Clone, Debug)]
 pub struct StateHot {
-    /// 盤面Zobrist（board_key）
+    /// 盤上配置 + 手番の Zobrist キー（持ち駒を含まない）。千日手判定の filter に使う。
     pub(crate) board_key: ZobristKey,
 
-    /// 持ち駒Zobrist（hand_key）
-    pub(crate) hand_key: ZobristKey,
+    /// 持ち駒まで含む局面全体の Zobrist キー。
+    pub(crate) key: ZobristKey,
 
     /// 盤上の歩のみから構成される Zobrist キー。
     pub(crate) pawn_key: ZobristKey,
@@ -318,9 +320,6 @@ pub struct StateHot {
 
     /// 色別の「歩以外の盤上駒」から構成される Zobrist キー。
     pub(crate) non_pawn_key: [ZobristKey; Color::COUNT],
-
-    /// 盤上駒の構成だけに依存する material Zobrist キー。
-    pub(crate) material_key: ZobristKey,
 
     /// 先手視点・手駒込みの駒割り評価値。
     pub(crate) material_value: i32,
@@ -357,11 +356,10 @@ impl Default for StateHot {
         let partial = PartialKeys::default();
         Self {
             board_key: ZobristKey::default(),
-            hand_key: ZobristKey::default(),
+            key: ZobristKey::default(),
             pawn_key: partial.pawn,
             minor_piece_key: partial.minor,
             non_pawn_key: partial.non_pawn,
-            material_key: partial.material,
             material_value: partial.material_value,
             repetition_counter: 0,
             repetition_distance: 0,
@@ -382,7 +380,6 @@ impl StateHot {
             self.pawn_key,
             self.minor_piece_key,
             self.non_pawn_key,
-            self.material_key,
             self.material_value,
         )
     }
@@ -397,10 +394,16 @@ impl StateHot {
         self.tactical.blockers_for_king(color)
     }
 
-    /// 盤面 Zobrist（board_key）を返す。
+    /// 盤上配置 + 手番の Zobrist キー（持ち駒を含まない）を返す。
     #[must_use]
     pub const fn board_key(&self) -> ZobristKey {
         self.board_key
+    }
+
+    /// 持ち駒まで含む局面全体の Zobrist キーを返す。
+    #[must_use]
+    pub const fn key(&self) -> ZobristKey {
+        self.key
     }
 
     /// 手番側の持ち駒を返す。
@@ -485,14 +488,9 @@ impl StateInfo {
     }
 
     #[inline(always)]
-    pub(crate) fn write_root_hot(
-        &mut self,
-        board_key: ZobristKey,
-        hand_key: ZobristKey,
-        hand: Hand,
-    ) {
+    pub(crate) fn write_root_hot(&mut self, board_key: ZobristKey, key: ZobristKey, hand: Hand) {
         self.hot.board_key = board_key;
-        self.hot.hand_key = hand_key;
+        self.hot.key = key;
         self.hot.hand = hand;
     }
 
@@ -549,7 +547,6 @@ impl StateInfo {
             self.hot.pawn_key,
             self.hot.minor_piece_key,
             self.hot.non_pawn_key,
-            self.hot.material_key,
             self.hot.material_value,
         )
     }
@@ -558,7 +555,6 @@ impl StateInfo {
         self.hot.pawn_key = keys.pawn;
         self.hot.minor_piece_key = keys.minor;
         self.hot.non_pawn_key = keys.non_pawn;
-        self.hot.material_key = keys.material;
         self.hot.material_value = keys.material_value;
     }
 
@@ -622,7 +618,7 @@ impl StateInfo {
         self.cold = state.cold;
         self.hot.plies_from_null = state.hot.plies_from_null;
         self.hot.board_key = state.hot.board_key;
-        self.hot.hand_key = state.hot.hand_key;
+        self.hot.key = state.hot.key;
         self.set_partial_keys(state.hot.partial_keys);
         self.hot.hand = state.hot.hand;
         self.hot.continuous_check = state.hot.continuous_check;
@@ -653,7 +649,7 @@ pub(crate) struct NullStatePrefix {
 pub(crate) struct StateHotComputed {
     pub(crate) plies_from_null: Ply,
     pub(crate) board_key: ZobristKey,
-    pub(crate) hand_key: ZobristKey,
+    pub(crate) key: ZobristKey,
     pub(crate) partial_keys: PartialKeys,
     pub(crate) hand: Hand,
     pub(crate) continuous_check: [u16; Color::COUNT],
@@ -703,7 +699,7 @@ pub(crate) struct MoveStateWriteBack {
 #[derive(Clone, Copy)]
 pub(crate) struct NullStateWriteBack {
     pub(crate) board_key: ZobristKey,
-    pub(crate) hand_key: ZobristKey,
+    pub(crate) key: ZobristKey,
     pub(crate) hand: Hand,
     pub(crate) continuous_check: [u16; Color::COUNT],
     pub(crate) check_squares: CheckSquares,
@@ -827,8 +823,9 @@ impl StateStack {
     #[cfg(test)]
     pub(crate) fn reset_with_position(&mut self, pos: &mut Position) {
         self.reset_sfen();
+        let keys = pos.compute_keys();
         let mut state = StateInfo::default();
-        state.write_root_hot(pos.board_key, pos.hand_key, pos.hand(pos.turn()));
+        state.write_root_hot(keys.board_key, keys.key, pos.hand(pos.turn()));
         pos.compute_caches_for_state(&mut state);
         self.write_current_state(state);
         pos.st_index = self.current_index();
@@ -906,7 +903,7 @@ impl StateStack {
         let (chunk_idx, offset) = Self::locate(idx);
         let entry = &mut self.chunks[chunk_idx][offset];
         entry.hot.board_key = state.board_key;
-        entry.hot.hand_key = state.hand_key;
+        entry.hot.key = state.key;
         entry.hot.hand = state.hand;
         entry.hot.continuous_check = state.continuous_check;
         entry.write_null_tactical_after_turn_flip(state.check_squares);

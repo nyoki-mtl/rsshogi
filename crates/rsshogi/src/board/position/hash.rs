@@ -1,10 +1,7 @@
 use super::Position;
 use crate::board::state_info::{PartialKeys, StateInfo};
 use crate::board::zobrist::{Zobrist, ZobristKey};
-use crate::types::{Color, Hand, HandPiece, Piece, PieceType};
-// `key_after_move` 系（`book` データ機能の内部専用）でのみ使う型。
-#[cfg(feature = "book")]
-use crate::types::{Move, MoveBase};
+use crate::types::{Color, Hand, HandPiece, Move, Move32, MoveBase, Piece, PieceType};
 
 const MATERIAL_VALUES: [i32; PieceType::COUNT] = [
     0,      // なし
@@ -25,10 +22,9 @@ const MATERIAL_VALUES: [i32; PieceType::COUNT] = [
     0,      // 金相当
 ];
 
-#[allow(clippy::struct_field_names)]
 pub(in crate::board) struct KeySet {
     pub(in crate::board) board_key: ZobristKey,
-    pub(in crate::board) hand_key: ZobristKey,
+    pub(in crate::board) key: ZobristKey,
 }
 
 impl Position {
@@ -65,21 +61,18 @@ impl Position {
     }
 
     /// 盤上配置 + 手番の Zobrist キー（持ち駒は含まない）。
+    #[inline]
     #[must_use]
-    pub const fn board_key(&self) -> ZobristKey {
-        self.board_key
-    }
-
-    /// 持ち駒の Zobrist キー。
-    #[must_use]
-    pub const fn hand_key(&self) -> ZobristKey {
-        self.hand_key
+    pub fn board_key(&self) -> ZobristKey {
+        self.current_hot().board_key()
     }
 
     /// Zobrist ハッシュを完全計算する。
+    ///
+    /// 差分更新の参照実装であり、局面の再構築時にのみ呼ぶ。
     pub(in crate::board) fn compute_keys(&self) -> KeySet {
         let mut board_key = ZobristKey::default();
-        let mut hand_key = ZobristKey::default();
+        let mut hand_contribution = ZobristKey::default();
 
         // 盤上の駒
         for (sq, piece) in self.board.iter() {
@@ -91,11 +84,11 @@ impl Position {
         // 持ち駒
         for color in [Color::BLACK, Color::WHITE] {
             let hand = self.hand(color);
-            for hp in 0..7 {
-                let hp = HandPiece::new(hp);
+            for hp in HandPiece::iter() {
+                // 枚数 0 のキーはゼロなので読み飛ばしてよい。
                 let count = Hand::count_of(hand, hp);
                 if count > 0 {
-                    hand_key.add(Zobrist::hand(color, hp.to_piece_type(), count as usize));
+                    hand_contribution ^= Zobrist::hand(color, hp.to_piece_type(), count);
                 }
             }
         }
@@ -105,7 +98,7 @@ impl Position {
             board_key ^= Zobrist::side();
         }
 
-        KeySet { board_key, hand_key }
+        KeySet { board_key, key: board_key ^ hand_contribution }
     }
 
     /// 部分ハッシュ・駒割りキャッシュをまとめて返す。
@@ -114,11 +107,28 @@ impl Position {
         self.current_hot().partial_keys()
     }
 
-    #[cfg(feature = "book")]
+    /// `mv` を適用した後の盤面キー（持ち駒を含まない）を、局面を変更せずに求める。
+    ///
+    /// 千日手判定用の第 2 キーを先読みしたい消費者向け。局面全体のキーは
+    /// [`Position::key_after`] を使う。
+    /// `mv` は現局面の合法手でなければならない。合法性は検査しない。
+    #[inline]
+    #[must_use]
+    pub fn board_key_after(&self, mv: Move32) -> ZobristKey {
+        self.board_key_after_impl(mv)
+    }
+
+    /// `Move` 版の [`Position::board_key_after`]。
+    #[inline]
+    #[must_use]
+    pub fn board_key_after_move(&self, mv: Move) -> ZobristKey {
+        self.board_key_after_impl(mv)
+    }
+
     fn board_key_after_impl(&self, mv: impl MoveBase) -> ZobristKey {
         let m = mv.to_move();
         let us = self.turn();
-        let mut board_key = self.board_key ^ Zobrist::side();
+        let mut board_key = self.board_key() ^ Zobrist::side();
         let to = m.to_sq();
 
         if m.is_drop() {
@@ -144,35 +154,67 @@ impl Position {
         board_key
     }
 
-    /// `Move` 版の `key_after`。
+    /// `mv` を適用した後の局面キーを、局面を変更せずに求める。
     ///
-    /// `book` データ機能の内部でのみ使用するため `book` feature 有効時にのみコンパイルされる。
-    #[cfg(feature = "book")]
+    /// 主な用途は探索エンジンの置換表 prefetch で、
+    /// `key_after` でキーを確定 → engine 側で TT を prefetch → [`Position::apply_move32`]
+    /// の順に使う。prefetch の発行 API は本 crate には置かない
+    /// （置換表は engine の所有物であり、rsshogi は prefetch すべきアドレスを知り得ない）。
+    ///
+    /// 戻り値は `mv` を適用した後の [`Position::key`] と一致する。
+    /// `mv` は現局面の合法手でなければならない。合法性は検査しないため、
+    /// 非合法手を渡した場合の戻り値は意味を持たない。
+    #[inline]
+    #[must_use]
+    pub fn key_after(&self, mv: Move32) -> ZobristKey {
+        self.key_after_impl(mv)
+    }
+
+    /// `Move` 版の [`Position::key_after`]。
+    #[inline]
     #[must_use]
     pub fn key_after_move(&self, mv: Move) -> ZobristKey {
         self.key_after_impl(mv)
     }
 
-    #[cfg(feature = "book")]
+    /// null move（手番のみ反転）を適用した後の局面キー。
+    ///
+    /// 盤上の駒も持ち駒も動かないため、手番キーとの XOR だけで求まる。
+    #[inline]
+    #[must_use]
+    pub fn key_after_null(&self) -> ZobristKey {
+        self.key() ^ Zobrist::side()
+    }
+
     fn key_after_impl(&self, mv: impl MoveBase) -> ZobristKey {
         let m = mv.to_move();
         let us = self.turn();
+        // 盤面差分は board_key と key の両方に効く。board_key_after_impl が
+        // 前者を返すので、その差分をそのまま合成キーへ移す。
         let board_key = self.board_key_after_impl(mv);
-        let mut hand_key = self.hand_key;
+        let mut key = self.key() ^ self.board_key() ^ board_key;
         let to = m.to_sq();
 
         if m.is_drop() {
             let piece_type =
                 m.dropped_piece().expect("drop move must include a dropped piece type");
-            hand_key.sub(Zobrist::hand(us, piece_type, 1));
+            let hand_piece =
+                HandPiece::from_piece_type(piece_type).expect("drop move must use a hand piece");
+            let before = self.hand(us).count(hand_piece);
+            debug_assert!(before > 0, "drop move must have a matching hand piece");
+            key ^= Zobrist::hand_delta(us, piece_type, before, before - 1);
         } else {
             let captured = self.piece_on(to);
             if captured != Piece::NONE {
-                hand_key.add(Zobrist::hand(us, captured.piece_type().demote(), 1));
+                let piece_type = captured.piece_type().demote();
+                let hand_piece = HandPiece::from_piece_type(piece_type)
+                    .expect("captured piece must map to hand");
+                let before = self.hand(us).count(hand_piece);
+                key ^= Zobrist::hand_delta(us, piece_type, before, before + 1);
             }
         }
 
-        board_key ^ hand_key
+        key
     }
 
     #[inline]
@@ -186,7 +228,6 @@ impl Position {
         }
 
         Self::toggle_board_piece_partial_hashes(keys, sq, piece);
-        keys.material.add(Zobrist::material(piece));
         keys.material_value += signed_material_value(piece);
     }
 
@@ -201,7 +242,6 @@ impl Position {
         }
 
         Self::toggle_board_piece_partial_hashes(keys, sq, piece);
-        keys.material.sub(Zobrist::material(piece));
         keys.material_value -= signed_material_value(piece);
     }
 

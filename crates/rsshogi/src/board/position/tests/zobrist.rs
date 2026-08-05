@@ -33,16 +33,6 @@ fn expected_non_pawn_key(pos: &Position, color: Color) -> ZobristKey {
     key
 }
 
-fn expected_material_key(pos: &Position) -> ZobristKey {
-    let mut key = ZobristKey::default();
-    for (_sq, piece) in pos.board_array().iter() {
-        if piece != Piece::NONE {
-            key.add(Zobrist::material(piece));
-        }
-    }
-    key
-}
-
 fn expected_material_value(pos: &Position) -> i32 {
     const MATERIAL_VALUES: [i32; PieceType::COUNT] =
         [0, 90, 315, 405, 495, 855, 990, 540, 15_000, 540, 540, 540, 540, 945, 1_395, 0];
@@ -77,7 +67,6 @@ fn expected_partial_keys(pos: &Position) -> PartialKeys {
         expected_pawn_key(pos),
         expected_minor_piece_key(pos),
         [expected_non_pawn_key(pos, Color::BLACK), expected_non_pawn_key(pos, Color::WHITE)],
-        expected_material_key(pos),
         expected_material_value(pos),
     )
 }
@@ -96,7 +85,7 @@ fn test_zobrist_after_normal_move_matches_expected() {
 
     let initial_zobrist = pos.key();
     let mut board_key = pos.board_key();
-    let hand_key = pos.hand_key();
+    let mut key = pos.key();
 
     apply_usi_move(&mut pos, "7g7f");
 
@@ -104,12 +93,14 @@ fn test_zobrist_after_normal_move_matches_expected() {
 
     let from = Square::from_usi("7g").unwrap();
     let to = Square::from_usi("7f").unwrap();
-    board_key ^= Zobrist::psq(from, Piece::B_PAWN);
-    board_key ^= Zobrist::psq(to, Piece::B_PAWN);
-    board_key ^= Zobrist::side();
-    let expected = board_key ^ hand_key;
+    // 盤上の変化と手番は board_key と key の両方に効く。
+    let delta =
+        Zobrist::psq(from, Piece::B_PAWN) ^ Zobrist::psq(to, Piece::B_PAWN) ^ Zobrist::side();
+    board_key ^= delta;
+    key ^= delta;
 
-    assert_eq!(pos.key(), expected);
+    assert_eq!(pos.board_key(), board_key);
+    assert_eq!(pos.key(), key);
 }
 
 #[test]
@@ -120,7 +111,7 @@ fn test_zobrist_after_capture_matches_expected() {
 
     let initial_zobrist = pos.key();
     let mut board_key = pos.board_key();
-    let mut hand_key = pos.hand_key();
+    let mut key = pos.key();
 
     let mv = move_from_usi(&pos, "2h2d");
     let from = mv.from_sq();
@@ -128,24 +119,34 @@ fn test_zobrist_after_capture_matches_expected() {
     let moved_piece = pos.piece_on(from);
     let captured_piece = pos.piece_on(to);
     let us = pos.turn();
+    let captured_hand_type = captured_piece.piece_type().demote();
+    let captured_hand_count_before = HandPiece::from_piece_type(captured_hand_type)
+        .map_or(0, |hp| Hand::count_of(pos.hand(us), hp));
     assert!(pos.is_legal_move32(mv));
     pos.apply_move32(mv);
 
     assert_ne!(pos.key(), initial_zobrist);
 
     let moved_after = if mv.is_promotion() { moved_piece.promote() } else { moved_piece };
-    board_key ^= Zobrist::psq(from, moved_piece);
+    let mut delta =
+        Zobrist::psq(from, moved_piece) ^ Zobrist::psq(to, moved_after) ^ Zobrist::side();
     if captured_piece != Piece::NONE {
-        board_key ^= Zobrist::psq(to, captured_piece);
+        delta ^= Zobrist::psq(to, captured_piece);
     }
-    board_key ^= Zobrist::psq(to, moved_after);
-    board_key ^= Zobrist::side();
+    board_key ^= delta;
+    key ^= delta;
     if captured_piece != Piece::NONE {
-        hand_key.add(Zobrist::hand(us, captured_piece.piece_type().demote(), 1));
+        // 持ち駒の変化は key にしか効かない。
+        key ^= Zobrist::hand_delta(
+            us,
+            captured_hand_type,
+            captured_hand_count_before,
+            captured_hand_count_before + 1,
+        );
     }
-    let expected = board_key ^ hand_key;
 
-    assert_eq!(pos.key(), expected);
+    assert_eq!(pos.board_key(), board_key);
+    assert_eq!(pos.key(), key);
 }
 
 #[test]
@@ -156,19 +157,27 @@ fn test_zobrist_after_drop_matches_expected() {
 
     let initial_zobrist = pos.key();
     let mut board_key = pos.board_key();
-    let mut hand_key = pos.hand_key();
+    let mut key = pos.key();
+    let pawn_count_before = Hand::count_of(pos.hand(Color::BLACK), HandPiece::PAWN);
 
     apply_usi_move(&mut pos, "P*5e");
 
     assert_ne!(pos.key(), initial_zobrist);
 
     let to = Square::from_usi("5e").unwrap();
-    board_key ^= Zobrist::psq(to, Piece::B_PAWN);
-    board_key ^= Zobrist::side();
-    hand_key.sub(Zobrist::hand(Color::BLACK, PieceType::PAWN, 1));
-    let expected = board_key ^ hand_key;
+    let delta = Zobrist::psq(to, Piece::B_PAWN) ^ Zobrist::side();
+    board_key ^= delta;
+    key ^= delta;
+    // 持ち駒の変化は key にしか効かない。
+    key ^= Zobrist::hand_delta(
+        Color::BLACK,
+        PieceType::PAWN,
+        pawn_count_before,
+        pawn_count_before - 1,
+    );
 
-    assert_eq!(pos.key(), expected);
+    assert_eq!(pos.board_key(), board_key);
+    assert_eq!(pos.key(), key);
 }
 
 #[test]
@@ -178,7 +187,7 @@ fn test_zobrist_after_promote_matches_expected() {
     let mut pos = crate::board::position_from_sfen(sfen).unwrap();
 
     let mut board_key = pos.board_key();
-    let hand_key = pos.hand_key();
+    let mut key = pos.key();
 
     let mv = move_from_usi(&pos, "8c8f+");
     let from = mv.from_sq();
@@ -187,14 +196,16 @@ fn test_zobrist_after_promote_matches_expected() {
     assert!(pos.is_legal_move32(mv));
     pos.apply_move32(mv);
 
-    assert_ne!(pos.key(), board_key ^ hand_key);
+    assert_ne!(pos.key(), key);
 
-    board_key ^= Zobrist::psq(from, moved_piece);
-    board_key ^= Zobrist::psq(to, moved_piece.promote());
-    board_key ^= Zobrist::side();
-    let expected = board_key ^ hand_key;
+    // 成りは持ち駒を動かさないので、差分は board_key と key で同一。
+    let delta =
+        Zobrist::psq(from, moved_piece) ^ Zobrist::psq(to, moved_piece.promote()) ^ Zobrist::side();
+    board_key ^= delta;
+    key ^= delta;
 
-    assert_eq!(pos.key(), expected);
+    assert_eq!(pos.board_key(), board_key);
+    assert_eq!(pos.key(), key);
 }
 
 #[test]

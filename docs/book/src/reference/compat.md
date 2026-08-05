@@ -15,7 +15,7 @@ rsshogi と cshogi の API 対応をまとめたリファレンスです。
 | 局面キー | ✅ | `zobrist_hash` |
 | Move32 復元 | ✅ | `move32_from_move`, `move_from_csa` |
 | policy ラベル変換 | ✅ | `rsshogi.policy`, `rsshogi::labels::policy` |
-| 棋譜 I/O | ✅ | `from_kif_str`, `from_ki2_str`, `from_csa_str`, `to_kif`, `to_ki2`, `to_csa` |
+| 棋譜 I/O | ✅ | `from_kif_str`, `from_ki2_str`, `from_csa_str`, `from_csa_games_str`, `to_kif`, `to_ki2`, `to_csa` |
 | USI エンジン連携 | ⚠️ | `rsshogi.usi`（USI 文字列の値オブジェクト変換のみ。エンジンプロセス制御は対象外）|
 
 ## API 差分（主要）

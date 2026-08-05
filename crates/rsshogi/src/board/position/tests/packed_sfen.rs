@@ -131,10 +131,7 @@ fn position_from_parts(
     pos.ply = ply;
     pos.rebuild_bitboards();
 
-    let keys = pos.compute_keys();
-    pos.board_key = keys.board_key;
-    pos.hand_key = keys.hand_key;
-    pos.zobrist = pos.board_key ^ pos.hand_key;
+    pos.init_stack();
     pos
 }
 

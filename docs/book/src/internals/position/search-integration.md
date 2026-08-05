@@ -33,7 +33,7 @@ struct SearchPosition {
     pos: Position,
     /// NNUE 評価の差分情報（エンジン固有）
     eval_state: NnueState,
-    /// 置換表キー（board_key ^ hand_key で取得可能）
+    /// 置換表キー
     // pos.key() で直接取得できるため、通常はフィールドとして持つ必要はない
 }
 
@@ -83,13 +83,19 @@ impl SearchPosition {
 
 ```rust,ignore
 // 置換表のキーとして使用
-let key = pos.key();                    // board_key ^ hand_key
-let board_key = pos.board_key();        // 盤面 + 手番のハッシュ
-let hand_key = pos.hand_key();          // 持ち駒のハッシュ
+let key = pos.key();                    // 盤面 + 手番 + 持ち駒のハッシュ
+let board_key = pos.board_key();        // 盤面 + 手番のハッシュ（千日手判定用）
 
-// 指し手適用前に、適用後のキーを計算（置換表の事前参照に有用）
-let key_after = pos.key_after_move(mv); // Move 版
+// 指し手適用前に、適用後のキーを計算（置換表の prefetch に有用）
+let key_after = pos.key_after(mv32);        // Move32 版
+let key_after = pos.key_after_move(mv);     // Move 版
+let key_after = pos.key_after_null();       // null move 版
 ```
+
+持ち駒だけのハッシュは提供していません。持ち駒の同一性が必要な場合は
+`pos.hand(color)` が返す生の `Hand` を比較してください。
+優等/劣等局面の判定は半順序の比較であり、ハッシュでは表現できないため、
+`Position` 内部の判定も生の `Hand` を使っています。
 
 ### 王手・ピン情報
 
@@ -347,9 +353,9 @@ let repetition_distance = pos.repetition_distance();
 
 | API | 型 | 用途 |
 |-----------|-----|------|
-| `board_key()` | `ZobristKey` | 盤面 + 手番のハッシュ |
-| `hand_key()` | `ZobristKey` | 持ち駒のハッシュ |
-| `key()` | `ZobristKey` | 置換表などで使う局面キー |
+| `board_key()` | `ZobristKey` | 盤面 + 手番のハッシュ（千日手判定用） |
+| `key()` | `ZobristKey` | 置換表などで使う局面キー（持ち駒込み） |
+| `key_after(mv)` | `ZobristKey` | 局面を変えずに、1 手進めた後の局面キー |
 | `checkers()` | `Bitboard` | 王手している駒の集合 |
 | `pinners(color)` | `Bitboard` | 指定色の玉に対してピンしている敵の大駒 |
 | `blockers_for_king(color)` | `Bitboard` | 指定色の玉へのラインをブロックする駒 |

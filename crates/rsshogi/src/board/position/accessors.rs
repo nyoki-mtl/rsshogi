@@ -137,11 +137,11 @@ impl Position {
         self.hands
     }
 
-    /// 局面のキーを取得。
+    /// 持ち駒まで含む局面全体の Zobrist キーを取得。
     #[inline]
     #[must_use]
-    pub const fn key(&self) -> ZobristKey {
-        self.zobrist
+    pub fn key(&self) -> ZobristKey {
+        self.current_hot().key()
     }
 
     /// 指し手で移動させる駒（移動前）を返す。

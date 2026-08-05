@@ -100,11 +100,23 @@ Move32 を USI 形式の文字列に変換します。
 move.to_csa() -> str | None
 ```
 
-Move32 を CSA 形式の文字列に変換します。駒情報が必要なため、
-`Board.legal_moves_move32()` から取得した Move32 でのみ使用できます。
+Move32 を CSA 形式の指し手文字列に変換します。CSA 仕様では手番記号 `+` / `-` が
+指し手表記の必須要素なので、`"+7776FU"` のように記号を含む形で返します。
+
+手番は移動後の駒が持つ色から決まります。`Move32.from_usi()` で生成した Move32 は
+駒情報を持たないため変換できません。`Board.legal_moves_move32()` や
+`Board.move32_from_move()` から取得した Move32 を使ってください。
 
 **戻り値:**
-- `str | None`: CSA 形式の文字列（特殊手の場合は `None`）
+- `str | None`: CSA 形式の指し手文字列（特殊手、または駒情報を持たない場合は `None`）
+
+```python
+board = rsshogi.core.Board()
+mv32 = board.move32_from_move(rsshogi.core.Move.from_usi("7g7f"))
+print(mv32.to_csa())  # +7776FU
+
+print(rsshogi.core.Move32.from_usi("7g7f").to_csa())  # None
+```
 
 ---
 
@@ -296,7 +308,7 @@ board = rsshogi.core.Board()
 move = board.legal_moves_move32()[0]
 board.apply_move32(move)
 
-# CSA 形式で出力（駒情報を含むため可能）
+# CSA 形式で出力（駒情報を含むため可能。手番記号 +/- が先頭に付く）
 for legal_move in board.legal_moves_move32():
     csa = legal_move.to_csa()
     print(f"{legal_move.to_usi()} => {csa}")

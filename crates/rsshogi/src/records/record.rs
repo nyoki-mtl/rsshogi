@@ -466,6 +466,14 @@ impl AnnotatedMoveEntry {
         self.annotation.set_eval(eval);
     }
 
+    pub(crate) const fn engine_info(&self) -> Option<&EngineInfo> {
+        self.annotation.engine_info()
+    }
+
+    pub(crate) fn set_engine_info(&mut self, engine_info: Option<EngineInfo>) {
+        self.annotation.set_engine_info(engine_info);
+    }
+
     #[must_use]
     pub(crate) fn into_parts(self) -> (MoveEntry, RecordAnnotation) {
         (self.entry, self.annotation)

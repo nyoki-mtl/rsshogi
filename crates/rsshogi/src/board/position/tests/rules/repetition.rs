@@ -140,7 +140,6 @@ fn test_clone_for_search_truncates_history_and_preserves_current_state() {
     assert_eq!(cloned.to_sfen(None), pos.to_sfen(None));
     assert_eq!(cloned.key(), pos.key());
     assert_eq!(cloned.board_key(), pos.board_key());
-    assert_eq!(cloned.hand_key(), pos.hand_key());
     assert_eq!(cloned.checkers(), pos.checkers());
     assert_eq!(cloned.last_move(), pos.last_move());
     assert_eq!(cloned.last_moved_piece_type(), pos.last_moved_piece_type());

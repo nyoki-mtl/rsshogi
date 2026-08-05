@@ -371,7 +371,6 @@ fn test_apply_move32_with_facts_normal_move() {
     assert!(!facts.moved_king);
     assert_eq!(facts.gives_check, gives_check);
     assert_eq!(facts.board_key_after, pos.board_key());
-    assert_eq!(facts.hand_key_after, pos.hand_key());
     assert_eq!(facts.key_after, pos.key());
     assert_eq!(facts.partial_keys_after, pos.partial_keys());
     assert_eq!(facts.search_stack_site().moved_piece, Piece::B_PAWN);

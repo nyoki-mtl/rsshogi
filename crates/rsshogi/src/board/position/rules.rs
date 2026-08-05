@@ -523,7 +523,7 @@ impl Position {
         let current_state = stack.hot(self.st_index);
         let current_hand = current_state.hand;
         let current_continuous_check = current_state.continuous_check;
-        let current_board_key = self.board_key;
+        let current_board_key = current_state.board_key;
 
         // スタックを遡って同一局面を検索
         // 4手前から、2手ずつ遡る（同一局面に戻るためには偶数手必要）

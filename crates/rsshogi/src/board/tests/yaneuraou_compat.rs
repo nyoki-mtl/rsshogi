@@ -1,5 +1,5 @@
 use crate::board::test_support::move_from_usi_expect;
-use crate::board::zobrist::ZobristKey;
+use crate::board::zobrist::{ZobristKey, ZobristTable};
 use crate::board::{Bitboard, Position};
 use crate::types::{Color, Piece, PieceType, Square};
 
@@ -142,7 +142,7 @@ fn assert_state_matches_position(pos: &Position) {
     let state = stack.current();
     let keys = pos.compute_keys();
     assert_eq!(state.board_key, keys.board_key);
-    assert_eq!(state.hand_key, keys.hand_key);
+    assert_eq!(state.key, keys.key);
     assert_eq!(state.hand, pos.hand(pos.turn()));
 }
 
@@ -158,15 +158,31 @@ fn test_between_line_tables_match_yaneuraou_logic() {
     }
 }
 
+/// Zobrist テーブルの生成が決定的であることを、PRNG の再実装で pin する。
+///
+/// 生成 scheme（固定シード Xorshift64\*、seed 20151225）は YaneuraOu と同じだが、
+/// **キー値は互換ではない**。YaneuraOu は `side = 1` 固定・全キー `& ~1ULL` で
+/// bit 0 に手番を埋め込むのに対し、rsshogi はこれを行わない。
+/// このテストが固定するのは「rsshogi のテーブルが決定的である」ことであって、
+/// 「YaneuraOu と同じ値である」ことではない。
+///
+/// 併せて `next_key` の 4-draw 空回しも固定する。ビット幅によらず PRNG を
+/// ちょうど 4 回消費し `low` を 1 draw 目とするため、64bit ビルドのキーは
+/// 128bit ビルドの low limb と一致する。
 #[test]
 #[allow(clippy::large_stack_arrays)]
-fn test_zobrist_table_matches_yaneuraou_logic() {
+fn test_zobrist_table_generation_is_deterministic() {
+    // 独立再実装として、`Hand` のビット幅から導出せず値を直接書き下ろす。
+    // 歩 5bit / 香桂銀金 3bit / 角飛 2bit に対応する表現可能な最大枚数。
+    const HAND_OFFSET: [usize; PieceType::HAND_TABLE_SIZE] = [0, 0, 32, 40, 48, 56, 60, 64];
+    const HAND_MAX: [u32; PieceType::HAND_TABLE_SIZE] = [0, 31, 7, 7, 7, 3, 3, 7];
+
     let mut rng = Prng::new(ZOBRIST_SEED);
     let expected_side = next_key(&mut rng);
     let expected_no_pawns = next_key(&mut rng);
 
     let mut expected_board = [[ZobristKey::default(); Square::COUNT_WITH_NONE]; Piece::COUNT];
-    let mut expected_hand = [[ZobristKey::default(); PieceType::HAND_TABLE_SIZE]; Color::COUNT];
+    let mut expected_hand = [[ZobristKey::default(); ZobristTable::HAND_SLOT_COUNT]; Color::COUNT];
 
     for row in expected_board.iter_mut().take(Piece::COUNT).skip(1) {
         for cell in row.iter_mut().take(Square::COUNT) {
@@ -174,9 +190,12 @@ fn test_zobrist_table_matches_yaneuraou_logic() {
         }
     }
 
+    // 色を外周、駒種を内周、枚数を最内周に取る。枚数 0 の slot は draw しない。
     for row in expected_hand.iter_mut().take(Color::COUNT) {
-        for cell in row.iter_mut().take(PieceType::HAND_TABLE_SIZE).skip(1) {
-            *cell = next_key(&mut rng);
+        for pt in 1..PieceType::HAND_TABLE_SIZE {
+            for count in 1..=HAND_MAX[pt] {
+                row[HAND_OFFSET[pt] + count as usize] = next_key(&mut rng);
+            }
         }
     }
 
@@ -191,8 +210,8 @@ fn test_zobrist_table_matches_yaneuraou_logic() {
     }
 
     for (color, row) in expected_hand.iter().enumerate().take(Color::COUNT) {
-        for (pt, cell) in row.iter().enumerate().take(PieceType::HAND_TABLE_SIZE) {
-            assert_eq!(zobrist.hand_at_index(color, pt), *cell);
+        for (slot, cell) in row.iter().enumerate() {
+            assert_eq!(zobrist.hand_at_index(color, slot), *cell);
         }
     }
 }

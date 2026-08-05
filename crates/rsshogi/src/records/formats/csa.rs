@@ -1,11 +1,12 @@
 use crate::board::{Position, SfenError};
 use crate::records::formats::common::{
-    BoardMap, EncodedText, ExportOptions, HandCounts, TextEncoding, board_map_to_sfen, encode_text,
-    encode_text_with_options, ensure_hand_sides, hand_counts_to_sfen, refresh_position_if_needed,
+    BoardMap, CsaVersion, EncodedText, ExportOptions, HandCounts, TextEncoding, board_map_to_sfen,
+    encode_text, encode_text_with_options, ensure_hand_sides, hand_counts_to_sfen,
+    refresh_position_if_needed,
 };
 use crate::records::record::{
-    AnnotatedMoveEntry, Record, RecordAnnotation, RecordMetadata, RecordMetadataBuilder,
-    SpecialMove, SpecialMoveEntry,
+    AnnotatedMoveEntry, EngineExtraValue, EngineInfo, Record, RecordAnnotation, RecordMetadata,
+    RecordMetadataBuilder, SpecialMove, SpecialMoveEntry,
 };
 use crate::records::time_control::{TimeControl, parse_csa_time_control};
 use crate::types::{Color, Eval, GameResult, Piece, PieceType, Square};
@@ -24,11 +25,24 @@ pub enum CsaError {
     InvalidBoard(String),
     #[error("invalid CSA move line: {0}")]
     InvalidMove(String),
+    /// 指し手自体は合法でも、手番記号が手番と食い違う行。
+    ///
+    /// [`CsaError::IllegalMove`] と分けているのは、原文を持たないと「どの producer が
+    /// 誤った符号を書いたか」を追えないため。
+    #[error("move sign does not match the side to move: {0}")]
+    MoveSideMismatch(String),
     #[error("illegal move at index {index}")]
     IllegalMove { index: usize },
     #[error("missing CSA end marker")]
     MissingEndMarker,
 }
+
+/// `'**` 行の読み筋を原文のまま保持する `EngineInfo` extras キー。
+const CSA_PV_EXTRA_KEY: &str = "csa_pv";
+/// 解析できなかった `'**` 行を原文のまま保持する `EngineInfo` extras キー。
+const CSA_ANALYSIS_RAW_EXTRA_KEY: &str = "csa_analysis_raw";
+/// 複数棋譜を区切るセパレータ行。
+const CSA_GAME_SEPARATOR: &str = "/";
 
 const INITIAL_COUNTS: [(char, [(&str, u8); 8]); 2] = [
     ('+', [("FU", 9), ("KY", 2), ("KE", 2), ("GI", 2), ("KI", 2), ("KA", 1), ("HI", 1), ("OU", 1)]),
@@ -118,32 +132,106 @@ fn parse_piece_line(line: &str) -> Result<Vec<(char, String, String)>, CsaError>
 
 fn parse_time_text(text: &str) -> Option<u32> {
     let mut seconds = 0u32;
-    let mut multiplier = 1;
+    let mut multiplier = 1u32;
     let mut parsed_any = false;
     for part in text.split(['：', ':', ' ', '　']).filter(|part| !part.is_empty()).rev() {
         if let Ok(value) = part.parse::<u32>() {
-            seconds += value * multiplier;
-            multiplier *= 60;
+            // 桁溢れする値は解釈しない。debug の panic と release の値化けを避ける。
+            seconds = seconds.checked_add(value.checked_mul(multiplier)?)?;
+            multiplier = multiplier.checked_mul(60)?;
             parsed_any = true;
         }
     }
-    if parsed_any { Some(seconds * 1_000) } else { None }
+    if parsed_any { seconds.checked_mul(1_000) } else { None }
+}
+
+/// CSA の消費時間本体（秒、小数 3 桁まで）をミリ秒へ変換する。
+///
+/// ミリ秒表記は V3.0 で追加された。整数秒だけの V2.2 表記も同じ経路で扱う。
+fn parse_csa_elapsed_ms(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (seconds_text, fraction_text) = match trimmed.split_once('.') {
+        Some((seconds, fraction)) => (seconds, Some(fraction)),
+        None => (trimmed, None),
+    };
+    if !seconds_text.chars().all(|ch| ch.is_ascii_digit()) || seconds_text.is_empty() {
+        return None;
+    }
+    let mut total_ms = seconds_text.parse::<u32>().ok()?.checked_mul(1_000)?;
+    if let Some(fraction) = fraction_text {
+        if fraction.is_empty()
+            || fraction.len() > 3
+            || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut padded = fraction.to_string();
+        while padded.len() < 3 {
+            padded.push('0');
+        }
+        total_ms = total_ms.checked_add(padded.parse::<u32>().ok()?)?;
+    }
+    Some(total_ms)
 }
 
 fn parse_csa_time_token(token: &str) -> Option<u32> {
     let trimmed = token.trim();
-    if trimmed.starts_with("T=") {
-        return parse_time_text(trimmed.trim_start_matches("T="));
+    let body = match trimmed.strip_prefix("T=") {
+        Some(rest) => rest,
+        None => trimmed.strip_prefix('T')?,
+    };
+    // 仕様どおりの秒表記を優先し、`T1:30` のような非標準表記だけ従来解釈へ落とす。
+    parse_csa_elapsed_ms(body).or_else(|| parse_time_text(body))
+}
+
+/// CSA 消費時間行を組み立てる。
+///
+/// ミリ秒表記は過去のプログラムが読めなくなるため、V3.0 出力かつ端数がある場合だけ使う。
+fn format_csa_elapsed(elapsed_ms: u32, version: CsaVersion) -> String {
+    if version == CsaVersion::V3_0 && !elapsed_ms.is_multiple_of(1_000) {
+        format!("T{}.{:03}", elapsed_ms / 1_000, elapsed_ms % 1_000)
+    } else {
+        format!("T{}", elapsed_ms / 1_000)
     }
-    if trimmed.starts_with('T') {
-        return parse_time_text(trimmed.trim_start_matches('T'));
+}
+
+/// `'**` 行から取り出した評価値・読み筋・ノード数。
+struct CsaAnalysis {
+    eval: Option<i32>,
+    pv: Option<String>,
+    nodes: Option<u64>,
+}
+
+/// V3.0 の `'** (評価値) (読み筋) #(ノード数)` 行を解析する。
+///
+/// 読み筋は `+PASS` や `%TORYO` を含みうるうえ再生には局面が要るので、
+/// 型付けせず元の文字列のまま保持する。
+fn parse_csa_analysis_line(line: &str) -> Option<CsaAnalysis> {
+    let body = line.trim().strip_prefix("'**")?.trim();
+    if body.is_empty() {
+        return None;
     }
-    None
+    let mut nodes = None;
+    let mut rest = body;
+    if let Some(idx) = body.rfind('#')
+        && let Ok(value) = body[idx + 1..].trim().parse::<u64>()
+    {
+        nodes = Some(value);
+        rest = body[..idx].trim_end();
+    }
+    let mut tokens = rest.split_whitespace();
+    let eval = tokens.next().and_then(|token| token.parse::<i32>().ok());
+    let pv: Vec<&str> = tokens.collect();
+    let pv = if pv.is_empty() { None } else { Some(pv.join(" ")) };
+    Some(CsaAnalysis { eval, pv, nodes })
 }
 
 fn parse_csa_program_comment_text(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    if trimmed.starts_with("'** ") || trimmed.starts_with("'**評価値=") {
+    if trimmed.starts_with("'**") {
         return None;
     }
     let comment = trimmed.strip_prefix("'*")?;
@@ -195,6 +283,41 @@ fn append_comment_text(slot: &mut Option<String>, text: &str) {
     }
 }
 
+/// `'**` 行を `EngineInfo` へ取り込む。
+///
+/// 評価値を読めない行、および `Eval` が保持できない範囲の評価値は解析を諦め、原文を
+/// extras へ追記して情報を落とさない。原文を追記する経路は同じ指し手に複数行あっても
+/// 累積する。一方、解析できた行は後の行が前の行を上書きする。仕様は `'**` を一手一行と
+/// 定めているため、複数行は想定外の入力として最後の行を採る。
+fn apply_csa_analysis(info: &mut EngineInfo, line: &str) {
+    // `Eval` は i16 なので、収まらない評価値は数値化せず原文のまま持ち回す。
+    let parsed = parse_csa_analysis_line(line)
+        .filter(|analysis| analysis.eval.is_some_and(|eval| i16::try_from(eval).is_ok()));
+    let Some(analysis) = parsed else {
+        let mut raw = match info.extras().get(CSA_ANALYSIS_RAW_EXTRA_KEY) {
+            Some(EngineExtraValue::String(existing)) => format!("{existing}\n"),
+            _ => String::new(),
+        };
+        raw.push_str(line.trim());
+        info.set_extra(CSA_ANALYSIS_RAW_EXTRA_KEY.to_string(), EngineExtraValue::String(raw));
+        return;
+    };
+    info.set_eval(analysis.eval.map(Eval::from_i32));
+    if let Some(nodes) = analysis.nodes {
+        info.set_nodes(Some(nodes));
+    }
+    if let Some(pv) = analysis.pv {
+        info.set_extra(CSA_PV_EXTRA_KEY.to_string(), EngineExtraValue::String(pv));
+    }
+}
+
+/// `AnnotatedMoveEntry` に `'**` 行を取り込む。
+fn apply_csa_analysis_to_move(record: &mut AnnotatedMoveEntry, line: &str) {
+    let mut info = record.engine_info().cloned().unwrap_or_default();
+    apply_csa_analysis(&mut info, line);
+    record.set_engine_info(Some(info));
+}
+
 fn append_move_comment(record: &mut AnnotatedMoveEntry, text: &str) {
     let mut comment = record.comment().map(ToOwned::to_owned);
     append_comment_text(&mut comment, text);
@@ -219,11 +342,13 @@ fn apply_csa_metadata(builder: &mut RecordMetadataBuilder, key: &str, value: &st
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
             builder.time_control(parsed);
         }
-        "TIME+" => {
+        // V3.0 仕様は本文で `TIMET+` / `TIMET-`、例で `TIME+` / `TIME-` と綴りが割れている。
+        // どちらも同じ意味として受理し、書き出しは例に合わせた `TIME+` / `TIME-` に寄せる。
+        "TIME+" | "TIMET+" => {
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
             builder.black_time_control(parsed);
         }
-        "TIME-" => {
+        "TIME-" | "TIMET-" => {
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
             builder.white_time_control(parsed);
         }
@@ -325,50 +450,34 @@ fn terminal_from_marker(marker: &str, side_to_move: Color) -> SpecialMoveEntry {
             }
         }
         "%FUZUMI" => SpecialMoveEntry::new(SpecialMove::NoMate, GameResult::Paused),
+        // 手番側の反則負けなので、勝つのは手番の相手。
         "%ILLEGAL_MOVE" => {
             if is_black_turn {
                 SpecialMoveEntry::new(
                     SpecialMove::WinByIllegalMove,
-                    GameResult::BlackWinByIllegalMove,
+                    GameResult::WhiteWinByIllegalMove,
                 )
             } else {
                 SpecialMoveEntry::new(
                     SpecialMove::WinByIllegalMove,
-                    GameResult::WhiteWinByIllegalMove,
+                    GameResult::BlackWinByIllegalMove,
                 )
             }
         }
+        // ILLEGAL_ACTION は反則を犯した側を記号自身が示すので、手番に依存しない。
+        // `%+` は先手の反則行為による後手勝ち、`%-` はその逆。
         "%+ILLEGAL_ACTION" => {
-            if is_black_turn {
-                SpecialMoveEntry::new(
-                    SpecialMove::WinByIllegalMove,
-                    GameResult::BlackWinByIllegalMove,
-                )
-            } else {
-                SpecialMoveEntry::new(
-                    SpecialMove::LoseByIllegalMove,
-                    GameResult::WhiteWinByIllegalMove,
-                )
-            }
+            SpecialMoveEntry::new(SpecialMove::WinByIllegalMove, GameResult::WhiteWinByIllegalMove)
         }
         "%-ILLEGAL_ACTION" => {
-            if is_black_turn {
-                SpecialMoveEntry::new(
-                    SpecialMove::LoseByIllegalMove,
-                    GameResult::BlackWinByIllegalMove,
-                )
-            } else {
-                SpecialMoveEntry::new(
-                    SpecialMove::WinByIllegalMove,
-                    GameResult::WhiteWinByIllegalMove,
-                )
-            }
+            SpecialMoveEntry::new(SpecialMove::WinByIllegalMove, GameResult::BlackWinByIllegalMove)
         }
+        // 時間切れも手番側の負けなので、勝つのは手番の相手。
         "%TIME_UP" => {
             if is_black_turn {
-                SpecialMoveEntry::new(SpecialMove::Timeout, GameResult::BlackWinByTimeout)
-            } else {
                 SpecialMoveEntry::new(SpecialMove::Timeout, GameResult::WhiteWinByTimeout)
+            } else {
+                SpecialMoveEntry::new(SpecialMove::Timeout, GameResult::BlackWinByTimeout)
             }
         }
         "%ERROR" => {
@@ -382,6 +491,14 @@ fn terminal_from_marker(marker: &str, side_to_move: Color) -> SpecialMoveEntry {
 }
 
 fn marker_from_terminal(terminal: &SpecialMoveEntry) -> String {
+    // 元の棋譜が持っていたマーカーを最優先する。`%+ILLEGAL_ACTION` のように
+    // kind へ畳み込むと戻せない情報があるため。
+    if let Some(raw) = terminal.raw() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('%') && !trimmed.contains(char::is_whitespace) {
+            return trimmed.to_string();
+        }
+    }
     match terminal.kind() {
         SpecialMove::Interrupt => "%CHUDAN".to_string(),
         SpecialMove::Resign => "%TORYO".to_string(),
@@ -396,8 +513,10 @@ fn marker_from_terminal(terminal: &SpecialMoveEntry) -> String {
             "%ILLEGAL_MOVE".to_string()
         }
         SpecialMove::WinByDeclaration => "%KACHI".to_string(),
+        // 不戦勝 / 不戦敗 / トライは CSA に対応するマーカーがない。勝敗を反転させる
+        // `%KACHI` を書くより、勝敗を主張しない中断へ落とす。
         SpecialMove::WinByDefault | SpecialMove::LoseByDefault | SpecialMove::Try => {
-            "%KACHI".to_string()
+            "%CHUDAN".to_string()
         }
         SpecialMove::Unknown(name) => {
             if name.starts_with('%') {
@@ -438,7 +557,64 @@ pub fn parse_csa_bytes(data: &[u8]) -> Result<Record, CsaError> {
     parse_csa_str(&decoded)
 }
 
+/// UTF-8 文字列から `/` 区切りの複数棋譜を解析する。
+///
+/// CSA では `/` だけの行で複数の棋譜を 1 ファイルに収められる。単一棋譜の
+/// ファイルでも要素数 1 の `Vec` を返す。空の区画は読み飛ばす。
+///
+/// # Examples
+///
+/// ```
+/// use rsshogi::records::formats::csa;
+///
+/// let text = "V2.2\nPI\n+\n+7776FU\n%TORYO\n/\nV2.2\nPI\n+\n+2726FU\n%TORYO\n";
+/// let games = csa::parse_csa_games(text).unwrap();
+/// assert_eq!(games.len(), 2);
+/// ```
+pub fn parse_csa_games(text: &str) -> Result<Vec<Record>, CsaError> {
+    let mut games = Vec::new();
+    let mut chunk: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.trim_end_matches('\r').trim() == CSA_GAME_SEPARATOR {
+            if let Some(record) = parse_csa_chunk(&chunk)? {
+                games.push(record);
+            }
+            chunk.clear();
+            continue;
+        }
+        chunk.push(line);
+    }
+    if let Some(record) = parse_csa_chunk(&chunk)? {
+        games.push(record);
+    }
+    Ok(games)
+}
+
+/// バイト列から `/` 区切りの複数棋譜を解析する。
+///
+/// デコード規則は [`parse_csa_bytes`] と同じ。
+pub fn parse_csa_games_bytes(data: &[u8]) -> Result<Vec<Record>, CsaError> {
+    let decoded = decode_csa_bytes(data);
+    parse_csa_games(&decoded)
+}
+
+fn parse_csa_chunk(lines: &[&str]) -> Result<Option<Record>, CsaError> {
+    // 空行とコメントしかない区画は棋譜ではない。末尾セパレータの後ろに残る
+    // コメントを 1 局として数えないための判定。
+    let has_content = lines.iter().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('\'')
+    });
+    if !has_content {
+        return Ok(None);
+    }
+    parse_csa_str(&lines.join("\n")).map(Some)
+}
+
 /// UTF-8 文字列から CSA 形式の棋譜を解析する。
+///
+/// `/` 区切りで複数の棋譜が入っている場合、最初の 1 局だけを返す。全局が必要なら
+/// [`parse_csa_games`] を使う。
 pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
     let mut raw_lines: Vec<String> =
         text.lines().map(|line| line.trim_end_matches('\r').to_string()).collect();
@@ -472,6 +648,11 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
             header_end = idx + 1;
             break;
         }
+        // 指し手のない第 1 局が `/` で終わるとき、次局の header を混ぜない。
+        if trimmed == CSA_GAME_SEPARATOR {
+            header_end = idx;
+            break;
+        }
         if trimmed.starts_with("'CSA encoding=") {
             continue;
         }
@@ -496,7 +677,13 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
             metadata_builder.white_player(Some(stripped.trim().to_string()));
             continue;
         }
-        if trimmed.starts_with('+') || trimmed.starts_with('-') || trimmed.starts_with('%') {
+        // `%` 行は常に終局行であり、手番行にはなりえない。長さで判定すると
+        // `%TORYO` のような 6 文字マーカーが手番行として食われる。
+        if trimmed.starts_with('%') {
+            header_end = idx;
+            break;
+        }
+        if trimmed.starts_with('+') || trimmed.starts_with('-') {
             if trimmed.len() >= 7 {
                 header_end = idx;
                 break;
@@ -646,11 +833,22 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
         if line.is_empty() {
             continue;
         }
-        if line.starts_with("'**評価値=") {
-            if let Some(last) = moves.last_mut()
-                && let Ok(value) = line.trim_start_matches("'**評価値=").parse::<i32>()
-            {
-                last.set_eval(Some(Eval::from_i32(value)));
+        if line == CSA_GAME_SEPARATOR {
+            break;
+        }
+        // 非標準だが実在する `'**評価値=N` 表記。読み取りだけ互換で残す。
+        // 数値として読めない場合は下の汎用分岐へ落とし、原文を退避する。
+        if let Some(value) =
+            line.strip_prefix("'**評価値=").and_then(|text| text.trim().parse::<i16>().ok())
+        {
+            if let Some(last) = moves.last_mut() {
+                last.set_eval(Some(Eval::from_i32(i32::from(value))));
+            }
+            continue;
+        }
+        if line.starts_with("'**") {
+            if let Some(last) = moves.last_mut() {
+                apply_csa_analysis_to_move(last, line);
             }
             continue;
         }
@@ -679,6 +877,7 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
             let record = terminal_from_marker(line, pos.turn()).with_raw(Some(line.to_string()));
             let mut terminal_annotation = RecordAnnotation::new();
             let mut terminal_comment_lines: Vec<String> = Vec::new();
+            let mut terminal_engine_info = EngineInfo::new();
             while idx < lines.len() {
                 let next = lines[idx].trim();
                 if next.is_empty() {
@@ -692,6 +891,11 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
                     idx += 1;
                     continue;
                 }
+                if next.starts_with("'**") {
+                    apply_csa_analysis(&mut terminal_engine_info, next);
+                    idx += 1;
+                    continue;
+                }
                 if next.starts_with('\'') {
                     let comment = parse_csa_program_comment_text(next).unwrap_or_default();
                     if !comment.is_empty() {
@@ -702,6 +906,9 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
                 }
                 break;
             }
+            if !terminal_engine_info.is_empty() {
+                terminal_annotation.set_engine_info(Some(terminal_engine_info));
+            }
             if !terminal_comment_lines.is_empty() {
                 terminal_annotation.set_comment(Some(terminal_comment_lines.join("\n")));
             }
@@ -710,8 +917,13 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
         }
         if line.starts_with('+') || line.starts_with('-') {
             let move_token = line.split(',').next().unwrap_or(line);
+            // 符号を含む 7 文字のまま渡し、手番と手番記号の一致を `move_from_csa` に検査させる。
             let move_body =
-                move_token.get(1..7).ok_or_else(|| CsaError::InvalidMove(line.to_string()))?;
+                move_token.get(0..7).ok_or_else(|| CsaError::InvalidMove(line.to_string()))?;
+            let expected_sign = if pos.turn() == Color::BLACK { '+' } else { '-' };
+            if !move_body.starts_with(expected_sign) {
+                return Err(CsaError::MoveSideMismatch(line.to_string()));
+            }
             let mv = pos.move_from_csa(move_body);
             if !pos.is_legal_move32(mv) {
                 return Err(CsaError::IllegalMove { index: moves.len() });
@@ -910,12 +1122,65 @@ fn csa_position_p_command(sfen: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// `EngineInfo` から V3.0 の `'**` 行を `lines` へ追記する。
+///
+/// 解析済みの評価値行と、解析できずに退避した原文の双方を出力する。extras は
+/// public に書き換えられるので、行として成立しない値は出力しない。
+fn append_csa_analysis_lines(lines: &mut Vec<String>, info: &EngineInfo) {
+    if let Some(eval) = info.eval() {
+        let mut line = format!("'** {}", eval.raw());
+        if let Some(EngineExtraValue::String(pv)) = info.extras().get(CSA_PV_EXTRA_KEY)
+            && !pv.is_empty()
+            && !pv.contains(['\n', '\r'])
+        {
+            line.push(' ');
+            line.push_str(pv);
+        }
+        if let Some(nodes) = info.nodes() {
+            line.push_str(&format!(" #{nodes}"));
+        }
+        lines.push(line);
+    }
+    if let Some(EngineExtraValue::String(raw)) = info.extras().get(CSA_ANALYSIS_RAW_EXTRA_KEY) {
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("'**") {
+                lines.push(trimmed.to_string());
+            }
+        }
+    }
+}
+
 /// [`Record`] を CSA 形式の文字列に変換する。
+///
+/// 既定の [`ExportOptions`] を使う。バージョンや文字コード宣言を指定する場合は
+/// [`export_csa_with_options`] を使う。
 pub fn export_csa(record: &Record) -> Result<String, CsaError> {
+    export_csa_with_options(record, ExportOptions::default())
+}
+
+/// [`Record`] を CSA 形式の文字列に変換する。
+///
+/// `options` の `csa_version` が [`CsaVersion::V3_0`] のとき、先頭に
+/// `'CSA encoding=...` 宣言を置き、端数のある消費時間をミリ秒表記で出力する。
+pub fn export_csa_with_options(
+    record: &Record,
+    options: ExportOptions,
+) -> Result<String, CsaError> {
+    let version = options.csa_version();
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
 
-    let mut lines: Vec<String> = vec!["V2.2".to_string()];
+    let mut lines: Vec<String> = Vec::new();
+    if version == CsaVersion::V3_0 {
+        // V3.0 は宣言がない場合の既定を Shift_JIS と定めているので、宣言は省略できない。
+        let encoding = match options.encoding() {
+            TextEncoding::Utf8 => "UTF-8",
+            TextEncoding::ShiftJis => "SHIFT_JIS",
+        };
+        lines.push(format!("'CSA encoding={encoding}"));
+    }
+    lines.push(version.header().to_string());
     append_csa_metadata(&mut lines, record.metadata());
     if let Some((pi, turn)) = csa_position_p_command(record.init_position_sfen()) {
         lines.push(pi.to_string());
@@ -944,14 +1209,14 @@ pub fn export_csa(record: &Record) -> Result<String, CsaError> {
         if !pos.is_legal_move(mv16) {
             return Err(CsaError::IllegalMove { index });
         }
-        let prefix = if pos.turn() == Color::BLACK { '+' } else { '-' };
         let csa = mv
             .to_csa()
             .ok_or_else(|| CsaError::InvalidMove(format!("invalid move at index {index}")))?;
-        lines.push(format!("{prefix}{csa}"));
-        let elapsed = node.time_ms().unwrap_or(0);
-        let total_seconds = elapsed / 1_000;
-        lines.push(format!("T{total_seconds}"));
+        lines.push(csa);
+        // 消費時間は仕様上省略可能なので、記録がないときに `T0` を捏造しない。
+        if let Some(elapsed) = node.time_ms() {
+            lines.push(format_csa_elapsed(elapsed, version));
+        }
         if let Some(comment) = node.comment() {
             for line in comment.lines() {
                 let trimmed = line.trim();
@@ -960,6 +1225,9 @@ pub fn export_csa(record: &Record) -> Result<String, CsaError> {
                 }
                 lines.push(format!("'*{trimmed}"));
             }
+        }
+        if let Some(info) = node.engine_info() {
+            append_csa_analysis_lines(&mut lines, info);
         }
         pos.apply_move(mv16);
         refresh_position_if_needed(&mut pos, &mut refresh_counter)?;
@@ -970,7 +1238,7 @@ pub fn export_csa(record: &Record) -> Result<String, CsaError> {
         let terminal = terminal_node.special().expect("terminal node has special entry");
         lines.push(marker_from_terminal(terminal));
         if let Some(time_ms) = terminal_node.time_ms() {
-            lines.push(format!("T{}", time_ms / 1_000));
+            lines.push(format_csa_elapsed(time_ms, version));
         }
         if let Some(comment) = terminal_node.comment() {
             for line in comment.lines() {
@@ -980,6 +1248,9 @@ pub fn export_csa(record: &Record) -> Result<String, CsaError> {
                 }
                 lines.push(format!("'*{trimmed}"));
             }
+        }
+        if let Some(info) = terminal_node.engine_info() {
+            append_csa_analysis_lines(&mut lines, info);
         }
     }
     Ok(format!("{}\n", lines.join("\n")))
@@ -1007,12 +1278,12 @@ pub fn export_csa_bytes(record: &Record, encoding: TextEncoding) -> Result<Encod
 
 /// [`Record`] を CSA 形式でエンコードしたバイト列に変換する。
 ///
-/// [`ExportOptions`] を受け取る拡張版。v1 では `encoding` のみを解釈する。
+/// [`ExportOptions`] を受け取る拡張版。`encoding` と `csa_version` を解釈する。
 pub fn export_csa_bytes_with_options(
     record: &Record,
     options: ExportOptions,
 ) -> Result<EncodedText, CsaError> {
-    let text = export_csa(record)?;
+    let text = export_csa_with_options(record, options)?;
     Ok(encode_text_with_options(&text, options))
 }
 
@@ -1049,6 +1320,270 @@ mod tests {
         let parsed = parse_csa_str(&csa).unwrap();
         assert_eq!(parsed.main_moves().count(), 1);
         assert_eq!(parsed.result(), GameResult::BlackWin);
+    }
+
+    /// 駒落ちのように後手から始まる棋譜でも、writer は指し手が持つ色から正しい手番記号を出す。
+    #[test]
+    fn test_export_csa_signs_moves_for_white_first_record() {
+        let text = "V2.2\nPI82HI22KA\n-\n-5152OU\nT0\n+7776FU\nT0\n%TORYO\n";
+        let record = parse_csa_str(text).unwrap();
+        let exported = export_csa(&record).unwrap();
+
+        assert!(exported.contains("\n-5152OU\n"), "{exported}");
+        assert!(exported.contains("\n+7776FU\n"), "{exported}");
+
+        // 再パース・再出力で符号が二重化も欠落もしないこと。
+        let reexported = export_csa(&parse_csa_str(&exported).unwrap()).unwrap();
+        assert_eq!(exported, reexported);
+    }
+
+    /// 6 文字の終局マーカーは手番行と長さが近く、0 手棋譜で取りこぼしやすい。
+    #[test]
+    fn test_parse_csa_keeps_terminal_without_moves() {
+        for (marker, expected) in [
+            ("%TORYO", GameResult::WhiteWin),
+            ("%TSUMI", GameResult::WhiteWin),
+            ("%KACHI", GameResult::BlackWinByDeclaration),
+            ("%ERROR", GameResult::Error),
+        ] {
+            let text = format!("V2.2\nPI\n+\n{marker}\n");
+            let record = parse_csa_str(&text).unwrap();
+            assert_eq!(record.main_moves().count(), 0, "{marker}");
+            assert_eq!(record.result(), expected, "{marker}");
+            assert!(export_csa(&record).unwrap().contains(marker), "{marker}");
+        }
+    }
+
+    #[test]
+    fn test_parse_csa_elapsed_ms_accepts_fraction_and_rejects_garbage() {
+        assert_eq!(parse_csa_elapsed_ms("15"), Some(15_000));
+        assert_eq!(parse_csa_elapsed_ms("15.1"), Some(15_100));
+        assert_eq!(parse_csa_elapsed_ms("15.12"), Some(15_120));
+        assert_eq!(parse_csa_elapsed_ms("15.123"), Some(15_123));
+        assert_eq!(parse_csa_elapsed_ms("0.001"), Some(1));
+        // 小数点以下は最大 3 桁。
+        assert_eq!(parse_csa_elapsed_ms("15.1234"), None);
+        assert_eq!(parse_csa_elapsed_ms("15."), None);
+        assert_eq!(parse_csa_elapsed_ms("-1"), None);
+        assert_eq!(parse_csa_elapsed_ms("abc"), None);
+    }
+
+    #[test]
+    fn test_csa_millisecond_elapsed_time_roundtrip() {
+        let record = parse_csa_str("V3.0\nPI\n+\n+7776FU\nT15.123\n%TORYO\n").unwrap();
+        assert_eq!(main_node(&record, 0).time_ms(), Some(15_123));
+
+        let v30 = ExportOptions::new(TextEncoding::Utf8).with_csa_version(CsaVersion::V3_0);
+        let exported = export_csa_with_options(&record, v30).unwrap();
+        assert!(exported.starts_with("'CSA encoding=UTF-8\nV3.0\n"), "{exported}");
+        assert!(exported.contains("\nT15.123\n"), "{exported}");
+
+        // V2.2 出力では小数を使わず秒へ丸める。
+        let exported_v22 = export_csa(&record).unwrap();
+        assert!(exported_v22.starts_with("V2.2\n"), "{exported_v22}");
+        assert!(exported_v22.contains("\nT15\n"), "{exported_v22}");
+    }
+
+    /// 消費時間は仕様上省略可能なので、記録がない指し手に `T0` を作らない。
+    #[test]
+    fn test_export_csa_omits_elapsed_line_when_unrecorded() {
+        let record = parse_csa_str("V2.2\nPI\n+\n+7776FU\n%TORYO\n").unwrap();
+        assert_eq!(main_node(&record, 0).time_ms(), None);
+        assert_eq!(export_csa(&record).unwrap(), "V2.2\nPI\n+\n+7776FU\n%TORYO\n");
+    }
+
+    #[test]
+    fn test_csa_analysis_line_roundtrip() {
+        let text = "V3.0\nPI\n+\n+7776FU\nT15\n'** 99 -8384FU +7776FU #1234\n%TORYO\n";
+        let record = parse_csa_str(text).unwrap();
+        let node = main_node(&record, 0);
+        assert_eq!(node.eval(), Some(Eval::from_i32(99)));
+        assert_eq!(node.nodes(), Some(1234));
+
+        let exported = export_csa(&record).unwrap();
+        assert!(exported.contains("\n'** 99 -8384FU +7776FU #1234\n"), "{exported}");
+    }
+
+    /// 評価値として読めない `'**` 行は原文のまま持ち回して往復で失わない。
+    #[test]
+    fn test_csa_unparsable_analysis_line_is_preserved() {
+        let text = "V3.0\nPI\n+\n+7776FU\n'** ???garbage\n%TORYO\n";
+        let record = parse_csa_str(text).unwrap();
+        assert_eq!(main_node(&record, 0).eval(), None);
+        assert!(export_csa(&record).unwrap().contains("\n'** ???garbage\n"));
+    }
+
+    /// 解析できる行とできない行が混ざっても、どちらも失わない。
+    #[test]
+    fn test_csa_mixed_analysis_lines_keep_both() {
+        let text = "V3.0\nPI\n+\n+7776FU\n'** 50 -3334FU\n'** garbage\n'** more garbage\n%TORYO\n";
+        let record = parse_csa_str(text).unwrap();
+        assert_eq!(main_node(&record, 0).eval(), Some(Eval::from_i32(50)));
+
+        let exported = export_csa(&record).unwrap();
+        assert!(exported.contains("\n'** 50 -3334FU\n"), "{exported}");
+        assert!(exported.contains("\n'** garbage\n"), "{exported}");
+        assert!(exported.contains("\n'** more garbage\n"), "{exported}");
+    }
+
+    /// `Eval` は i16 なので、収まらない評価値は数値化せず原文で往復させる。
+    #[test]
+    fn test_csa_out_of_range_eval_is_kept_verbatim() {
+        let record = parse_csa_str("V3.0\nPI\n+\n+7776FU\n'** 100000\n%TORYO\n").unwrap();
+        assert_eq!(main_node(&record, 0).eval(), None);
+
+        let exported = export_csa(&record).unwrap();
+        assert!(exported.contains("\n'** 100000\n"), "{exported}");
+        assert!(!exported.contains("32767"), "{exported}");
+    }
+
+    /// 数値として読めない `'**評価値=` も落とさず原文で持ち回す。
+    #[test]
+    fn test_csa_unparsable_legacy_eval_line_is_preserved() {
+        let record = parse_csa_str("V2.2\nPI\n+\n+7776FU\n'**評価値=abc\n%TORYO\n").unwrap();
+        assert_eq!(main_node(&record, 0).eval(), None);
+        assert!(export_csa(&record).unwrap().contains("\n'**評価値=abc\n"));
+    }
+
+    /// 終局行の直後に付く `'**` も保持する。
+    #[test]
+    fn test_csa_analysis_line_after_terminal_is_preserved() {
+        let record = parse_csa_str("V3.0\nPI\n+\n+7776FU\n%TORYO\n'** 30000 #99\n").unwrap();
+        let terminal = terminal_node(&record);
+        assert_eq!(terminal.eval(), Some(Eval::from_i32(30000)));
+        assert_eq!(terminal.nodes(), Some(99));
+        assert!(export_csa(&record).unwrap().contains("\n'** 30000 #99\n"));
+    }
+
+    /// `%ILLEGAL_MOVE` は手番側の反則負け、`%±ILLEGAL_ACTION` は記号側の反則負け。
+    #[test]
+    fn test_parse_csa_illegal_markers_assign_the_winner_per_spec() {
+        let black_to_move = "V2.2\nPI\n+\n";
+        let white_to_move = "V2.2\nPI\n+\n+7776FU\n";
+
+        for (prefix, expected) in [
+            (black_to_move, GameResult::WhiteWinByIllegalMove),
+            (white_to_move, GameResult::BlackWinByIllegalMove),
+        ] {
+            let record = parse_csa_str(&format!("{prefix}%ILLEGAL_MOVE\n")).unwrap();
+            assert_eq!(record.result(), expected);
+        }
+
+        // ILLEGAL_ACTION は反則側を記号が示すので、手番によらず勝敗が決まる。
+        for prefix in [black_to_move, white_to_move] {
+            let plus = parse_csa_str(&format!("{prefix}%+ILLEGAL_ACTION\n")).unwrap();
+            assert_eq!(plus.result(), GameResult::WhiteWinByIllegalMove);
+            let minus = parse_csa_str(&format!("{prefix}%-ILLEGAL_ACTION\n")).unwrap();
+            assert_eq!(minus.result(), GameResult::BlackWinByIllegalMove);
+        }
+    }
+
+    /// 時間切れも手番側の負けなので、勝つのは手番の相手。
+    #[test]
+    fn test_parse_csa_time_up_awards_the_game_to_the_opponent() {
+        let black_to_move = "V2.2\nPI\n+\n";
+        let white_to_move = "V2.2\nPI\n+\n+7776FU\n";
+
+        for (prefix, expected) in [
+            (black_to_move, GameResult::WhiteWinByTimeout),
+            (white_to_move, GameResult::BlackWinByTimeout),
+        ] {
+            let record = parse_csa_str(&format!("{prefix}%TIME_UP\n")).unwrap();
+            assert_eq!(record.result(), expected);
+        }
+    }
+
+    /// 手番と食い違う手番記号は、符号を捨てて解釈せず拒否する。
+    #[test]
+    fn test_parse_csa_rejects_move_line_with_wrong_side_sign() {
+        // 指し手自体は合法なので、原文を保持する専用の error で返す。
+        assert!(matches!(
+            parse_csa_str("V2.2\nPI\n+\n-7776FU\n%TORYO\n"),
+            Err(CsaError::MoveSideMismatch(line)) if line == "-7776FU"
+        ));
+        assert!(matches!(
+            parse_csa_str("V2.2\nPI\n+\n+7776FU\n+3334FU\n%TORYO\n"),
+            Err(CsaError::MoveSideMismatch(line)) if line == "+3334FU"
+        ));
+        // 正しい符号は従来どおり通る。
+        assert!(parse_csa_str("V2.2\nPI\n+\n+7776FU\n-3334FU\n%TORYO\n").is_ok());
+    }
+
+    #[test]
+    fn test_parse_time_text_rejects_overflowing_values() {
+        // u32 ミリ秒に収まらない秒数は、panic も wrap もせず不採用にする。
+        assert_eq!(parse_csa_time_token("T4294968"), None);
+        assert_eq!(parse_csa_time_token("T4294967295"), None);
+        assert_eq!(parse_csa_time_token("T4294967"), Some(4_294_967_000));
+    }
+
+    /// 末尾セパレータの後ろに残るコメントを 1 局として数えない。
+    #[test]
+    fn test_parse_csa_games_ignores_trailing_comment_chunk() {
+        let text = "V2.2\nPI\n+\n+7776FU\n%TORYO\n/\n'trailing comment\n";
+        assert_eq!(parse_csa_games(text).unwrap().len(), 1);
+    }
+
+    /// 指し手のない第 1 局でも、次局の header を取り込まない。
+    #[test]
+    fn test_parse_csa_str_does_not_bleed_into_next_game() {
+        let text = "V2.2\nPI\n+\n/\nV2.2\nPI\n+\n+2726FU\n%TORYO\n";
+        let first = parse_csa_str(text).unwrap();
+        assert_eq!(first.main_moves().count(), 0);
+        assert_eq!(parse_csa_games(text).unwrap().len(), 2);
+    }
+
+    /// `%+ILLEGAL_ACTION` は kind へ畳むと戻せないので raw を優先して書き戻す。
+    #[test]
+    fn test_export_csa_preserves_raw_terminal_marker() {
+        for marker in ["%+ILLEGAL_ACTION", "%-ILLEGAL_ACTION", "%ILLEGAL_MOVE"] {
+            let text = format!("V2.2\nPI\n+\n+7776FU\n{marker}\n");
+            let record = parse_csa_str(&text).unwrap();
+            let exported = export_csa(&record).unwrap();
+            assert!(exported.contains(&format!("\n{marker}\n")), "{marker}: {exported}");
+        }
+    }
+
+    #[test]
+    fn test_export_csa_v30_declares_shift_jis_encoding() {
+        let record = parse_csa_str("V2.2\nPI\n+\n+7776FU\n%TORYO\n").unwrap();
+        let options = ExportOptions::new(TextEncoding::ShiftJis).with_csa_version(CsaVersion::V3_0);
+        let exported = export_csa_with_options(&record, options).unwrap();
+        assert!(exported.starts_with("'CSA encoding=SHIFT_JIS\nV3.0\n"), "{exported}");
+    }
+
+    #[test]
+    fn test_parse_csa_accepts_timet_key_spelling() {
+        let text = "V3.0\n$TIMET+:450+0+5\n$TIMET-:900+0+5\nPI\n+\n+7776FU\n%TORYO\n";
+        let record = parse_csa_str(text).unwrap();
+        assert!(record.metadata().black_time_control().is_some());
+        assert!(record.metadata().white_time_control().is_some());
+
+        // 書き出しは仕様の例に合わせた綴りへ正規化する。
+        let exported = export_csa(&record).unwrap();
+        assert!(exported.contains("\n$TIME+:450+0+5\n"), "{exported}");
+        assert!(!exported.contains("$TIMET+"), "{exported}");
+    }
+
+    #[test]
+    fn test_parse_csa_games_splits_on_separator() {
+        let text = "V2.2\nPI\n+\n+7776FU\nT15\n%TORYO\n/\nV2.2\nPI\n+\n+2726FU\nT9\n%TORYO\n";
+        let games = parse_csa_games(text).unwrap();
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0].main_moves().count(), 1);
+        assert_eq!(games[1].main_moves().count(), 1);
+
+        // 単一棋譜 API は最初の 1 局を返し、セパレータでエラーにしない。
+        let first = parse_csa_str(text).unwrap();
+        assert_eq!(first.main_moves().count(), 1);
+    }
+
+    /// 終局マーカーがないまま `/` に達しても、エラーにせず 1 局として閉じる。
+    #[test]
+    fn test_parse_csa_stops_at_separator_without_terminal() {
+        let record = parse_csa_str("V2.2\nPI\n+\n+7776FU\n/\n").unwrap();
+        assert_eq!(record.main_moves().count(), 1);
+        assert!(record.main_terminal_node().is_none());
     }
 
     #[test]

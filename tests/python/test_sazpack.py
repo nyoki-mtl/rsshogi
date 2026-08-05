@@ -21,10 +21,12 @@ def _entry(
     visits_after: int,
     lower: int = 0,
     upper: int = 2,
+    raw_prior: int | None = None,
 ) -> object:
     return rsshogi.sazpack.SazPolicyEntry(
         move,
         prior,
+        prior if raw_prior is None else raw_prior,
         visits_before,
         visits_after,
         lower,
@@ -45,6 +47,9 @@ def _fixture_game() -> object:
                 "7g7f",
                 _wdl(32_768, 16_383, 16_384),
                 _wdl(65_535, 0, 0),
+                _wdl(30_000, 5_535, 30_000),
+                12_345,
+                640,
                 2,
                 1_000,
                 750,
@@ -60,12 +65,42 @@ def _fixture_game() -> object:
                 "3c3d",
                 _wdl(10_000, 20_000, 35_535),
                 _wdl(0, 0, 65_535),
+                _wdl(30_000, 5_535, 30_000),
+                12_345,
+                640,
                 1,
                 1_000,
                 1_000,
                 0,
                 [_entry("3c3d", prior=65_535, visits_before=0, visits_after=1_000)],
             ),
+        ],
+    )
+
+
+def _game_with_policy(policy: list[object]) -> object:
+    """policyだけ差し替えた1局面のfixture。SazPositionのfieldは書き換えられない。"""
+    saz = rsshogi.sazpack
+    return saz.SazGame(
+        HIRATE_SFEN,
+        rsshogi.record.GameResult.BLACK_WIN,
+        7,
+        0,
+        [
+            saz.SazPosition(
+                "7g7f",
+                _wdl(32_768, 16_383, 16_384),
+                _wdl(65_535, 0, 0),
+                _wdl(30_000, 5_535, 30_000),
+                12_345,
+                640,
+                2,
+                1_000,
+                750,
+                1,
+                policy,
+                mate=5,
+            )
         ],
     )
 
@@ -119,6 +154,53 @@ def test_sazpack_policy_preserves_prior_and_visit_snapshots() -> None:
     assert [(entry.lower, entry.upper) for entry in entries] == [(0, 2), (0, 2), (0, 2)]
 
 
+def test_sazpack_raw_network_outputs_survive_a_roundtrip() -> None:
+    """rawはsearch由来の量と別fieldなので、混線していないことを往復で確かめる。"""
+    saz = rsshogi.sazpack
+    # priorとraw_priorをそれぞれ独立に合計65535の別分布にする。
+    game = _game_with_policy(
+        [
+            _entry("7g7f", prior=40_000, visits_before=10, visits_after=810, raw_prior=20_000),
+            _entry("2g2f", prior=15_000, visits_before=5, visits_after=155, raw_prior=45_535),
+            _entry("6g6f", prior=10_535, visits_before=0, visits_after=50, raw_prior=0),
+        ]
+    )
+
+    decoded = saz.decode_sazpack(saz.write_sazpack([game]))[0]
+    first = decoded.positions[0]
+
+    assert [(entry.prior, entry.raw_prior) for entry in first.policy] == [
+        (40_000, 20_000),
+        (15_000, 45_535),
+        (10_535, 0),
+    ]
+    assert (first.raw_wdl.win, first.raw_wdl.draw, first.raw_wdl.loss) == (30_000, 5_535, 30_000)
+    assert (first.root_wdl.win, first.root_wdl.draw, first.root_wdl.loss) == (
+        32_768,
+        16_383,
+        16_384,
+    )
+    assert first.raw_mate == 12_345
+    assert first.raw_moves_left == 640
+    # raw_moves_leftはmoves-left headの予測、plies_leftは対局結果由来で、別の量。
+    assert first.plies_left == 2
+
+
+def test_sazpack_rejects_raw_prior_distribution_that_does_not_sum_to_total() -> None:
+    saz = rsshogi.sazpack
+    # priorだけ正しくraw_priorが不正な payload を通さない。
+    game = _game_with_policy(
+        [
+            _entry("7g7f", prior=40_000, visits_before=10, visits_after=810, raw_prior=1),
+            _entry("2g2f", prior=15_000, visits_before=5, visits_after=155, raw_prior=1),
+            _entry("6g6f", prior=10_535, visits_before=0, visits_after=50, raw_prior=1),
+        ]
+    )
+
+    with pytest.raises(ValueError):
+        saz.write_sazpack([game])
+
+
 def test_sazpack_moves_map_to_compact_labels() -> None:
     game = rsshogi.sazpack.decode_sazpack(rsshogi.sazpack.write_sazpack([_fixture_game()]))[0]
     colors = [rsshogi.types.Color.BLACK, rsshogi.types.Color.WHITE]
@@ -158,6 +240,9 @@ def test_sazpack_rejects_invalid_distribution_sum() -> None:
                 "7g7f",
                 _wdl(1, 2, 3),
                 _wdl(65_535, 0, 0),
+                _wdl(30_000, 5_535, 30_000),
+                12_345,
+                640,
                 1,
                 1,
                 1_000,
@@ -190,6 +275,9 @@ def test_sazpack_rejects_decreasing_visits() -> None:
                 "7g7f",
                 _wdl(65_535, 0, 0),
                 _wdl(65_535, 0, 0),
+                _wdl(30_000, 5_535, 30_000),
+                12_345,
+                640,
                 1,
                 1,
                 1_000,

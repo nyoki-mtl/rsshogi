@@ -19,12 +19,21 @@ class SazWdl:
 
 class SazPolicyEntry:
     def __init__(
-        self, mv: MoveLike, prior: int, visits_before: int, visits_after: int, lower: int, upper: int
+        self,
+        mv: MoveLike,
+        prior: int,
+        raw_prior: int,
+        visits_before: int,
+        visits_after: int,
+        lower: int,
+        upper: int,
     ) -> None: ...
     @property
     def mv(self) -> str: ...
     @property
     def prior(self) -> int: ...
+    @property
+    def raw_prior(self) -> int: ...
     @property
     def visits_before(self) -> int: ...
     @property
@@ -40,6 +49,9 @@ class SazPosition:
         played: MoveLike,
         root_wdl: SazWdl,
         outcome_wdl: SazWdl,
+        raw_wdl: SazWdl,
+        raw_mate: int,
+        raw_moves_left: int,
         plies_left: int,
         requested_visits: int,
         target_weight_milli: int,
@@ -53,6 +65,12 @@ class SazPosition:
     def root_wdl(self) -> SazWdl: ...
     @property
     def outcome_wdl(self) -> SazWdl: ...
+    @property
+    def raw_wdl(self) -> SazWdl: ...
+    @property
+    def raw_mate(self) -> int: ...
+    @property
+    def raw_moves_left(self) -> int: ...
     @property
     def plies_left(self) -> int: ...
     @property

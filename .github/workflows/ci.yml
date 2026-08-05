@@ -92,6 +92,28 @@ jobs:
       - name: Ruff (format check)
         run: ruff format --check examples/python
 
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Build bindings
+        run: uv run maturin develop -m crates/rsshogi-py/Cargo.toml
+      - name: Pytest
+        run: uv run pytest tests/python
+
   python-typecheck:
     runs-on: ubuntu-latest
     steps:

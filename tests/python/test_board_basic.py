@@ -448,7 +448,7 @@ def test_move_recovery_helpers() -> None:
 
     recovered = board.move32_from_move(mv16)
     assert recovered.to_usi() == "7g7f"
-    assert recovered.to_csa() == "7776FU"
+    assert recovered.to_csa() == "+7776FU"
 
     from_csa = board.move_from_csa("7776FU")
     assert from_csa.to_usi() == "7g7f"
@@ -458,12 +458,25 @@ def test_move32_to_csa() -> None:
     board = Board()
     mv = Move.from_usi("7g7f")
     mv32 = board.move32_from_move(mv)
-    assert mv32.to_csa() == "7776FU"
+    assert mv32.to_csa() == "+7776FU"
 
     board.apply_usi("7g7f 3c3d 8h2b+")
     drop = Move.from_usi("B*3c")
     drop32 = board.move32_from_move(drop)
-    assert drop32.to_csa() == "0033KA"
+    assert drop32.to_csa() == "-0033KA"
+
+
+def test_move32_to_csa_roundtrips_through_move_from_csa() -> None:
+    board = Board()
+    csa = board.move32_from_move(Move.from_usi("7g7f")).to_csa()
+    assert csa == "+7776FU"
+    assert board.move_from_csa(csa).to_usi() == "7g7f"
+
+
+def test_move32_to_csa_requires_piece_info() -> None:
+    # Move32.from_usi() leaves the piece bits unset, so the side to move is unknown.
+    assert Move32.from_usi("7g7f").to_csa() is None
+    assert Move32.from_usi("P*5e").to_csa() is None
 
 
 def test_zobrist_hash_and_declare_win_api() -> None:

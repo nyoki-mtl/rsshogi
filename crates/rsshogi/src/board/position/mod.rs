@@ -10,8 +10,10 @@
 //! - 持ち駒（先手と後手）
 //! - 手番
 //! - 手数
-//! - Zobrist ハッシュキー
 //! - 王手情報のキャッシュ
+//!
+//! Zobrist キーは `Position` ではなく現局面の state（`StateHot`）が単一の真実点として
+//! 保持する。[`Position::key`] / [`Position::board_key`] はそこから読み出す。
 //!
 //! # 局面の構築
 //!
@@ -174,15 +176,6 @@ pub struct Position {
 
     /// 持ち駒カウント配列
     pub(super) hands: [Hand; Color::COUNT],
-
-    /// 現局面のZobristハッシュ
-    pub(super) zobrist: ZobristKey,
-
-    /// 盤面ハッシュ（手番込み）
-    pub(super) board_key: ZobristKey,
-
-    /// 持ち駒ハッシュ
-    pub(super) hand_key: ZobristKey,
 
     /// 手番
     pub(super) side_to_move: Color,

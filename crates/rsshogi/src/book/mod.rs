@@ -123,9 +123,7 @@ pub trait Book {
 /// Book用のZobristキー（盤面+持ち駒+手番）。
 #[must_use]
 pub fn book_key_from_position(pos: &Position) -> BookKey {
-    let mut key = pos.board_key();
-    key.xor(pos.hand_key());
-    key
+    pos.key()
 }
 
 /// 1手進めた局面のBook用キーを計算する。

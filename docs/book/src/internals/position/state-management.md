@@ -261,7 +261,7 @@ impl Position {
         //    - checkers = Bitboard::EMPTY
         //    - repetition_* = 0 / None
 
-        // 2. 手番だけを切り替え、board_key と zobrist を更新
+        // 2. 手番だけを切り替え、board_key と key を更新
         self.flip_side_to_move();
 
         // 3. check_squares と continuous_check を current state に反映
@@ -303,7 +303,8 @@ safe Rust では `current_state_cache()` などの state 由来の borrow 中に
 
 ### apply/undo の非対称性
 
-`apply_move32()` は Zobrist ハッシュを差分更新しますが、`undo_move32()` は StateInfo から**直接復元**します（逆演算ではない）。
+`apply_move32()` は Zobrist ハッシュを差分更新しますが、`undo_move32()` はキーを一切触りません。
+各局面のキーは state stack の対応するエントリに残っているため、スタックの添字を戻すだけで復元されます。
 このため、apply と undo では処理が対称ではありません。undo で XOR を逆順に適用するような実装は誤りです。
 
 ### Null Move 後に通常の undo_move32 を呼ぶ
