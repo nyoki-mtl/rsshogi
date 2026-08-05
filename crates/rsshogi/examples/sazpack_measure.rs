@@ -36,6 +36,9 @@ fn fixture() -> SazSelfplayGame {
             played: Move::from_usi("7g7f").unwrap(),
             root_wdl: SazWdl { win: 20_000, draw: 25_535, loss: 20_000 },
             outcome_wdl: SazWdl { win: 0, draw: u16::MAX, loss: 0 },
+            raw_wdl: SazWdl { win: 20_000, draw: 25_535, loss: 20_000 },
+            raw_mate: 0,
+            raw_moves_left: 32,
             plies_left: 1,
             requested_visits: 800,
             target_weight_milli: 1_000,
@@ -45,6 +48,7 @@ fn fixture() -> SazSelfplayGame {
                 SazSelfplayPolicyEntry {
                     mv: Move::from_usi("7g7f").unwrap(),
                     prior: 50_000,
+                    raw_prior: 50_000,
                     visits_before: 0,
                     visits_after: 600,
                     lower: SazOutcomeBound::Loss,
@@ -53,6 +57,7 @@ fn fixture() -> SazSelfplayGame {
                 SazSelfplayPolicyEntry {
                     mv: Move::from_usi("2g2f").unwrap(),
                     prior: 15_535,
+                    raw_prior: 15_535,
                     visits_before: 0,
                     visits_after: 200,
                     lower: SazOutcomeBound::Loss,

@@ -35,6 +35,8 @@ Rust 実装の将棋ライブラリです。Python バインディング（`rssh
 
 `board.zobrist_hash()` で取得できます。
 
+1.1.0 で持ち駒の寄与が XOR 合成へ変わったため、持ち駒のある局面のキー値は 1.0.x 以前と異なります。
+
 ### `Move` から `Move32` を復元したい
 
 - `board.move32_from_move(mv)`

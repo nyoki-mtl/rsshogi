@@ -125,6 +125,11 @@ static_book.write_file("my_book.bin")
 `from_bytes()` / `from_file()` は現在の build の `BookKey` 幅と一致するファイルだけを読み込みます。
 default build では 64bit、`hash-128` feature build では 128bit の static book が対象です。
 
+> **1.1.0 での非互換**: 局面キー（`Position::key`）の値が変わったため、
+> 1.0.x 以前に生成した定跡バイナリは再生成が必要です。
+> 静的定跡バイナリの version も `1` から `2` へ上がっており、旧ファイルの読み込みは
+> `Unsupported("version mismatch")` で拒否されます。
+
 #### クラスメソッド
 
 | メソッド | 説明 |

@@ -8,14 +8,18 @@
 //!
 //! # ビットレイアウト
 //!
+//! 各フィールドの幅は、将棋の物理的な最大枚数（歩 18・香桂銀金 4・角飛 2）より
+//! 広く取ってある。下の表のカッコ内は**フィールドが表現できる**枚数であり、
+//! 物理的な上限の検査は [`Position::validate`](crate::board::Position::validate) の責務。
+//!
 //! ```text
-//! bit  0.. 4: 歩 (5bit, 最大 18 枚)
-//! bit  8..10: 香 (3bit, 最大 4 枚)
-//! bit 12..14: 桂 (3bit, 最大 4 枚)
-//! bit 16..18: 銀 (3bit, 最大 4 枚)
-//! bit 20..21: 角 (2bit, 最大 2 枚)
-//! bit 24..25: 飛 (2bit, 最大 2 枚)
-//! bit 28..30: 金 (3bit, 最大 4 枚)
+//! bit  0.. 4: 歩 (5bit, 表現可能な最大 31 枚)
+//! bit  8..10: 香 (3bit, 表現可能な最大 7 枚)
+//! bit 12..14: 桂 (3bit, 表現可能な最大 7 枚)
+//! bit 16..18: 銀 (3bit, 表現可能な最大 7 枚)
+//! bit 20..21: 角 (2bit, 表現可能な最大 3 枚)
+//! bit 24..25: 飛 (2bit, 表現可能な最大 3 枚)
+//! bit 28..30: 金 (3bit, 表現可能な最大 7 枚)
 //! ```
 
 use super::PieceType;
@@ -196,6 +200,29 @@ impl Hand {
             (hand.0 >> shift) & mask
         } else {
             0
+        }
+    }
+
+    /// 指定した駒種の枚数フィールドのビットマスクを取得する。
+    ///
+    /// [`Hand::count_of`] が返しうる値はこのマスクの範囲に収まる。
+    /// 枚数を添字にするテーブルを組む側が、`Hand` のビットレイアウトと
+    /// 独立に上限を書き写して食い違わせないための入口。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsshogi::types::{Hand, HandPiece};
+    ///
+    /// assert_eq!(Hand::count_mask(HandPiece::PAWN), 0x1f);
+    /// assert_eq!(Hand::count_mask(HandPiece::ROOK), 0x03);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn count_mask(hp: HandPiece) -> u32 {
+        match Self::index_for(hp) {
+            Some(idx) => Self::PIECE_BIT_MASK[idx],
+            None => 0,
         }
     }
 

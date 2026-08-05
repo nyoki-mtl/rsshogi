@@ -258,11 +258,6 @@ impl Position {
 
         self.rebuild_bitboards();
 
-        let keys = self.compute_keys();
-        self.board_key = keys.board_key;
-        self.hand_key = keys.hand_key;
-        self.zobrist = self.board_key ^ self.hand_key;
-
         self.reset_state_stack_to_current_position();
         self.update_entering_point();
         self.debug_assert_partial_keys_consistent();

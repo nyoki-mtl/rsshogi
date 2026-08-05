@@ -5,7 +5,12 @@ use super::{Book, BookEntry, BookError, BookKey, BookMove, MemoryBook};
 use crate::board::zobrist::ZobristKey;
 
 const MAGIC: [u8; 8] = *b"RSHOGIBK";
-const VERSION: u16 = 1;
+/// 直列化フォーマットの版数。
+///
+/// 構造は version 1 と同一だが、格納する [`BookKey`] は `Position::key` の値であり、
+/// 1.1.0 で持ち駒の寄与が XOR 合成へ変わったためキーの意味が変わった。版数を上げないと
+/// 旧ファイルが magic も版数も一致したまま読め、持ち駒のある局面だけ静かに引けなくなる。
+const VERSION: u16 = 2;
 const FLAG_HAS_SCORE: u16 = 1 << 0;
 const FLAG_HAS_DEPTH: u16 = 1 << 1;
 
@@ -376,6 +381,21 @@ mod tests {
         let book = StaticBook::new(vec![key(1)], vec![0], vec![book_move()]);
 
         assert!(book.get(key(1)).is_none());
+    }
+
+    /// version 1 の定跡は 1.1.0 より前の Zobrist キーで作られている。構造は同じなので
+    /// 版数を見なければ読めてしまい、持ち駒のある局面だけ静かに引けなくなる。
+    #[test]
+    fn test_static_book_from_bytes_rejects_version_one() {
+        let book = StaticBook::try_new(vec![key(1)], vec![0, 1], vec![book_move()])
+            .expect("valid static book");
+        let mut bytes = book.to_bytes();
+        bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+
+        assert!(matches!(
+            StaticBook::from_bytes(&bytes),
+            Err(BookError::Unsupported("version mismatch"))
+        ));
     }
 
     #[test]

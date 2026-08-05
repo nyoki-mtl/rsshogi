@@ -42,12 +42,14 @@ use ::rsshogi::records::formats::sbinpack::{
     unpack_ply_result,
 };
 use ::rsshogi::records::formats::{
-    HcpeGameResult, HuffmanCodedPosAndEval, UsiPositionExportOptions, UsiPositionParseOptions,
-    board_to_bod, board_to_csa, encode_entry as encode_hcpe_entry, encode_game as encode_game_pack,
-    export_csa as export_csa_record, export_jkf as export_jkf_record,
+    CsaVersion, ExportOptions, HcpeGameResult, HuffmanCodedPosAndEval, TextEncoding,
+    UsiPositionExportOptions, UsiPositionParseOptions, board_to_bod, board_to_csa,
+    encode_entry as encode_hcpe_entry, encode_game as encode_game_pack,
+    export_csa_with_options as export_csa_record_with_options, export_jkf as export_jkf_record,
     export_ki2 as export_ki2_record, export_kif as export_kif_record,
     export_usi_position_with_options as export_usi_position_record,
-    game_from_record as game_from_record_pack, move_to_bod, parse_csa_str as parse_csa_str_record,
+    game_from_record as game_from_record_pack, move_to_bod,
+    parse_csa_games as parse_csa_games_record, parse_csa_str as parse_csa_str_record,
     parse_jkf_str as parse_jkf_str_record, parse_ki2_str as parse_ki2_str_record,
     parse_kif_str as parse_kif_str_record,
     parse_usi_position_with_options as parse_usi_position_record,
@@ -1811,6 +1813,14 @@ pub(crate) struct PyRecord {
     pub(crate) inner: Record,
 }
 
+impl PyRecord {
+    fn to_csa_text(&self, version: &str, encoding: TextEncoding) -> PyResult<String> {
+        let options = csa_export_options(version, encoding)?;
+        export_csa_record_with_options(&self.inner, options)
+            .map_err(|err| PyValueError::new_err(err.to_string()))
+    }
+}
+
 #[pymethods]
 impl PyRecord {
     #[new]
@@ -2022,6 +2032,14 @@ impl PyRecord {
         Ok(Self { inner: record })
     }
 
+    /// Parse a CSA text that may hold several games separated by a `/` line.
+    #[classmethod]
+    fn from_csa_games_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Vec<Self>> {
+        let games =
+            parse_csa_games_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(games.into_iter().map(|inner| Self { inner }).collect())
+    }
+
     #[classmethod]
     fn from_jkf_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Self> {
         let record =
@@ -2209,8 +2227,14 @@ impl PyRecord {
         export_ki2_record(&self.inner).map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
-    fn to_csa(&self) -> PyResult<String> {
-        export_csa_record(&self.inner).map_err(|err| PyValueError::new_err(err.to_string()))
+    /// Export as CSA text. `version` accepts `"2.2"` (default) or `"3.0"`.
+    ///
+    /// A `"3.0"` export starts with a `'CSA encoding=UTF-8` declaration. Use
+    /// `write_csa` when the file is written in another encoding, so that the
+    /// declaration matches the bytes on disk.
+    #[pyo3(signature = (*, version="2.2"))]
+    fn to_csa(&self, version: &str) -> PyResult<String> {
+        self.to_csa_text(version, TextEncoding::Utf8)
     }
 
     fn to_jkf(&self) -> PyResult<String> {
@@ -2387,6 +2411,20 @@ impl PyRecord {
         Ok(Self { inner: record })
     }
 
+    /// Parse a CSA file that may hold several games separated by a `/` line.
+    #[classmethod]
+    #[pyo3(signature = (path, encoding="shift_jis"))]
+    fn from_csa_games_file(
+        _cls: &Bound<'_, PyType>,
+        path: &Bound<'_, PyAny>,
+        encoding: Option<&str>,
+    ) -> PyResult<Vec<Self>> {
+        let text = read_text_with_encoding(path, encoding, default_csa_encoding)?;
+        let games =
+            parse_csa_games_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(games.into_iter().map(|inner| Self { inner }).collect())
+    }
+
     #[classmethod]
     #[pyo3(signature = (path, encoding="utf-8"))]
     fn from_jkf_file(
@@ -2406,10 +2444,30 @@ impl PyRecord {
         write_text_with_encoding(path, &text, encoding, default_kif_encoding)
     }
 
-    #[pyo3(signature = (path, encoding="shift_jis"))]
-    fn write_csa(&self, path: &Bound<'_, PyAny>, encoding: Option<&str>) -> PyResult<()> {
-        let text = self.to_csa()?;
-        write_text_with_encoding(path, &text, encoding, default_csa_encoding)
+    #[pyo3(signature = (path, encoding="shift_jis", *, version="2.2"))]
+    fn write_csa(
+        &self,
+        path: &Bound<'_, PyAny>,
+        encoding: Option<&str>,
+        version: &str,
+    ) -> PyResult<()> {
+        let resolved = match encoding {
+            Some(value) => value,
+            None => default_csa_encoding(path)?,
+        };
+        // A V3.0 file must declare its encoding, so the declaration has to name the codec
+        // the bytes are actually written in. Refuse rather than declare something false.
+        let declared = csa_text_encoding(resolved).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "CSA 3.0 can only declare UTF-8 or SHIFT_JIS, not {resolved}"
+            ))
+        });
+        let declared = match version.trim() {
+            "3.0" | "V3.0" | "v3.0" => declared?,
+            _ => declared.unwrap_or(TextEncoding::Utf8),
+        };
+        let text = self.to_csa_text(version, declared)?;
+        write_text_with_encoding(path, &text, Some(resolved), default_csa_encoding)
     }
 
     #[pyo3(signature = (path, encoding="shift_jis"))]
@@ -2764,6 +2822,35 @@ fn default_kif_encoding(path: &Bound<'_, PyAny>) -> PyResult<&'static str> {
 
 fn default_csa_encoding(_path: &Bound<'_, PyAny>) -> PyResult<&'static str> {
     Ok("shift_jis")
+}
+
+/// Map a Python codec name onto the encoding a CSA V3.0 declaration line can name.
+///
+/// CSA V3.0 only defines `UTF-8` and `SHIFT_JIS`, so anything else returns `None` rather
+/// than being declared as something it is not.
+fn csa_text_encoding(encoding: &str) -> Option<TextEncoding> {
+    let normalized = encoding.to_ascii_lowercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "shift_jis" | "shiftjis" | "s_jis" | "sjis" | "csshiftjis" | "shift_jis_2004"
+        | "shiftjis2004" | "s_jis_2004" | "shift_jisx0213" | "shiftjisx0213" | "cp932" | "932"
+        | "ms932" | "mskanji" | "ms_kanji" | "windows_31j" => Some(TextEncoding::ShiftJis),
+        "utf_8" | "utf8" | "u8" | "utf" | "utf_8_sig" | "cp65001" => Some(TextEncoding::Utf8),
+        _ => None,
+    }
+}
+
+/// Build CSA export options from the Python-facing `version` / `encoding` arguments.
+fn csa_export_options(version: &str, encoding: TextEncoding) -> PyResult<ExportOptions> {
+    let csa_version = match version.trim() {
+        "2.2" | "V2.2" | "v2.2" => CsaVersion::V2_2,
+        "3.0" | "V3.0" | "v3.0" => CsaVersion::V3_0,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unsupported CSA version: {other} (expected \"2.2\" or \"3.0\")"
+            )));
+        }
+    };
+    Ok(ExportOptions::new(encoding).with_csa_version(csa_version))
 }
 
 fn default_ki2_encoding(_path: &Bound<'_, PyAny>) -> PyResult<&'static str> {

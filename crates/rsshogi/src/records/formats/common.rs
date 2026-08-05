@@ -16,26 +16,65 @@ pub enum TextEncoding {
     ShiftJis,
 }
 
+/// CSA 出力のフォーマットバージョン。
+///
+/// CSA export でのみ解釈する。他の形式の export は無視する。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CsaVersion {
+    /// V2.2（既定）。ミリ秒消費時間と文字コード宣言は出力しない。
+    #[default]
+    V2_2,
+    /// V3.0。文字コード宣言行を先頭に置き、必要ならミリ秒消費時間を出力する。
+    V3_0,
+}
+
+impl CsaVersion {
+    /// バージョン行に書く文字列を返す。
+    #[must_use]
+    pub const fn header(self) -> &'static str {
+        match self {
+            Self::V2_2 => "V2.2",
+            Self::V3_0 => "V3.0",
+        }
+    }
+}
+
 /// 棋譜テキスト export のオプション。
 ///
-/// v1 ではエンコーディング指定のみを持つが、将来的な改行/BOM/canonical policy
-/// などの追加先として使う。
+/// エンコーディングは全形式で共通、`csa_version` は CSA export だけが解釈する。
+/// 将来的な改行 / BOM / canonical policy などの追加先としても使う。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExportOptions {
     encoding: TextEncoding,
+    csa_version: CsaVersion,
 }
 
 impl ExportOptions {
     /// 指定エンコーディングでオプションを構築する。
+    ///
+    /// CSA バージョンは `CsaVersion::V2_2` になる。
     #[must_use]
     pub const fn new(encoding: TextEncoding) -> Self {
-        Self { encoding }
+        Self { encoding, csa_version: CsaVersion::V2_2 }
+    }
+
+    /// CSA 出力バージョンを差し替えた options を返す。
+    #[must_use]
+    pub const fn with_csa_version(mut self, csa_version: CsaVersion) -> Self {
+        self.csa_version = csa_version;
+        self
     }
 
     /// 出力エンコーディングを取得する。
     #[must_use]
     pub const fn encoding(self) -> TextEncoding {
         self.encoding
+    }
+
+    /// CSA 出力バージョンを取得する。
+    #[must_use]
+    pub const fn csa_version(self) -> CsaVersion {
+        self.csa_version
     }
 }
 

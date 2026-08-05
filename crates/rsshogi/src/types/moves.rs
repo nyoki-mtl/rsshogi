@@ -1140,12 +1140,30 @@ impl Move32 {
         self.to_move().to_usi()
     }
 
-    /// CSA形式の文字列に変換（手番記号は含めない）
+    /// CSA 形式の指し手文字列に変換する。手番記号を含む。
+    ///
+    /// CSA 仕様では手番記号 `+` / `-` が指し手表記の必須要素なので、`+7776FU` の形で返す。
+    /// 手番は移動後の駒が持つ色から決まるため、駒情報を持たない部分 `Move32`
+    /// （`from_usi()` 等で生成）では `None` を返す。特殊手も `None` を返す。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsshogi::board;
+    /// use rsshogi::types::Move;
+    ///
+    /// board::init();
+    ///
+    /// let pos = board::hirate_position();
+    /// let mv = pos.move32_from_move(Move::from_usi("7g7f").unwrap());
+    /// assert_eq!(mv.to_csa(), Some("+7776FU".to_string()));
+    /// ```
     #[must_use]
     pub fn to_csa(self) -> Option<String> {
-        if !self.is_normal() {
+        if !self.is_normal() || !self.has_piece_info() {
             return None;
         }
+        let sign = if self.piece_after_move().color() == Color::BLACK { '+' } else { '-' };
         let to = square_to_csa(self.to_sq())?;
         let from = if self.is_drop() { "00".to_string() } else { square_to_csa(self.from_sq())? };
         let piece_type = if self.is_drop() {
@@ -1154,7 +1172,7 @@ impl Move32 {
             self.piece_after_move().piece_type()
         };
         let piece_code = piece_type_to_csa(piece_type)?;
-        Some(format!("{from}{to}{piece_code}"))
+        Some(format!("{sign}{from}{to}{piece_code}"))
     }
 
     /// KI2形式の文字列に変換
@@ -1923,16 +1941,47 @@ mod tests {
         let from = "7g".parse::<Square>().unwrap();
         let to = "7f".parse::<Square>().unwrap();
         let m = Move32::normal(from, to, Piece::B_PAWN);
-        assert_eq!(m.to_csa(), Some("7776FU".to_string()));
+        assert_eq!(m.to_csa(), Some("+7776FU".to_string()));
 
         let from = "2b".parse::<Square>().unwrap();
         let to = "3c".parse::<Square>().unwrap();
         let m = Move32::promotion(from, to, Piece::B_BISHOP);
-        assert_eq!(m.to_csa(), Some("2233UM".to_string()));
+        assert_eq!(m.to_csa(), Some("+2233UM".to_string()));
 
         let drop_to = "5e".parse::<Square>().unwrap();
         let m = Move32::drop(PieceType::PAWN, drop_to, Color::BLACK);
-        assert_eq!(m.to_csa(), Some("0055FU".to_string()));
+        assert_eq!(m.to_csa(), Some("+0055FU".to_string()));
+    }
+
+    #[test]
+    fn test_move32_to_csa_emits_white_sign() {
+        let from = "3c".parse::<Square>().unwrap();
+        let to = "3d".parse::<Square>().unwrap();
+        let m = Move32::normal(from, to, Piece::W_PAWN);
+        assert_eq!(m.to_csa(), Some("-3334FU".to_string()));
+
+        let from = "8h".parse::<Square>().unwrap();
+        let to = "2b".parse::<Square>().unwrap();
+        let m = Move32::promotion(from, to, Piece::W_BISHOP);
+        assert_eq!(m.to_csa(), Some("-8822UM".to_string()));
+
+        let drop_to = "5e".parse::<Square>().unwrap();
+        let m = Move32::drop(PieceType::PAWN, drop_to, Color::WHITE);
+        assert_eq!(m.to_csa(), Some("-0055FU".to_string()));
+    }
+
+    /// 手番が確定しない部分 `Move32` は、通常移動でも駒打ちでも CSA へ変換できない。
+    #[test]
+    fn test_move32_to_csa_requires_piece_info() {
+        let partial_normal = Move32::from_usi("7g7f").unwrap();
+        assert!(!partial_normal.has_piece_info());
+        assert_eq!(partial_normal.to_csa(), None);
+
+        let partial_drop = Move32::from_usi("P*5e").unwrap();
+        assert!(!partial_drop.has_piece_info());
+        assert_eq!(partial_drop.to_csa(), None);
+
+        assert_eq!(MOVE_RESIGN.to_csa(), None);
     }
 
     #[test]

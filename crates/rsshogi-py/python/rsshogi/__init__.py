@@ -35,7 +35,7 @@ Policy labels:
 NumPy:
     >>> from rsshogi.numpy import PackedSfen, PackedSfenValue
 
-AlphaZero training format (sazpack / SAZ1):
+AlphaZero training format (sazpack / SAZ2):
     >>> from rsshogi.sazpack import SazGame, SazPosition, SazPolicyEntry, SazWdl
     >>> from rsshogi.sazpack import write_sazpack, decode_sazpack
 """
@@ -44,7 +44,7 @@ AlphaZero training format (sazpack / SAZ1):
 from . import book, core, initial_positions, numpy, policy, record, sazpack, svg, types, usi
 
 # Version
-__version__ = "1.0.2"
+__version__ = "1.1.0"
 
 __all__ = [
     # Submodules

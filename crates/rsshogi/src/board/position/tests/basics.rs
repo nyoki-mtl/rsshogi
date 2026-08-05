@@ -95,7 +95,7 @@ fn test_current_state_helpers_match_state_stack() {
 
     assert_eq!(pos.state_stack_depth(), pos.state_stack().depth());
     assert_eq!(current.board_key, stack_current.board_key);
-    assert_eq!(current.hand_key, stack_current.hand_key);
+    assert_eq!(current.key, stack_current.key);
     assert_eq!(current.repetition_counter, stack_current.repetition_counter);
     assert_eq!(current.repetition_distance, stack_current.repetition_distance);
     assert_eq!(pos.last_move(), stack_current.last_move());
@@ -154,6 +154,24 @@ fn test_position_move_from_csa_and_move() {
     promo_pos.board.set(from, Piece::B_BISHOP);
     let mv = promo_pos.move_from_csa("2233UM");
     assert_eq!(mv.to_usi(), "2b3c+");
+}
+
+/// `to_csa()` の出力は手番記号付きなので、そのまま `move_from_csa()` へ戻せる。
+#[test]
+fn test_position_csa_move_roundtrip_for_both_colors() {
+    let mut pos = crate::board::hirate_position();
+
+    let black = pos.move32_from_move(Move::from_usi("7g7f").unwrap());
+    let black_csa = black.to_csa().unwrap();
+    assert_eq!(black_csa, "+7776FU");
+    assert_eq!(pos.move_from_csa(&black_csa), black);
+
+    pos.apply_move32(black);
+
+    let white = pos.move32_from_move(Move::from_usi("3c3d").unwrap());
+    let white_csa = white.to_csa().unwrap();
+    assert_eq!(white_csa, "-3334FU");
+    assert_eq!(pos.move_from_csa(&white_csa), white);
 }
 
 #[test]

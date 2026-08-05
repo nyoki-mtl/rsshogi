@@ -307,7 +307,6 @@ pub struct MoveApplyFacts {
     pub moved_king: bool,
     pub gives_check: bool,
     pub board_key_after: ZobristKey,
-    pub hand_key_after: ZobristKey,
     pub key_after: ZobristKey,
     pub partial_keys_after: PartialKeys,
 }
@@ -319,7 +318,6 @@ impl MoveApplyFacts {
         mv: crate::types::Move32,
         gives_check: bool,
         board_key_after: ZobristKey,
-        hand_key_after: ZobristKey,
         key_after: ZobristKey,
         partial_keys_after: PartialKeys,
     ) -> Self {
@@ -341,7 +339,6 @@ impl MoveApplyFacts {
                 moved_king: false,
                 gives_check,
                 board_key_after,
-                hand_key_after,
                 key_after,
                 partial_keys_after,
             },
@@ -371,7 +368,6 @@ impl MoveApplyFacts {
                     moved_king: moved_piece_before.piece_type() == PieceType::KING,
                     gives_check,
                     board_key_after,
-                    hand_key_after,
                     key_after,
                     partial_keys_after,
                 }

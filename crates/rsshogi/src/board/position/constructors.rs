@@ -2,7 +2,6 @@ use super::Position;
 use super::types::BoardArray;
 use crate::board::bitboard_set::BitboardSet;
 use crate::board::state_info::{StateInfo, StateStack};
-use crate::board::zobrist::ZobristKey;
 use crate::types::{Color, EnteringKingRule, Hand, Square};
 
 impl Position {
@@ -13,9 +12,6 @@ impl Position {
             board: BoardArray::empty(),
             bitboards: BitboardSet::new(),
             hands: [Hand::ZERO; Color::COUNT],
-            zobrist: ZobristKey::default(),
-            board_key: ZobristKey::default(),
-            hand_key: ZobristKey::default(),
             side_to_move: Color::BLACK,
             entering_king_rule: EnteringKingRule::None,
             entering_king_point: [0, 0],
@@ -31,9 +27,13 @@ impl Position {
         self.reset_state_stack_to_current_position();
     }
 
+    /// 現在の盤面から root state を作り直し、state stack をそこにリセットする。
+    ///
+    /// キーの単一の真実点は state 側にあるため、ここで全再計算して書き込む。
     pub(super) fn reset_state_stack_to_current_position(&mut self) {
+        let keys = self.compute_keys();
         let mut state = StateInfo::default();
-        state.write_root_hot(self.board_key, self.hand_key, self.hand(self.turn()));
+        state.write_root_hot(keys.board_key, keys.key, self.hand(self.turn()));
         self.compute_caches_for_state(&mut state);
 
         let stack = self.state_stack_mut();

@@ -12,11 +12,16 @@ use crate::{
 use std::ops::Range;
 
 pub const SAZPACK_SELFPLAY_MAGIC: [u8; 4] = *b"SAZ2";
-pub const SAZPACK_SELFPLAY_VERSION: u8 = 1;
+pub const SAZPACK_SELFPLAY_VERSION: u8 = 2;
 const HEADER_LEN: usize = 10;
 const MAX_PREALLOC: usize = 1024;
-const POSITION_FIXED_LEN: usize = 24;
-const POLICY_ENTRY_MIN_LEN: usize = 8;
+/// played(2) + root_wdl(6) + outcome_wdl(6) + raw_wdl(6) + raw_mate(2)
+/// + raw_moves_left(2) + plies_left(2) + requested_visits(4)
+/// + target_weight_milli(2) + exploration_flags(1) + mate tag(1)
+const POSITION_FIXED_LEN: usize = 34;
+/// mv(2) + prior(2) + raw_prior(2) + visits_before(>=1) + visits_after(>=1)
+/// + lower(1) + upper(1)
+const POLICY_ENTRY_MIN_LEN: usize = 10;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SazSelfplayError {
@@ -150,7 +155,13 @@ impl PriorBudget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SazSelfplayPolicyEntry {
     pub mv: Move,
+    /// 探索が実際に使った prior。root では Dirichlet noise 適用後の値になる。
     pub prior: u16,
+    /// noise も proven-edge 抑制もかける前の、ネットワークが出したままの prior。
+    ///
+    /// `prior` と同じ量子化で、合法手全体の合計が [`SazWdl::TOTAL`] にちょうど一致する。
+    /// 探索定数の校正と target 変換の評価を分離するために保存する。
+    pub raw_prior: u16,
     pub visits_before: u32,
     pub visits_after: u32,
     pub lower: SazOutcomeBound,
@@ -160,7 +171,16 @@ pub struct SazSelfplayPolicyEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SazSelfplayPosition {
     pub played: Move,
+    /// 探索後の root 集約 WDL。
     pub root_wdl: SazWdl,
+    /// root 局面に対してネットワークが出したままの WDL。探索集約を通していない。
+    pub raw_wdl: SazWdl,
+    /// mate head の確率を `u16 / 65535` で量子化した値。
+    pub raw_mate: u16,
+    /// moves-left head の予測手数。`plies * 32` の固定小数で、分解能は 1/32 手。
+    ///
+    /// 対局結果から導く [`Self::plies_left`] とは別の量である。混同しないこと。
+    pub raw_moves_left: u16,
     pub outcome_wdl: SazWdl,
     pub plies_left: u16,
     pub requested_visits: u32,
@@ -222,20 +242,26 @@ fn serialize_position(
 ) -> Result<(), SazSelfplayError> {
     position.root_wdl.validate()?;
     position.outcome_wdl.validate()?;
+    position.raw_wdl.validate()?;
     if position.policy.iter().any(|entry| entry.visits_after < entry.visits_before) {
         return Err(SazSelfplayError::DecreasingVisits);
     }
     let mut prior_budget = PriorBudget::new();
+    let mut raw_prior_budget = PriorBudget::new();
     for entry in &position.policy {
         prior_budget.take(entry.prior)?;
+        raw_prior_budget.take(entry.raw_prior)?;
     }
     prior_budget.finish()?;
+    raw_prior_budget.finish()?;
     out.extend_from_slice(&position.played.raw().to_le_bytes());
-    for wdl in [position.root_wdl, position.outcome_wdl] {
+    for wdl in [position.root_wdl, position.outcome_wdl, position.raw_wdl] {
         out.extend_from_slice(&wdl.win.to_le_bytes());
         out.extend_from_slice(&wdl.draw.to_le_bytes());
         out.extend_from_slice(&wdl.loss.to_le_bytes());
     }
+    out.extend_from_slice(&position.raw_mate.to_le_bytes());
+    out.extend_from_slice(&position.raw_moves_left.to_le_bytes());
     out.extend_from_slice(&position.plies_left.to_le_bytes());
     out.extend_from_slice(&position.requested_visits.to_le_bytes());
     out.extend_from_slice(&position.target_weight_milli.to_le_bytes());
@@ -254,6 +280,7 @@ fn serialize_position(
     for entry in &position.policy {
         out.extend_from_slice(&entry.mv.raw().to_le_bytes());
         out.extend_from_slice(&entry.prior.to_le_bytes());
+        out.extend_from_slice(&entry.raw_prior.to_le_bytes());
         encode_uleb128_u32(entry.visits_before, out);
         encode_uleb128_u32(entry.visits_after, out);
         out.push(entry.lower as u8);
@@ -344,6 +371,9 @@ fn deserialize_position(
     let played = Move::from_raw(read_u16(input, cursor));
     let root_wdl = read_wdl(input, cursor)?;
     let outcome_wdl = read_wdl(input, cursor)?;
+    let raw_wdl = read_wdl(input, cursor)?;
+    let raw_mate = read_u16(input, cursor);
+    let raw_moves_left = read_u16(input, cursor);
     let plies_left = read_u16(input, cursor);
     let requested_visits = read_u32(input, cursor);
     let target_weight_milli = read_u16(input, cursor);
@@ -366,6 +396,7 @@ fn deserialize_position(
     let count = read_uleb(input, cursor, end)?;
     let mut policy = Vec::with_capacity((count as usize).min(MAX_PREALLOC));
     let mut prior_budget = PriorBudget::new();
+    let mut raw_prior_budget = PriorBudget::new();
     for _ in 0..count {
         if *cursor + POLICY_ENTRY_MIN_LEN > end {
             return Err(SazSelfplayError::Truncated);
@@ -373,6 +404,8 @@ fn deserialize_position(
         let mv = Move::from_raw(read_u16(input, cursor));
         let prior = read_u16(input, cursor);
         prior_budget.take(prior)?;
+        let raw_prior = read_u16(input, cursor);
+        raw_prior_budget.take(raw_prior)?;
         let visits_before = read_uleb(input, cursor, end)?;
         let visits_after = read_uleb(input, cursor, end)?;
         if visits_after < visits_before {
@@ -388,6 +421,7 @@ fn deserialize_position(
         policy.push(SazSelfplayPolicyEntry {
             mv,
             prior,
+            raw_prior,
             visits_before,
             visits_after,
             lower,
@@ -395,10 +429,14 @@ fn deserialize_position(
         });
     }
     prior_budget.finish()?;
+    raw_prior_budget.finish()?;
     Ok(SazSelfplayPosition {
         played,
         root_wdl,
         outcome_wdl,
+        raw_wdl,
+        raw_mate,
+        raw_moves_left,
         plies_left,
         requested_visits,
         target_weight_milli,
@@ -480,6 +518,9 @@ mod tests {
                 played: Move::from_usi("7g7f").unwrap(),
                 root_wdl: SazWdl { win: 20_000, draw: 25_535, loss: 20_000 },
                 outcome_wdl: SazWdl { win: 0, draw: u16::MAX, loss: 0 },
+                raw_wdl: SazWdl { win: 20_000, draw: 25_535, loss: 20_000 },
+                raw_mate: 0,
+                raw_moves_left: 32,
                 plies_left: 1,
                 requested_visits: 800,
                 target_weight_milli: 1000,
@@ -489,6 +530,7 @@ mod tests {
                     SazSelfplayPolicyEntry {
                         mv: Move::from_usi("7g7f").unwrap(),
                         prior: 50_000,
+                        raw_prior: 50_000,
                         visits_before: 2,
                         visits_after: 500,
                         lower: SazOutcomeBound::Loss,
@@ -497,6 +539,7 @@ mod tests {
                     SazSelfplayPolicyEntry {
                         mv: Move::from_usi("2g2f").unwrap(),
                         prior: 15_535,
+                        raw_prior: 15_535,
                         visits_before: 0,
                         visits_after: 300,
                         lower: SazOutcomeBound::Draw,
@@ -527,6 +570,65 @@ mod tests {
         assert_eq!(indexed[0].payload_range.end, indexed[1].payload_range.start);
         assert_eq!(indexed[1].payload_range.end, bytes.len());
         assert!(!bytes[indexed[0].payload_range.clone()].is_empty());
+    }
+
+    #[test]
+    fn raw_policy_is_a_distribution_in_its_own_right() {
+        // raw_prior は prior とは独立に合計が TOTAL でなければならない。片方だけが
+        // 正しい payload を通すと、noise 前後の比較が静かに壊れる。
+        let mut game = fixture();
+        game.positions[0].policy[0].raw_prior += 1;
+        assert_eq!(
+            serialize_selfplay_chunk(&[game.clone()]),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
+
+        // prior 側だけを崩した場合も同じく拒否される。
+        let mut game = fixture();
+        game.positions[0].policy[0].prior += 1;
+        assert_eq!(
+            serialize_selfplay_chunk(&[game]),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
+    }
+
+    #[test]
+    fn raw_wdl_is_validated_like_the_search_aggregated_one() {
+        let mut game = fixture();
+        game.positions[0].raw_wdl.win += 1;
+        assert_eq!(
+            serialize_selfplay_chunk(&[game]),
+            Err(SazSelfplayError::InvalidDistributionSum)
+        );
+    }
+
+    #[test]
+    fn raw_and_search_policy_stay_distinguishable_through_a_roundtrip() {
+        // 両者が同じ値だと「noise 前後で不変」を主張する試験が偽陽性になる。
+        let mut game = fixture();
+        let entries = game.positions[0].policy.len();
+        assert!(entries >= 2, "fixture must have room to skew one entry against another");
+        game.positions[0].policy[0].prior += 1;
+        game.positions[0].policy[1].prior -= 1;
+
+        let bytes = serialize_selfplay_chunk(std::slice::from_ref(&game)).unwrap();
+        let decoded = deserialize_selfplay_chunk(&bytes).unwrap();
+        let position = &decoded[0].positions[0];
+        assert_ne!(position.policy[0].prior, position.policy[0].raw_prior);
+        assert_eq!(position.policy[0].raw_prior, game.positions[0].policy[0].raw_prior);
+        assert_eq!(decoded, vec![game]);
+    }
+
+    #[test]
+    fn a_version_one_chunk_is_refused_rather_than_misread() {
+        // v1 は raw block を持たない。黙って読み違えると raw 由来の指標が
+        // 隣接フィールドのゴミを測ることになる。
+        let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
+        bytes[4] = 1;
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::UnsupportedVersion(1))
+        );
     }
 
     #[test]
@@ -590,11 +692,14 @@ mod tests {
         encode_uleb128_u32(1, &mut payload);
 
         payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
-        for _ in 0..2 {
+        // version 2 は root / outcome / raw の 3 本の WDL を持つ。
+        for _ in 0..3 {
             payload.extend_from_slice(&0u16.to_le_bytes());
             payload.extend_from_slice(&u16::MAX.to_le_bytes());
             payload.extend_from_slice(&0u16.to_le_bytes());
         }
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
         payload.extend_from_slice(&1u16.to_le_bytes());
         payload.extend_from_slice(&800u32.to_le_bytes());
         payload.extend_from_slice(&1000u16.to_le_bytes());
@@ -602,9 +707,13 @@ mod tests {
         payload.push(0);
 
         encode_uleb128_u32(u32::try_from(priors.len()).unwrap(), &mut payload);
-        for &prior in priors {
+        for (index, &prior) in priors.iter().enumerate() {
             payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
             payload.extend_from_slice(&prior.to_le_bytes());
+            // raw_prior は prior と独立に検証されるので、prior 側の検証だけを見るために
+            // raw 側は常に合計ちょうど 65535 の正当な分布にしておく。
+            let raw_prior = if index == 0 { u16::MAX } else { 0 };
+            payload.extend_from_slice(&raw_prior.to_le_bytes());
             encode_uleb128_u32(0, &mut payload);
             encode_uleb128_u32(0, &mut payload);
             payload.push(SazOutcomeBound::Loss as u8);
@@ -618,6 +727,16 @@ mod tests {
         bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
         bytes.extend_from_slice(&payload);
         bytes
+    }
+
+    /// 手組み payload が正当なら通ることを先に固定する。これが無いと、layout がずれて
+    /// prior 累積へ到達しなくなっても、別経路の同じ error 値で拒否の test が緑のまま通る。
+    #[test]
+    fn chunk_with_priors_builds_a_decodable_chunk() {
+        let bytes = chunk_with_priors(&[u16::MAX]);
+        let games = deserialize_selfplay_chunk(&bytes).expect("valid hand-built chunk");
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].positions[0].policy.len(), 1);
     }
 
     #[test]
@@ -637,6 +756,7 @@ mod tests {
             .map(|prior| SazSelfplayPolicyEntry {
                 mv: Move::from_usi("7g7f").unwrap(),
                 prior,
+                raw_prior: prior,
                 visits_before: 0,
                 visits_after: 0,
                 lower: SazOutcomeBound::Loss,

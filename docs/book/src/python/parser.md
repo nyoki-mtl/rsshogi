@@ -21,7 +21,8 @@
 |----------|------|
 | `Record.from_kif_str(text)` | KIF 文字列から生成 |
 | `Record.from_ki2_str(text)` | KI2 文字列から生成 |
-| `Record.from_csa_str(text)` | CSA 文字列から生成 |
+| `Record.from_csa_str(text)` | CSA 文字列から生成（`/` 区切りの複数棋譜では最初の1局） |
+| `Record.from_csa_games_str(text)` | `/` 区切りの CSA 文字列から全局を `list[Record]` で生成 |
 | `Record.from_jkf_str(text)` | JKF (JSON) 文字列から生成 |
 | `Record.from_usi_position(position, *, allow_special_tokens=False)` | USI position command から生成 |
 | `Record.from_sbinpack(data)` | sbinpack バイナリ（`bytes`）から生成 |
@@ -42,8 +43,8 @@
   `DRAW_BY_MAX_PLIES` / `DRAW_BY_IMPASSE` として解釈されます
 - KIF の指し手行末尾にある `(<elapsed>/<total>)` 形式の消費時間も `MoveEntry.time_ms`
   に取り込まれます
-- CSA の終局 `%...` 行に続く `T...` とコメント行（`'...` / `'*...`）は内部的に保持され、
-  `to_csa()` 時にも維持されます
+- CSA の終局 `%...` 行に続く `T...` とプログラムコメント行（`'*...`）は内部的に保持され、
+  `to_csa()` 時にも維持されます（plain な `'...` は読み飛ばします）
 - 先後別時間設定や上限手数は `record.metadata.black_time_control` /
   `record.metadata.white_time_control` / `record.metadata.max_moves` / `record.metadata.impasse_rule`
   から参照できます
@@ -54,7 +55,8 @@
 |----------|--------------------------|------|
 | `Record.from_kif_file(path, *, encoding=None)` | 拡張子で判定（後述） | KIF ファイルから生成 |
 | `Record.from_ki2_file(path, *, encoding="shift_jis")` | Shift_JIS | KI2 ファイルから生成 |
-| `Record.from_csa_file(path, *, encoding="shift_jis")` | Shift_JIS | CSA ファイルから生成 |
+| `Record.from_csa_file(path, *, encoding="shift_jis")` | Shift_JIS | CSA ファイルから生成（最初の1局） |
+| `Record.from_csa_games_file(path, encoding="shift_jis")` | Shift_JIS | `/` 区切りの CSA ファイルから全局を `list[Record]` で生成 |
 | `Record.from_jkf_file(path, *, encoding="utf-8")` | UTF-8 | JKF ファイルから生成 |
 
 #### KIF ファイルのエンコーディング
@@ -81,7 +83,7 @@ record = Record.from_kif_file("game.kif", encoding="utf-8")
 |----------|------|
 | `record.to_kif()` | KIF 文字列へ変換 |
 | `record.to_ki2()` | KI2 文字列へ変換 |
-| `record.to_csa()` | CSA 文字列へ変換 |
+| `record.to_csa(*, version="2.2")` | CSA 文字列へ変換（`version` は `"2.2"` / `"3.0"`） |
 | `record.to_jkf()` | JKF (JSON) 文字列へ変換 |
 | `record.to_usi_position()` | USI position command 文字列へ変換 |
 | `record.to_sbinpack(...)` | sbinpack バイナリへ変換 |
@@ -92,7 +94,7 @@ record = Record.from_kif_file("game.kif", encoding="utf-8")
 | メソッド | デフォルトエンコーディング |
 |----------|--------------------------|
 | `record.write_kif(path, *, encoding=None)` | 拡張子で判定（`.kif` → Shift_JIS, `.kifu` → UTF-8） |
-| `record.write_csa(path, *, encoding="shift_jis")` | Shift_JIS |
+| `record.write_csa(path, encoding="shift_jis", *, version="2.2")` | Shift_JIS |
 | `record.write_ki2(path, *, encoding="shift_jis")` | Shift_JIS |
 | `record.write_jkf(path, *, encoding="utf-8")` | UTF-8 |
 
@@ -107,6 +109,12 @@ record = Record.from_kif_file("game.kif", encoding="utf-8")
   だけをコメントとして受理し、plain な `'comment` は読み飛ばします。
   `Record.to_csa()` は `'*comment` を出力します。
 - 互換性のため、手番行より前の `'*comment` は `initial_comment` に正規化して受理します。
+- `Record.from_csa_str()` / `from_csa_file()` は `/` 区切りの複数棋譜のうち最初の1局を返します。
+  全局が必要なら `Record.from_csa_games_str()` / `from_csa_games_file()` を使います。
+- `record.to_csa(version="3.0")` は先頭に `'CSA encoding=UTF-8` 宣言を出します。
+  `record.write_csa(path, encoding, version="3.0")` は宣言を実際の書き出しエンコーディングに
+  合わせ、CSA が宣言できない文字コード（UTF-8 / Shift_JIS 以外）を指定した場合は
+  `ValueError` を送出します。
 - `RecordMetadata.comment` は KIF の `備考` / CSA の `$NOTE` に対応し、
   匿名ヘッダコメントを受けるためのフィールドではありません。
 - `Record.main_terminal is None` の場合、`to_kif()` / `to_ki2()` / `to_csa()` は

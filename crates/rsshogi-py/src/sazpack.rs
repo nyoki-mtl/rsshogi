@@ -62,6 +62,7 @@ impl PySazPolicyEntry {
     fn new(
         mv: &Bound<'_, PyAny>,
         prior: u16,
+        raw_prior: u16,
         visits_before: u32,
         visits_after: u32,
         lower: u8,
@@ -71,6 +72,7 @@ impl PySazPolicyEntry {
             inner: SazSelfplayPolicyEntry {
                 mv: parse_move_arg(mv)?,
                 prior,
+                raw_prior,
                 visits_before,
                 visits_after,
                 lower: SazOutcomeBound::try_from(lower).map_err(value_error)?,
@@ -86,6 +88,10 @@ impl PySazPolicyEntry {
     #[getter]
     fn prior(&self) -> u16 {
         self.inner.prior
+    }
+    #[getter]
+    fn raw_prior(&self) -> u16 {
+        self.inner.raw_prior
     }
     #[getter]
     fn visits_before(&self) -> u32 {
@@ -114,12 +120,15 @@ pub(crate) struct PySazPosition {
 #[pymethods]
 impl PySazPosition {
     #[new]
-    #[pyo3(signature = (played, root_wdl, outcome_wdl, plies_left, requested_visits, target_weight_milli, exploration_flags, policy, mate=None))]
+    #[pyo3(signature = (played, root_wdl, outcome_wdl, raw_wdl, raw_mate, raw_moves_left, plies_left, requested_visits, target_weight_milli, exploration_flags, policy, mate=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         played: &Bound<'_, PyAny>,
         root_wdl: PySazWdl,
         outcome_wdl: PySazWdl,
+        raw_wdl: PySazWdl,
+        raw_mate: u16,
+        raw_moves_left: u16,
         plies_left: u16,
         requested_visits: u32,
         target_weight_milli: u16,
@@ -132,6 +141,9 @@ impl PySazPosition {
                 played: parse_move_arg(played)?,
                 root_wdl: root_wdl.inner,
                 outcome_wdl: outcome_wdl.inner,
+                raw_wdl: raw_wdl.inner,
+                raw_mate,
+                raw_moves_left,
                 plies_left,
                 requested_visits,
                 target_weight_milli,
@@ -153,6 +165,18 @@ impl PySazPosition {
     #[getter]
     fn outcome_wdl(&self) -> PySazWdl {
         PySazWdl { inner: self.inner.outcome_wdl }
+    }
+    #[getter]
+    fn raw_wdl(&self) -> PySazWdl {
+        PySazWdl { inner: self.inner.raw_wdl }
+    }
+    #[getter]
+    fn raw_mate(&self) -> u16 {
+        self.inner.raw_mate
+    }
+    #[getter]
+    fn raw_moves_left(&self) -> u16 {
+        self.inner.raw_moves_left
     }
     #[getter]
     fn plies_left(&self) -> u16 {

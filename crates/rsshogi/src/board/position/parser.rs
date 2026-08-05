@@ -64,13 +64,7 @@ impl Position {
         // ビットボードを再構築
         self.rebuild_bitboards();
 
-        // Zobristハッシュを計算
-        let keys = self.compute_keys();
-        let (board_key, hand_key) = (keys.board_key, keys.hand_key);
-        self.board_key = board_key;
-        self.hand_key = hand_key;
-        self.zobrist = board_key ^ hand_key;
-
+        // Zobrist ハッシュは root state の再構築時にまとめて全再計算する。
         self.reset_state_stack_to_current_position();
         self.debug_assert_partial_keys_consistent();
     }

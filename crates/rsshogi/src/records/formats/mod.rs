@@ -6,7 +6,8 @@
 //! - [`sfen`] - SFEN 形式（USI プロトコル）
 //! - [`usi`] - USI position command 形式
 //! - [`sbinpack`] - sbinpack 形式（NNUE 系訓練データ用バイナリ）
-//! - [`sazpack`] - sazpack 形式（AlphaZero 系訓練データ用バイナリ、sparse policy）
+//! - [`sazpack`] - sazpack 形式（AlphaZero 系訓練データ用バイナリ、sparse policy、
+//!   version 2 で raw policy / raw WDL / raw mate / raw moves-left の NN 生出力を保持）
 //! - [`hcpe`] - cshogi / Apery 互換の HCPE 学習データ
 //! - [`pack`] - YaneuraOu ScriptCollection 互換の可変長 pack 学習データ
 //! - [`common`] - テキストエンコーディング（[`TextEncoding`] / [`ExportOptions`] / [`EncodedText`]）
@@ -25,7 +26,7 @@ pub mod sfen;
 pub mod traversal;
 pub mod usi;
 
-pub use common::{EncodedText, ExportOptions, TextEncoding};
+pub use common::{CsaVersion, EncodedText, ExportOptions, TextEncoding};
 pub use csa::*;
 pub use hcpe::*;
 pub use jkf::*;

@@ -78,6 +78,8 @@ print(f"結果: {record.result.name}")
 | `from_kif_file(path, *, encoding=None)` | KIF ファイルから生成 |
 | `from_ki2_file(path, *, encoding="shift_jis")` | KI2 ファイルから生成 |
 | `from_csa_file(path, *, encoding="shift_jis")` | CSA ファイルから生成 |
+| `from_csa_games_str(text)` | `/` 区切りの CSA 文字列から全局を `list[Record]` で生成 |
+| `from_csa_games_file(path, encoding="shift_jis")` | `/` 区切りの CSA ファイルから全局を生成 |
 | `from_jkf_file(path, *, encoding="utf-8")` | JKF ファイルから生成 |
 
 #### 書き出し（インスタンスメソッド）
@@ -85,14 +87,14 @@ print(f"結果: {record.result.name}")
 | メソッド | 説明 |
 |----------|------|
 | `to_kif()` | KIF 文字列へ変換 |
-| `to_csa()` | CSA 文字列へ変換 |
+| `to_csa(*, version="2.2")` | CSA 文字列へ変換（`version` は `"2.2"` / `"3.0"`） |
 | `to_ki2()` | KI2 文字列へ変換 |
 | `to_jkf()` | JKF 文字列へ変換 |
 | `to_usi_position(*, include_special_tokens=False)` | USI position command 文字列へ変換 |
 | `to_pack()` | pack バイナリへ変換 |
 | `to_psv(*, include_main=True, include_variations=False)` | `PackedSfenValue` 配列（`list[bytes]`）へ変換（引数はすべてキーワード専用） |
 | `write_kif(path, *, encoding=None)` | KIF ファイルへ書き出し |
-| `write_csa(path, *, encoding="shift_jis")` | CSA ファイルへ書き出し |
+| `write_csa(path, encoding="shift_jis", *, version="2.2")` | CSA ファイルへ書き出し |
 | `write_ki2(path, *, encoding="shift_jis")` | KI2 ファイルへ書き出し |
 | `write_jkf(path, *, encoding="utf-8")` | JKF ファイルへ書き出し |
 
@@ -107,6 +109,17 @@ print(f"結果: {record.result.name}")
   として出力します。
 - 互換性のため、手番行より前の `'*comment` も開始局面コメントとして受理し、
   `to_csa()` では手番行直後の正規形へ寄せて出力します。
+- `to_csa(version="3.0")` は先頭に `'CSA encoding=UTF-8` 宣言を出します。
+  `write_csa(path, encoding, version="3.0")` は宣言を実際の書き出しエンコーディングに
+  合わせ、CSA が宣言できない文字コード（UTF-8 / Shift_JIS 以外）を指定した場合は
+  嘘の宣言を書かずに `ValueError` を送出します。V3.0 出力では端数のある消費時間を
+  ミリ秒表記（`T15.123`）で出します。
+- 消費時間が記録されていない指し手には `T` 行を出力しません。
+- CSA 3.0 の `'** 評価値 読み筋 #ノード数` は `MoveEntry.engine_info` の
+  `eval` / `nodes` と `extras["csa_pv"]`（読み筋の原文）に取り込み、`to_csa()` で
+  書き戻します。
+- `from_csa_str()` / `from_csa_file()` は `/` 区切りの複数棋譜のうち最初の1局を返します。
+  全局が必要なら `from_csa_games_str()` / `from_csa_games_file()` を使います。
 - `from_kif_str()` / `from_ki2_str()` は連続するコメント行を `\n` で連結し、
   同じ指し手の `MoveEntry.comment` として保持します。初手前コメントは `Record.initial_comment` に入ります。
 - `RecordMetadata.comment` はヘッダ自由コメントではなく、KIF の `備考` /

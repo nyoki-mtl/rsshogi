@@ -161,10 +161,11 @@ impl Position {
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
         let us = us_color::<BLACK>();
         let them = them_color::<BLACK>();
-        let mut board_key = self.board_key;
-        let mut hand_key = self.hand_key;
-
+        // キーは現局面の state が単一の真実点。StateStack を可変借用する前に
+        // 他の hot フィールドとまとめてレジスタへ退避する。
         let (
+            mut board_key,
+            mut key,
             prev_continuous_check,
             prev_plies_from_null,
             prev_check_square_for_moved,
@@ -173,6 +174,8 @@ impl Position {
         ) = {
             let current = self.current_hot();
             (
+                current.board_key,
+                current.key,
                 current.continuous_check,
                 current.plies_from_null,
                 if gives_check {
@@ -216,9 +219,11 @@ impl Position {
             // 持ち駒を減らす
             self.hand_mut(color).sub(hand_piece, 1);
 
-            // Zobrist更新: 駒打ち
-            board_key ^= Zobrist::psq(to, piece);
-            hand_key.sub(Zobrist::hand(color, piece_type, 1));
+            // Zobrist更新: 駒打ち。盤上の変化は board_key と key の両方に効く。
+            let placed = Zobrist::psq(to, piece);
+            board_key ^= placed;
+            key ^= placed;
+            key ^= Zobrist::hand_delta(color, piece_type, hand_count_before, hand_count_before - 1);
             Self::add_board_piece_to_partial_keys(&mut partial_keys, to, piece);
             Self::sub_hand_piece_material_value(&mut partial_keys, color, piece_type, 1);
             (
@@ -270,9 +275,16 @@ impl Position {
                 self.hand_mut(us).add(captured_hand_piece, 1);
 
                 // Zobrist: 捕獲された駒を盤上から削除
-                board_key ^= Zobrist::psq(to, captured_piece);
+                let removed = Zobrist::psq(to, captured_piece);
+                board_key ^= removed;
+                key ^= removed;
                 // Zobrist: 持ち駒を更新
-                hand_key.add(Zobrist::hand(us, captured_piece.piece_type().demote(), 1));
+                key ^= Zobrist::hand_delta(
+                    us,
+                    captured_hand_piece.to_piece_type(),
+                    captured_hand_count_before,
+                    captured_hand_count_before + 1,
+                );
                 Self::remove_board_piece_from_partial_keys(&mut partial_keys, to, captured_piece);
                 Self::add_hand_piece_material_value(
                     &mut partial_keys,
@@ -297,8 +309,9 @@ impl Position {
             }
 
             // Zobrist更新: 通常移動または成り
-            board_key ^= Zobrist::psq(from, moved_piece);
-            board_key ^= Zobrist::psq(to, new_piece);
+            let moved = Zobrist::psq(from, moved_piece) ^ Zobrist::psq(to, new_piece);
+            board_key ^= moved;
+            key ^= moved;
             Self::remove_board_piece_from_partial_keys(&mut partial_keys, from, moved_piece);
             Self::add_board_piece_to_partial_keys(&mut partial_keys, to, new_piece);
 
@@ -318,10 +331,9 @@ impl Position {
         // 手番を反転し、手数を進め、Zobristを更新
         self.flip_side_to_move();
         self.ply += 1;
-        board_key ^= Zobrist::side();
-        self.board_key = board_key;
-        self.hand_key = hand_key;
-        self.zobrist = board_key ^ hand_key;
+        let side = Zobrist::side();
+        board_key ^= side;
+        key ^= side;
 
         // continuous_check と plies_from_null の更新
         let moved_color = us;
@@ -391,15 +403,7 @@ impl Position {
         };
 
         let facts = move_delta.map(|delta| {
-            MoveApplyFacts::from_delta(
-                delta,
-                mv,
-                gives_check,
-                board_key,
-                hand_key,
-                self.zobrist,
-                partial_keys,
-            )
+            MoveApplyFacts::from_delta(delta, mv, gives_check, board_key, key, partial_keys)
         });
 
         self.state_stack_mut().write_move_state(
@@ -408,7 +412,7 @@ impl Position {
                 hot: StateHotComputed {
                     plies_from_null: new_plies_from_null,
                     board_key,
-                    hand_key,
+                    key,
                     partial_keys,
                     hand: hand_them,
                     continuous_check: new_continuous_check,
@@ -460,19 +464,15 @@ impl Position {
     #[inline]
     pub unsafe fn undo_move32_unchecked(&mut self, mv: Move32) {
         let m = mv.to_move();
-        let (captured, current_keys, current_index) = {
+        // キーの真実点は state 側にあるため、st_index を戻すだけで復元される。
+        let (captured, current_index) = {
             let stack = &mut self.state_stack;
             // SAFETY: 呼び出し側がステートスタックを空でないことと、`mv` が直前に適用した手であることを保証するため、ポップにより対応する前の状態が復元される。
             let prev_idx = unsafe { stack.pop_unchecked() };
-            let current_index = stack.current_index();
             let captured = stack.cold(prev_idx).captured_piece();
-            let current = stack.hot(current_index);
-            (captured, (current.board_key, current.hand_key), current_index)
+            (captured, stack.current_index())
         };
         self.st_index = current_index;
-        self.board_key = current_keys.0;
-        self.hand_key = current_keys.1;
-        self.zobrist = current_keys.0 ^ current_keys.1;
 
         self.flip_side_to_move();
         self.ply -= 1;
@@ -539,15 +539,13 @@ impl Position {
         &mut self,
         m: Move,
     ) -> Result<Option<MoveDelta32>, MoveError> {
-        // StateStackから前の状態を取得
-        let (captured, current_keys, current_index) = {
+        // StateStack から前の状態を取得する。キーの真実点は state 側にあるため、
+        // st_index を戻すだけで復元される。
+        let (captured, current_index) = {
             let stack = self.state_stack_mut();
             let prev_idx = stack.pop().ok_or(MoveError::StackUnderflow)?;
-            let current_index = stack.current_index();
             let captured = stack.cold(prev_idx).captured_piece();
-            let current = stack.hot(current_index);
-            let keys = (current.board_key, current.hand_key);
-            (captured, keys, current_index)
+            (captured, stack.current_index())
         };
         self.st_index = current_index;
         let move_delta = if WITH_DELTA && m.is_drop() {
@@ -595,11 +593,6 @@ impl Position {
         } else {
             None
         };
-
-        // Zobristを復元（現局面のStateから復元）
-        self.board_key = current_keys.0;
-        self.hand_key = current_keys.1;
-        self.zobrist = self.board_key ^ self.hand_key;
 
         // 手番を反転（元に戻す）
         self.flip_side_to_move();
@@ -698,18 +691,24 @@ impl Position {
     fn apply_null_move_impl<const ADVANCE_GAME_PLY: bool>(&mut self) -> Result<(), MoveError> {
         debug_assert!(self.checkers().is_empty(), "null move must not be in check");
 
+        // `prepare_next_for_null_move` はキーを引き継がないため、
+        // StateStack を可変借用する前に現局面の state から読んでおく。
+        let side = Zobrist::side();
+        let (board_key, key) = {
+            let current = self.current_hot();
+            (current.board_key ^ side, current.key ^ side)
+        };
+
         // 新しい状態を積む
         // `prepare_next_for_null_move` は null move 後も不変なキャッシュだけを引き継ぎ、
         // null move の不変条件で確定するフィールドを初期化する。
         let state_idx = self.state_stack_mut().prepare_next_for_null_move();
 
-        // 手番を反転し、手数を進め、Zobristを更新
+        // 手番を反転し、手数を進める
         self.flip_side_to_move();
         if ADVANCE_GAME_PLY {
             self.ply += 1;
         }
-        self.board_key ^= Zobrist::side();
-        self.zobrist = self.board_key ^ self.hand_key;
 
         let prev_continuous_check = self.state_stack().hot(state_idx).continuous_check;
         debug_assert!(
@@ -720,8 +719,6 @@ impl Position {
         let mut new_continuous_check = prev_continuous_check;
         new_continuous_check[prev_side.to_index()] = 0;
 
-        let board_key = self.board_key;
-        let hand_key = self.hand_key;
         let turn = self.turn();
         let hand = self.hand(turn);
         let check_squares = self.compute_check_squares();
@@ -729,7 +726,7 @@ impl Position {
             state_idx,
             NullStateWriteBack {
                 board_key,
-                hand_key,
+                key,
                 hand,
                 continuous_check: new_continuous_check,
                 check_squares,
@@ -756,19 +753,14 @@ impl Position {
             self.ply -= 1;
         }
 
-        // スタックをポップ
-        let (current_keys, current_index) = {
+        // スタックをポップする。キーの真実点は state 側にあるため、
+        // st_index を戻すだけで復元される。
+        let current_index = {
             let stack = self.state_stack_mut();
             let _ = stack.pop().ok_or(MoveError::StackUnderflow)?;
-            let current_index = stack.current_index();
-            let current = stack.hot(current_index);
-            ((current.board_key, current.hand_key), current_index)
+            stack.current_index()
         };
         self.st_index = current_index;
-
-        self.board_key = current_keys.0;
-        self.hand_key = current_keys.1;
-        self.zobrist = self.board_key ^ self.hand_key;
         self.debug_assert_partial_keys_consistent();
 
         Ok(())
@@ -819,7 +811,8 @@ mod tests {
                 "SFEN mismatch after undo of {mv32:?}"
             );
             assert_eq!(
-                pos_safe.zobrist, pos_unchecked.zobrist,
+                pos_safe.key(),
+                pos_unchecked.key(),
                 "Zobrist mismatch after undo of {mv32:?}"
             );
         }
@@ -859,7 +852,8 @@ mod tests {
                     "SFEN mismatch after undo of {mv32:?} in position {sfen}"
                 );
                 assert_eq!(
-                    pos_safe.zobrist, pos_unchecked.zobrist,
+                    pos_safe.key(),
+                    pos_unchecked.key(),
                     "Zobrist mismatch after undo of {mv32:?} in position {sfen}"
                 );
             }

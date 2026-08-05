@@ -869,3 +869,103 @@ def test_result_info_is_snapshot() -> None:
     assert after.reason == "まで2手で後手の時間切れ勝ち"
     assert after.end_time_ms == 2000
     assert after.end_comment == "終局B"
+
+
+def test_csa_zero_move_terminal_is_kept() -> None:
+    record = rs.record.Record.from_csa_str("V2.2\nPI\n+\n%TORYO\n")
+
+    assert record.move_count == 0
+    assert record.result == rs.record.GameResult.WHITE_WIN
+    assert "%TORYO" in record.to_csa()
+
+
+def test_csa_millisecond_elapsed_time_needs_v30_output() -> None:
+    record = rs.record.Record.from_csa_str("V3.0\nPI\n+\n+7776FU\nT15.123\n%TORYO\n")
+
+    assert record.moves[0].time_ms == 15123
+
+    v30 = record.to_csa(version="3.0")
+    assert v30.startswith("'CSA encoding=UTF-8\nV3.0\n")
+    assert "\nT15.123\n" in v30
+
+    # V2.2 output rounds down to whole seconds.
+    assert "\nT15\n" in record.to_csa()
+
+    with pytest.raises(ValueError):
+        record.to_csa(version="2.3")
+
+
+def test_csa_analysis_line_roundtrips() -> None:
+    text = "V3.0\nPI\n+\n+7776FU\nT15\n'** 99 -8384FU +7776FU #1234\n%TORYO\n"
+    record = rs.record.Record.from_csa_str(text)
+
+    info = record.moves[0].engine_info
+    assert info is not None
+    assert info.eval == 99
+    assert info.nodes == 1234
+    assert info.extras["csa_pv"] == "-8384FU +7776FU"
+
+    assert "'** 99 -8384FU +7776FU #1234" in record.to_csa()
+
+
+def test_csa_export_omits_elapsed_line_when_unrecorded() -> None:
+    record = rs.record.Record.from_csa_str("V2.2\nPI\n+\n+7776FU\n%TORYO\n")
+
+    assert record.moves[0].time_ms is None
+    assert record.to_csa() == "V2.2\nPI\n+\n+7776FU\n%TORYO\n"
+
+
+def test_csa_raw_terminal_marker_is_preserved() -> None:
+    record = rs.record.Record.from_csa_str("V2.2\nPI\n+\n+7776FU\n%+ILLEGAL_ACTION\n")
+
+    assert "%+ILLEGAL_ACTION" in record.to_csa()
+
+
+def test_csa_games_str_splits_on_separator() -> None:
+    text = "V2.2\nPI\n+\n+7776FU\n%TORYO\n/\nV2.2\nPI\n+\n+2726FU\n%TORYO\n"
+
+    games = rs.record.Record.from_csa_games_str(text)
+    assert len(games) == 2
+    assert games[0].moves[0].move.to_usi() == "7g7f"
+    assert games[1].moves[0].move.to_usi() == "2g2f"
+
+    # The single-game entry point returns the first game instead of failing.
+    assert rs.record.Record.from_csa_str(text).moves[0].move.to_usi() == "7g7f"
+
+
+def test_csa_v30_declaration_matches_written_encoding(tmp_path) -> None:
+    record = rs.record.Record.from_csa_str("V2.2\nPI\n+\n+7776FU\n%TORYO\n")
+
+    path = tmp_path / "game.csa"
+    record.write_csa(path, "shift_jis", version="3.0")
+    written = path.read_text(encoding="shift_jis")
+    assert written.startswith("'CSA encoding=SHIFT_JIS\nV3.0\n")
+
+    games = rs.record.Record.from_csa_games_file(path, "shift_jis")
+    assert len(games) == 1
+
+
+def test_csa_v30_rejects_encoding_it_cannot_declare(tmp_path) -> None:
+    record = rs.record.Record.from_csa_str("V2.2\nPI\n+\n+7776FU\n%TORYO\n")
+    path = tmp_path / "game.csa"
+
+    # CSA 3.0 only defines UTF-8 and SHIFT_JIS, so declaring euc_jp would be a lie.
+    with pytest.raises(ValueError):
+        record.write_csa(path, "euc_jp", version="3.0")
+
+    # A Shift_JIS alias Python accepts must still produce a truthful declaration.
+    record.write_csa(path, "ms_kanji", version="3.0")
+    assert path.read_text(encoding="ms_kanji").startswith("'CSA encoding=SHIFT_JIS\n")
+
+    # V2.2 output writes no declaration, so any codec stays allowed.
+    record.write_csa(path, "euc_jp", version="2.2")
+    assert path.read_text(encoding="euc_jp").startswith("V2.2\n")
+
+
+def test_csa_illegal_action_result_does_not_depend_on_turn() -> None:
+    for prefix in ("V2.2\nPI\n+\n", "V2.2\nPI\n+\n+7776FU\n"):
+        plus = rs.record.Record.from_csa_str(prefix + "%+ILLEGAL_ACTION\n")
+        assert plus.result == rs.record.GameResult.WHITE_WIN_BY_ILLEGAL_MOVE
+
+        minus = rs.record.Record.from_csa_str(prefix + "%-ILLEGAL_ACTION\n")
+        assert minus.result == rs.record.GameResult.BLACK_WIN_BY_ILLEGAL_MOVE

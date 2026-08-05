@@ -431,6 +431,7 @@ KIF/KI2/CSA の細かな互換挙動（コメントの扱い、変化手順と�
 Rust core では追加で以下の補助 API を提供します。
 
 - `TextEncoding`, `ExportOptions`, `EncodedText`: KIF / KI2 / CSA を UTF-8 または Shift_JIS のバイト列として出力
+- `records::formats::common::CsaVersion`, `ExportOptions::with_csa_version()`, `csa::export_csa_with_options()`: CSA の出力バージョンを指定
 - `traversal::traverse_with_position()`: `Record` を DFS で走査し、各ノードの局面を計算
 - `traversal::position_at()`: 任意ノード時点の局面を復元
 

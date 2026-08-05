@@ -6,11 +6,10 @@ use crate::types::{Color, Hand, MOVE_NONE, Piece, PieceType};
 #[allow(clippy::cognitive_complexity)]
 fn assert_state_info_matches(actual: &StateInfo, expected: &StateInfo) {
     assert_eq!(actual.board_key, expected.board_key);
-    assert_eq!(actual.hand_key, expected.hand_key);
+    assert_eq!(actual.key, expected.key);
     assert_eq!(actual.pawn_key, expected.pawn_key);
     assert_eq!(actual.minor_piece_key, expected.minor_piece_key);
     assert_eq!(actual.non_pawn_key, expected.non_pawn_key);
-    assert_eq!(actual.material_key, expected.material_key);
     assert_eq!(actual.material_value, expected.material_value);
     assert_eq!(actual.tactical, expected.tactical);
     assert_eq!(actual.continuous_check, expected.continuous_check);
@@ -30,11 +29,10 @@ fn test_state_info_default() {
     let info = StateInfo::default();
     assert_eq!(info.cold.captured_piece(), Piece::NONE);
     assert_eq!(info.board_key, ZobristKey::default());
-    assert_eq!(info.hand_key, ZobristKey::default());
+    assert_eq!(info.key, ZobristKey::default());
     assert_eq!(info.pawn_key, Zobrist::no_pawns());
     assert_eq!(info.minor_piece_key, ZobristKey::default());
     assert_eq!(info.non_pawn_key, [ZobristKey::default(); Color::COUNT]);
-    assert_eq!(info.material_key, ZobristKey::default());
     assert_eq!(info.material_value, 0);
     assert_eq!(info.repetition_counter, 0);
     assert_eq!(info.repetition_distance, 0);
