@@ -201,24 +201,17 @@ graph TD
     E --> F
 ```
 
-## ベンチマーク結果
-| アルゴリズム | Zen2 (ns/op) | Zen3 (ns/op) | Intel (ns/op) |
-|--------------|--------------|--------------|---------------|
-| PEXT         | TBD          | TBD          | TBD           |
-| Magic        | TBD          | TBD          | TBD           |
-| Jumpy Effect | TBD          | TBD          | TBD           |
-| LZ/TZ        | TBD          | TBD          | TBD           |
-> **備考**: 実測値はまだ整備されていません。計測でき次第この表を更新します。
-> ベンチマークは平手初期局面で `perft 6` を 100 回実行し、ウォームアップ後の平均値を採用する予定です。
+## rsshogi の選択
 
-## rsshogi の現状
-- Qugiy 方式（差分抽出＋`byte_reverse`）を採用しています。
-- `attack_tables.rs` で `lance_attacks`（香車）/ `bishop_attacks`（角）/ `rook_attacks`（飛車）を実装しています。
-- 角は `Bitboard256`（AVX2）で 4 方向並列、飛車は香車＋横方向の差分抽出で計算します。
-- ビルド時に `QUGIY_BISHOP_MASK` / `QUGIY_ROOK_MASK` / `LANCE_BEAMS` を事前生成しています。
+rsshogi は Qugiy 方式（差分抽出＋`byte_reverse`）を採用しています。
 
-### 今後の最適化
-1. CPU feature detection を導入し、`pext` 対応 CPU では自動的に PEXT バックエンドに切り替えることを検討しています。
+- `attack_tables.rs` で `lance_attacks`（香車）/ `bishop_attacks`（角）/ `rook_attacks`（飛車）を実装
+- 角は `Bitboard256`（AVX2）で 4 方向並列、飛車は香車＋横方向の差分抽出で計算
+- ビルド時に `QUGIY_BISHOP_MASK` / `QUGIY_ROOK_MASK` / `LANCE_BEAMS` を事前生成
+
+CPU 依存が小さいことが決め手です。
+PEXT は Intel Haswell 以降なら最速級ですが、AMD Zen2 までは実用にならない速度でした。
+Qugiy 方式は SSE2 と SSSE3 で完結するため、どの環境でも安定した速度が出ます。
 
 ---
 
@@ -1077,7 +1070,8 @@ fn shogi_magic_index(sq: Square, occupied: &BitboardSet) -> usize {
 - Magic FileM: 87,543 NPS (94.27%)
 - Magic FileR: 90,240 NPS (97.37%)
 
-Rotated Bitboards に最適化されたコードベースでは若干遅くなりましたが、**Magic の利点**（全方向一括算出、Occupancy 1枚のみ）は将来の最適化余地を示唆しています。
+Rotated 前提で組まれたコードベースへ載せ替えた結果なので、数値そのものは Rotated 有利に働いています。
+それでも Magic は、全方向を一度に算出でき、Occupancy を 1 枚しか持たなくてよいという構造上の利点を保っています。
 
 #### チェスとの違い
 
