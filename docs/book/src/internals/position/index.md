@@ -171,8 +171,7 @@ generate_moves::<Legal>(&pos, &mut moves);
 
 ### 局面の表示
 
-`Position` は `Display` / `Debug` トレイトを実装しています。
-専用の `print()` メソッドは存在しません。
+局面の表示は `Display` / `Debug` トレイトの実装で提供します。
 
 ```rust,ignore
 println!("{}", pos);    // Display: SFEN 形式などの人間可読出力

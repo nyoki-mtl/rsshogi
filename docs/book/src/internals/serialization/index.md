@@ -247,7 +247,7 @@ impl Hand {
 > - `Position::from_sfen(sfen: &str) -> Result<Position, SfenError>`（局面を構築）
 > - `Position::to_sfen(game_ply: Option<i32>) -> String`（SFEN を生成。`None` で現在手数、負数で手数を省略）
 > - 構造化したい場合は `rsshogi::board::parse_sfen(sfen) -> Result<PositionState, SfenError>`
-> - 持ち駒の解析・生成は内部関数（`board::parser` の `parse_hands` / `generate_hands_from_data`）が担い、`Hand` 自体に `to_sfen` / `from_sfen` はありません
+> - 持ち駒の解析・生成は `Hand` ではなく内部関数（`board::parser` の `parse_hands` / `generate_hands_from_data`）が担当
 > - `SfenError` の実バリアントは `MissingField` / `InvalidPiece` / `InvalidSquare` / `InvalidHandCount` / `InvalidTurn` / `InvalidPly` / `TrailingToken` / `InvalidMove` です
 
 ### 完全なパーサ実装例
