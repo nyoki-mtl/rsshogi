@@ -12,7 +12,7 @@ name = "rsshogi"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.27.2", features = ["extension-module"] }
+pyo3 = { version = "0.29.0", features = ["extension-module"] }
 # data ecosystem は default-off feature（task 0421 / Decision 4）。py は学習・棋譜 I/O 一式を使うため
 # python-data（book/records/position-serialization/svg/validation）を有効化する。
 # policy-labels は python-data（records 経由）に transitively 含まれるが、py が直接利用するため明示する。
