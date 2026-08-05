@@ -257,7 +257,7 @@ Square(value: int | None = None) -> Square
 ### クラスメソッド
 
 ```python
-Square.from_usi(s: str) -> Square                      # "7g" など
+Square.from_usi(usi: str) -> Square                    # "7g" など
 Square.from_index(idx: int) -> Square                  # 0-80
 Square.from_file_rank(file: int, rank: int) -> Square  # 0-based (0-8, 0-8)
 ```
@@ -349,7 +349,7 @@ Bitboard.from_square(square: Square) -> Bitboard
 | `test(square)` | `bool` | マスがセットされているか |
 | `flip_side()` | `Bitboard` | 先後反転 |
 | `mirror_file()` | `Bitboard` | 左右反転 |
-| `pop_lsb()` | `Square | None` | 最下位ビットを取り出し |
+| `pop_lsb()` | `Square \| None` | 最下位ビットを取り出し |
 
 ### プロパティ
 

@@ -61,6 +61,10 @@ board.to_svg(last_move=None, scale=1.0) -> Svg
 | `last_move` | `Move \| Move32 \| None` | `None` | 最後の指し手（ハイライト表示）。`Move` または `Move32` のみ受け付けます（USI 文字列・int は不可）。 |
 | `scale` | `float` | `1.0` | 拡大率 |
 
+`Move` は 16bit で駒情報を持たないため、現在の局面と照合して駒を復元します。
+指した後の局面では移動元が空になっており、その `Move` はもう解決できません。
+指した手をハイライトするときは、駒情報を持つ `board.last_move()`（`Move32`）を渡してください。
+
 ### 戻り値
 
 - `Svg`: SVG 画像オブジェクト
@@ -68,14 +72,13 @@ board.to_svg(last_move=None, scale=1.0) -> Svg
 ### 使用例
 
 ```python
-from rsshogi.core import Board, Move
+from rsshogi.core import Board
 
 board = Board()
-move = Move.from_usi("7g7f")
-board.apply_move(move)
+board.apply_usi("7g7f")
 
-# 最後の指し手をハイライト
-svg = board.to_svg(last_move=move)
+# 直前の指し手をハイライト
+svg = board.to_svg(last_move=board.last_move())
 
 # 2倍に拡大
 svg = board.to_svg(scale=2.0)

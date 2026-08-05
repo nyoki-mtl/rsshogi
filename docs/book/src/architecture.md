@@ -6,8 +6,11 @@ rsshogi は Cargo ワークスペースとして構成され、コアクレー�
 
 | クレート | パス | 役割 |
 |---------|------|------|
-| **rsshogi** | `crates/rsshogi/` | 盤面表現・合法手生成・棋譜処理などのコア機能 |
-| **rsshogi** | `crates/rsshogi-py/` | PyO3 による Python バインディング（薄いラッパー） |
+| `rsshogi` | `crates/rsshogi/` | 盤面表現、合法手生成、棋譜処理などのコア機能 |
+| `rsshogi-py` | `crates/rsshogi-py/` | PyO3 による Python バインディング（薄いラッパー） |
+
+`rsshogi-py` はクレート名で、ビルド後の Python パッケージ名は `rsshogi` です。
+`pip install rsshogi` で入るのはこちらです。
 
 ## rsshogi コアクレートのモジュール構成
 
@@ -15,11 +18,12 @@ rsshogi は Cargo ワークスペースとして構成され、コアクレー�
 rsshogi/src/
 ├── types/       基本型（Color, Square, Piece, Move, Move32, Bitboard, Hand）
 ├── labels/      学習・推論向けのラベル変換（policy ラベルなど）
-├── board/       局面管理・指し手生成（最大のモジュール）
-│   ├── position/    局面の保持・更新・合法性判定・Zobrist ハッシュ
-│   ├── movegen/     駒種別の指し手生成（盤上移動・駒打ち・王手回避）
-│   ├── attack_tables   利きテーブル（LZ/TZ 法）
-│   └── ...          BitboardSet, StateInfo, Perft 等
+├── board/       局面管理と指し手生成（最大のモジュール）
+│   ├── position/      局面の保持、更新、合法性判定、Zobrist ハッシュ
+│   ├── movegen/       駒種別の指し手生成（盤上移動、駒打ち、王手回避）
+│   ├── attack_tables/ 利きテーブル（LZ/TZ 法）
+│   ├── state_info/    差分更新で持ち回る局面のメタ情報
+│   └── ...            BitboardSet, MoveList, Perft, lookup など
 ├── records/     棋譜 I/O（SFEN, KIF, KI2, CSA, JKF, sbinpack, pack, hcpe）
 ├── book/        定跡管理（StaticBook, MemoryBook, BookBuilder, 外部定跡 DB2016/YBB/SBK）
 ├── mate/        詰み判定（1手詰め solver。多手詰めは探索エンジン側で実装）
@@ -30,23 +34,17 @@ rsshogi/src/
 
 モジュール間の依存は以下のように下から上へ積み上がっています。
 
-```text
-  ┌──────────────────────────────────────────┐
-  │  rsshogi (Python バインディング)        │  ← PyO3 ラッパー
-  └───────────────────┬──────────────────────┘
-                      │ 依存
-  ┌───────────────────┴──────────────────────┐
-  │  rsshogi (コアクレート)                    │
-  │                                          │
-  │  records/  book/  mate/                  │  ← アプリケーション層
-  │      │       │      │                   │
-  │      └───────┴──────┘                   │
-  │              │                           │
-  │         board/                           │  ← 中核層
-  │    (position + movegen + attack_tables)  │
-  │              │                           │
-  │         types/  labels/  simd/           │  ← 基盤層
-  └──────────────────────────────────────────┘
+```mermaid
+graph TB
+    PY["rsshogi-py（PyO3 ラッパー）"]
+    subgraph CORE["rsshogi コアクレート"]
+        APP["records/ &nbsp; book/ &nbsp; mate/<br/>アプリケーション層"]
+        BOARD["board/<br/>position + movegen + attack_tables<br/>中核層"]
+        BASE["types/ &nbsp; labels/ &nbsp; simd/<br/>基盤層"]
+        APP --> BOARD
+        BOARD --> BASE
+    end
+    PY --> APP
 ```
 
 - **基盤層** (`types/`, `labels/`, `simd/`): すべてのモジュールが依存する型定義と SIMD プリミティブ、および局面非依存のラベル変換

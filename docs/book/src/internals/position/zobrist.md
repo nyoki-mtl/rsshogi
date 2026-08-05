@@ -1,4 +1,4 @@
-# Zobrist Hashing
+# Zobrist ハッシング
 
 > **前提知識**: [ゲームステート管理](./state-management.md)（StateInfo と差分更新の設計パターン）
 

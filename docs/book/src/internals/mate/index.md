@@ -50,6 +50,7 @@ pub struct MateInfo {
 1 手詰めとは「手番側が 1 手指せば相手玉が詰む」状態です。判定は **2 段階**で行い、
 テーブル駆動の打ち駒判定を先に試すのが高速化の肝です。
 
+```text
 // 1. 玉の周囲 8 方向から 16 ビットの index を作り、MateInfo を引く
 let info = mate_table[index];
 
@@ -65,7 +66,6 @@ for mv in generate_checks(局面):
     if mv が合法 AND is_mate_bitboard(mv):
         return Some(mv)
 
-```text
 return None  // 詰みなし
 ```
 
@@ -100,11 +100,6 @@ return None  // 詰みなし
 3 手以上の詰み探索やより高度な詰み判定は、探索エンジン側で実装することを推奨します。
 rsshogi の `solve_mate_in_one` をビルディングブロックとして使用し、
 反復深化やアルファベータ探索と組み合わせることで、任意の手数の詰み探索が可能です。
-
-## まとめ
-
-- **1 手詰め**: テーブル駆動方式で 65,536 エントリのテーブルを参照して判定
-- 探索エンジンとの統合が容易なシンプルな API
 
 ## 次に読む
 

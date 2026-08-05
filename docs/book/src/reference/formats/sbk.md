@@ -129,7 +129,7 @@ API の使い方は [外部定跡（DB2016 / YBB / SBK）](external-books.md#sbk
 
 ## rsshogi の writer 実装
 
-SBK writer は [`BookDatabase`](book-architecture.md#編集-ir-層--bookdatabase) 全体を
+SBK writer は [`BookDatabase`](book-architecture.md#編集-ir-層bookdatabase) 全体を
 新しい protobuf として再生成する full export です。
 
 - state ID は `BookStates[i].Id == i` の連番に正規化します。

@@ -76,7 +76,7 @@
 - [合法手生成](internals/movegen/index.md)
   - [特殊ルール](internals/movegen/special-rules.md)
 - [詰み判定](internals/mate/index.md)
-- [シリアライゼーション](internals/serialization/index.md)
+- [SFEN と局面文字列](internals/serialization/index.md)
   - [局面の圧縮](internals/serialization/compression.md)
   - [棋譜フォーマット](internals/serialization/formats.md)
 - [SIMD 概論](internals/simd/index.md)

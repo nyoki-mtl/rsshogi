@@ -21,101 +21,60 @@ rsshogi の内部実装を解説する技術ドキュメントです。
 - 将棋のルールは知っている
 - 将棋プログラミングの内部実装に興味がある
 
-## 全体の流れ
-
-rsshogi の内部構造は、いきなり `Position` や合法手生成から読むよりも、
-「1 マスをどう番号にするか」から順に積み上げると理解しやすくなります。
-この章では次のストーリーで読み進めます。
-
-1. まず `Square`・`Piece`・`Move` で、将棋の語彙を Rust の値に落とし込む。
-2. 次に Bitboard で、81 マスの集合を 128bit のビット列として扱う。
-3. その上に `Position` を作り、盤・持ち駒・手番・履歴を差分更新する。
-4. `Position` と Bitboard の情報から、王手回避や二歩を含む合法手を生成する。
-5. 最後に、棋譜・SFEN・PackedSfen などの外部表現へ戻す。
+## 章の並びと依存関係
 
 各章は独立した小技の集まりではありません。
-たとえば「先手歩を 1 マス前へ進める」が `>> 1` で済むのは、座標系が筋優先で並んでいるからです。
+「先手歩を 1 マス前へ進める」が `>> 1` で済むのは、座標系が筋優先で並んでいるからです。
 合法手生成が速いのは、駒の集合を Bitboard として持ち、`Position` が差分更新でその集合を保っているからです。
-この依存関係を意識すると、後続の最適化や特殊ルールの説明も追いやすくなります。
+そのため、いきなり `Position` や合法手生成から読むよりも、「1 マスをどう番号にするか」から積み上げるほうが早く着きます。
 
-```text
-types → bitboard → position → movegen → serialization → optimization
-語彙定義   データ構造   局面管理    合法手生成    永続化         高速化
-                                    → mate
-                                     詰み判定
+1. **[基本型](./types/index.md)**：`Square`、`Piece`、`Move` で将棋の語彙を Rust の値に落とす
+2. **[ビットボード](./bitboard/index.md)**：81 マスの集合を 128bit のビット列として扱う
+3. **[局面管理](./position/index.md)**：盤、持ち駒、手番、履歴を差分更新で保つ
+4. **[合法手生成](./movegen/index.md)**：王手回避や二歩を含めて手を列挙する
+5. **[詰み判定](./mate/index.md)**：テーブル駆動の 1 手詰め solver
+6. **[SFEN と局面文字列](./serialization/index.md)**：局面を 1 行の文字列に落とし、[圧縮](./serialization/compression.md)や[棋譜フォーマット](./serialization/formats.md)へ広げる
+7. **[パフォーマンス最適化](./optimization/index.md)**：SIMD による高速化
+
+```mermaid
+graph LR
+    T["types<br/>語彙定義"] --> B["bitboard<br/>データ構造"]
+    B --> P["position<br/>局面管理"]
+    P --> M["movegen<br/>合法手生成"]
+    M --> MA["mate<br/>詰み判定"]
+    P --> S["serialization<br/>永続化"]
+    B --> O["optimization<br/>高速化"]
 ```
 
-1. **[基本型](./types/index.md)**: 座標・駒・指し手の数値表現
-2. **[ビットボード](./bitboard/index.md)**: 集合演算による盤面の高速操作
-3. **[局面管理](./position/index.md)**: Position 構造体と差分更新
-4. **[合法手生成](./movegen/index.md)**: ビットボードを使った手の列挙
-5. **[詰み判定](./mate/index.md)**: テーブル駆動の 1 手詰め判定
-6. **[シリアライゼーション](./serialization/index.md)**: SFEN・棋譜フォーマット・圧縮
-7. **[パフォーマンス最適化](./optimization/index.md)**: SIMD による高速化
+serialization と optimization は、position まで読んでいれば movegen より先に読めます。
+mate だけは movegen の知識を前提とします。
+
+## 目的別の読み方
+
+**将棋プログラミングを学びたい**なら、types から movegen まで各章の導入ページだけを順にたどります。
+全体像が先に入るぶん、細部で迷いにくくなります。
+
+**API の裏側を知りたい**なら、types を全ページ読んでから serialization へ進みます。
+`Square`、`Piece`、`Move` の設計意図と、棋譜フォーマットの仕組みが繋がります。
+
+**探索エンジンを書きたい**なら、position を全ページ読み、[探索エンジンとの統合](./position/search-integration.md) から movegen、mate へ進みます。
+
+**rsshogi に変更を加えたい**なら、全章を上の順に通読してください。
+とくに [差分更新と StateInfo](./position/state-management.md) と [特殊ルール](./movegen/special-rules.md) は、
+変更時に壊しやすい不変条件が集まっています。
 
 ## 盤面図の読み方
 
-この章の盤面図は、原則として将棋の通常表示に合わせています。
+この章の盤面図は、将棋の通常表示に合わせています。
 
 - 上端の筋番号は左から `9, 8, ..., 1`
 - 右端の段は上から `一, 二, ..., 九`
 - 先手の駒は読者側、後手の駒は 180 度回転して表示
 - SFEN は 1 段目から 9 段目へ、各段を `/` で区切る
-- `highlightSquares([n])` の `n` は rsshogi の `Square` と同じ `file_idx * 9 + rank_idx`（どちらも 0-indexed）
 
-したがって `Square(0)` は `1a`（１一）、`Square(40)` は `5e`（５五）、
-`Square(80)` は `9i`（９九）です。盤面上では 1 筋が右、9 筋が左に見えるため、
-内部インデックスの増え方と画面上の左右方向を混同しないでください。
-
-## 依存関係
-
-```text
-types ──────────────────────────────┐
-  座標 → 駒 → 指し手               │
-                                    ▼
-bitboard ──────────────────────────┐
-  コンセプト → レイアウト → 操作 → 利き│
-                                    ▼
-position ──────────────────────────┐
-  Position → StateInfo → Zobrist   │
-                                    ▼
-movegen ───────────────────────────┐
-  パイプライン → 特殊ルール          │
-                                    ▼
-mate ◄── (movegen)
-  1手詰め solver（rsshogi の範囲）
-  ※ 3手詰め以上は探索エンジン側で実装
-
-serialization ◄── (types, position)
-  SFEN → 圧縮 → 棋譜フォーマット
-
-optimization ◄── (bitboard)
-  SIMD
-```
-
-serialization と optimization は movegen を読む前でも、
-position まで読んでいれば独立に読めます。
-mate は movegen の知識を前提とします。
-
-## 推奨読了パス
-
-読者の目的に応じて、以下のパスを推奨します。
-
-**将棋プログラミング入門（初学者）**:
-types → bitboard/index → bitboard/layout → position/index → movegen/index
-まず全体像を掴むことを優先し、各章の導入ページだけを読み進めます。
-
-**ライブラリ利用者（API の裏側を知りたい）**:
-types（全ページ）→ serialization → bitboard/index
-API に現れる型（Square, Piece, Move）の設計意図と、棋譜フォーマットの仕組みを理解します。
-
-**エンジン開発者（探索部・評価関数を書きたい）**:
-position（全ページ）→ position/search-integration → movegen → mate
-rsshogi をラップして探索エンジンを構築する方法を学び、詰み判定を組み込みます。
-
-**コントリビュータ（rsshogi に変更を加えたい）**:
-全章を依存関係の順に通読してください。特に position/state-management と movegen/special-rules は、
-変更時に壊しやすい不変条件（invariant）が多いため重点的に読むことを推奨します。
+盤面図に添えるマス番号は rsshogi の `Square` と同じで、`file_idx * 9 + rank_idx`（どちらも 0-indexed）です。
+`Square(0)` は `1a`（１一）、`Square(40)` は `5e`（５五）、`Square(80)` は `9i`（９九）になります。
+画面上では 1 筋が右、9 筋が左に見えるため、インデックスの増える向きと左右方向は逆です。
 
 ## 次に読む
 

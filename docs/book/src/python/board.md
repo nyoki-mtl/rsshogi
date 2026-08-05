@@ -1354,7 +1354,7 @@ board.to_svg(last_move=None, scale=1.0) -> Svg
 現在の局面を SVG 画像として生成します。
 
 **引数:**
-- **last_move**: `Move | Move32 | None` - 最後の指し手（ハイライト表示）。`Move` または `Move32` のみ受け付けます。
+- **last_move**: `Move | Move32 | None` - 最後の指し手（ハイライト表示）。`Move` または `Move32` のみ受け付けます。`Move` は現在の局面と照合して駒を復元するため、指した後の局面でハイライトするときは `board.last_move()`（`Move32`）を渡してください。
 - **scale**: `float` - 拡大率（デフォルト `1.0`）
 
 **戻り値:**
@@ -1363,12 +1363,11 @@ board.to_svg(last_move=None, scale=1.0) -> Svg
 **使用例:**
 
 ```python
-from rsshogi.core import Board, Move
+from rsshogi.core import Board
 
 board = Board()
-move = Move.from_usi("7g7f")
-board.apply_move(move)
-svg = board.to_svg(last_move=move)
+board.apply_usi("7g7f")
+svg = board.to_svg(last_move=board.last_move())
 ```
 
 ---

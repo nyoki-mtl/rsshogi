@@ -60,10 +60,10 @@ Intel はほぼすべての x86 SIMD 拡張の発案者であり、新命令は 
 | Core i7 (1st) | Nehalem | 2008 | SSE4.2, POPCNT |
 | Core i (2nd) | Sandy Bridge | 2011 | AVX |
 | Core i (4th) | **Haswell** | 2013 | **AVX2, BMI1, BMI2, FMA3** |
-| Core i (6th) | Skylake | 2015 | — (命令セット追加なし) |
+| Core i (6th) | Skylake | 2015 | 追加なし |
 | Skylake-X | Skylake-X (HEDT) | 2017 | AVX-512 (F, CD, BW, DQ, VL) |
 | Core i (10th) | Ice Lake | 2019 | AVX-512 (VNNI, VBMI2 等) |
-| Core i (12th) | Alder Lake | 2021 | — (P-core のみ AVX-512)[^alder-lake] |
+| Core i (12th) | Alder Lake | 2021 | 追加なし（P-core のみ AVX-512）[^alder-lake] |
 | Core Ultra | Meteor Lake | 2023 | AVX-512 無効化、AVX-VNNI |
 
 ### Intel における重要な転換点
@@ -91,7 +91,7 @@ AMD は独自路線と Intel 追従を繰り返してきた歴史があります
 | FX | Piledriver | 2012 | FMA3, BMI1 |
 | A-series | Excavator | 2015 | AVX2, BMI2 (遅い) |
 | Ryzen (1st) | **Zen** | 2017 | AVX2, BMI2 (遅い) |
-| Ryzen 3000 | **Zen2** | 2019 | — (BMI2 は依然として遅い) |
+| Ryzen 3000 | **Zen2** | 2019 | 追加なし（BMI2 は依然として遅い） |
 | Ryzen 5000 | **Zen3** | 2020 | BMI2 高速化 (PEXT/PDEP が実用速度に) |
 | Ryzen 7000 | **Zen4** | 2022 | **AVX-512** |
 | Ryzen 9000 | Zen5 | 2024 | AVX-512 改善 |
@@ -179,12 +179,11 @@ fn is_fast_pext() -> bool {
 
 ### 将棋エンジンにおける使い分け
 
-配布向け（最大互換性）  : x86-64-v2  ← POPCNT が使える最低ライン
-高速版（Intel/AMD 共通）: x86-64-v3  ← AVX2 + BMI2 が使える
-最速版（AVX-512 対応）  : x86-64-v4  ← NNUE 推論が最速
-
 ```text
-開発時: -C target-cpu=native  ← 自分の CPU で最速
+配布向け（最大互換性）  : x86-64-v2      ← POPCNT が使える最低ライン
+高速版（Intel/AMD 共通）: x86-64-v3      ← AVX2 + BMI2 が使える
+最速版（AVX-512 対応）  : x86-64-v4      ← NNUE 推論が最速
+開発時                  : target-cpu=native  ← 自分の CPU で最速
 ```
 
 **注意**: `target-cpu=native` でビルドしたバイナリは、開発マシンと異なる CPU で不正命令（SIGILL）を起こす可能性があります。
@@ -205,15 +204,15 @@ RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
 
 | 命令セット | Intel | AMD | ARM (AArch64) |
 |-----------|-------|-----|---------------|
-| SSE2 | Pentium 4 (2001) | Athlon 64 (2003) | — (NEON で代替) |
-| SSSE3 | Core 2 (2006) | Bulldozer (2011) | — |
-| SSE4.1 | Penryn (2007) | Bulldozer (2011) | — |
-| SSE4.2 | Nehalem (2008) | Bulldozer (2011) | — |
+| SSE2 | Pentium 4 (2001) | Athlon 64 (2003) | なし（NEON で代替） |
+| SSSE3 | Core 2 (2006) | Bulldozer (2011) | なし |
+| SSE4.1 | Penryn (2007) | Bulldozer (2011) | なし |
+| SSE4.2 | Nehalem (2008) | Bulldozer (2011) | なし |
 | POPCNT | Nehalem (2008) | Phenom II (2007)[^abm] | CNT (必須) |
-| AVX | Sandy Bridge (2011) | Bulldozer (2011) | — |
-| BMI1 | Haswell (2013) | Piledriver (2012) | — |
-| BMI2 | Haswell (2013) | Excavator (2015)[^bmi2-slow] | — |
-| AVX2 | Haswell (2013) | Excavator (2015) | — |
+| AVX | Sandy Bridge (2011) | Bulldozer (2011) | なし |
+| BMI1 | Haswell (2013) | Piledriver (2012) | なし |
+| BMI2 | Haswell (2013) | Excavator (2015)[^bmi2-slow] | なし |
+| AVX2 | Haswell (2013) | Excavator (2015) | なし |
 | FMA3 | Haswell (2013) | Piledriver (2012) | FMLA (必須) |
 | AVX-512 | Skylake-X (2017) | Zen4 (2022) | SVE/SVE2 (別規格) |
 
@@ -269,7 +268,7 @@ PEXT ベースの飛び利き計算を ARM で使うことはできないため�
 ## まとめ
 
 - x86 の SIMD は MMX（1997）から 25 年以上の歴史を持ち、レジスタ幅は 64 → 128 → 256 → 512 bit と拡大してきた
-- SSE2 は x86-64 の必須仕様であり、128 ビットビットボードの基盤として安心して使える
+- SSE2 は x86-64 の必須仕様であり、128 ビットのビットボードの基盤として安心して使える
 - Haswell（2013）世代は AVX2 + BMI2 の登場により将棋エンジンの性能が飛躍的に向上した転換点
 - AMD の BMI2（PEXT/PDEP）は Zen3 以降でようやく実用的な速度になったため、CPU 判定が必須
 - バイナリ配布時は x86-64 マイクロアーキテクチャレベル（v1〜v4）を基準に選択する
@@ -283,7 +282,7 @@ PEXT ベースの飛び利き計算を ARM で使うことはできないため�
 
 [^alder-avx512]: Linux カーネル 5.18 以降では、E-core を無効化した場合に AVX-512 を有効にできる場合があるが、一般的な運用では無効化される。
 
-[^amd-pext]: Agner Fog, "Instruction tables" — AMD Zen/Zen2 の PEXT/PDEP レイテンシは 18 サイクル以上と計測されている。
+[^amd-pext]: Agner Fog, "Instruction tables". AMD Zen/Zen2 の PEXT/PDEP レイテンシは 18 サイクル以上と計測されている。
 
 [^psABI]: System V ABI, AMD64 Architecture Processor Supplement, "x86-64 Microarchitecture Feature Levels" (2020)
 

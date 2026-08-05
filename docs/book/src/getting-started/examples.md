@@ -125,7 +125,7 @@ for file in range(9, 0, -1):  # 9〜1筋
         sq = Square.from_usi(f"{file}{chr(ord('a') + rank - 1)}")
         piece = board.piece_on(sq)
         if piece.piece_type != PieceType.NO_PIECE_TYPE:
-            print(f"{file}{rank}: {piece.piece_type.name}")
+            print(f"{file}{rank}: {piece.piece_type.to_usi()}")
 ```
 
 ### 特定の駒の位置を取得
@@ -163,11 +163,11 @@ for color in [Color.BLACK, Color.WHITE]:
     hand = board.hand(color)
     name = "先手" if color == Color.BLACK else "後手"
     pieces = []
-    for pt in [PieceType.ROOK, PieceType.BISHOP, PieceType.GOLD, 
+    for pt in [PieceType.ROOK, PieceType.BISHOP, PieceType.GOLD,
                PieceType.SILVER, PieceType.KNIGHT, PieceType.LANCE, PieceType.PAWN]:
         count = hand.count(pt)
         if count > 0:
-            pieces.append(f"{pt.name}:{count}")
+            pieces.append(f"{pt.to_usi()}:{count}")
     if pieces:
         print(f"{name}の持ち駒: {', '.join(pieces)}")
 ```
@@ -228,8 +228,9 @@ move32 = moves32[0]
 print(type(move32))  # <class 'rsshogi.core.Move32'>
 
 # 型に対応するメソッドを使う
-board.apply_move32(move32)
 board.apply_move(mv)
+board.undo_move(mv)
+board.apply_move32(move32)
 
 # Move はメモリ効率が良い（16bit vs 32bit）
 # 大量の指し手を保存する場合に有利

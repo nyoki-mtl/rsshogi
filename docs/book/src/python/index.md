@@ -111,10 +111,10 @@ from rsshogi.numpy import (
 | クラス | 説明 |
 |--------|------|
 | [Record](record.md) | 棋譜レコード（初期局面・開始局面コメント・指し手列・メタデータ・結果） |
-| [RecordMetadata](record.md#gamerecordmetadata) | 対局ヘッダ（棋戦名・対局者・日時など） |
-| [MoveEntry](record.md#moverecord) | 各指し手のデータ（コメント・消費時間・エンジン解析情報） |
-| [EngineInfo](record.md#moveengineinfo) | エンジン解析情報（評価値・深度・ノード数・拡張属性） |
-| [SpecialMoveEntry](record.md#specialmoverecord) | 終局特殊手（種別・終局コメント・終局時間・raw） |
+| [RecordMetadata](record.md#recordmetadata) | 対局ヘッダ（棋戦名・対局者・日時など） |
+| [MoveEntry](record.md#moveentry) | 各指し手のデータ（コメント・消費時間・エンジン解析情報） |
+| [EngineInfo](record.md#engineinfo) | エンジン解析情報（評価値・深度・ノード数・拡張属性） |
+| [SpecialMoveEntry](record.md#specialmoveentry) | 終局特殊手（種別・終局コメント・終局時間・raw） |
 | [TimeControl](record.md#timecontrol) | 持ち時間の設定 |
 | [GameResult](game_result.md) | 終局結果（18 種類の終局状態） |
 | [GameResultInfo](record.md#gameresultinfo) | 終局情報ビュー（`ply_count` / `reason` / `end_time_ms` / `end_comment`） |
