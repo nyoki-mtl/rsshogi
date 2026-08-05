@@ -151,9 +151,8 @@ Raspberry Pi 4 以降や AWS Graviton なども AArch64 であり、NEON が使�
 ただし、ARM には PEXT/PDEP に相当する命令がないため、BMI2 依存のアルゴリズムは利用できません。
 POPCNT に相当する `CNT` 命令は存在します。
 
-> **rsshogi の現状**: ここで述べた NEON は一般的な背景であり、**rsshogi の現在の実装には NEON 専用の
-> コードパスはありません**（`simd/u64x4/mod.rs` に「AVX512/NEON は未導入」と明記）。AArch64 では
-> 128bit 演算はスカラー実装にフォールバックします。SIMD で高速化されるのは AVX2 が有効な x86-64 環境です。
+> **rsshogi の現状**: ここまでの NEON の話は一般的な背景です。
+> rsshogi が SIMD で高速化するのは AVX2 が有効な x86-64 環境で、AArch64 では 128bit 演算がスカラー実装で動きます。
 
 ## この章の構成
 
