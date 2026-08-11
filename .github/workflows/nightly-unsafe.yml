@@ -2,9 +2,9 @@ name: nightly-unsafe
 
 on:
   schedule:
-    # Weekly memory-safety sweep. Keep this out of required PR checks because
+    # Monthly memory-safety sweep. Keep this out of required PR checks because
     # nightly, miri, and sanitizers are intentionally allowed to move.
-    - cron: "17 18 * * 0"
+    - cron: "17 18 1 * *"
   workflow_dispatch:
 
 jobs:

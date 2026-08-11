@@ -89,7 +89,7 @@ def test_game_record_from_usi_main_line_builds_moves_and_terminal() -> None:
         ["7g7f", "3c3d"],
         result=rs.record.GameResult.WHITE_WIN,
         move_times_ms=[100, None],
-        evals=[12, -8],
+        evals=[100, 120],
         nodes=[1000, 2000],
         depths=[8, 9],
         wall_times_ms=[110, None],
@@ -102,13 +102,15 @@ def test_game_record_from_usi_main_line_builds_moves_and_terminal() -> None:
     assert [move.move.to_usi() for move in record.moves] == ["7g7f", "3c3d"]
     assert record.moves[0].time_ms == 100
     assert record.moves[0].engine_info is not None
-    assert record.moves[0].engine_info.eval == 12
+    assert record.moves[0].engine_info.eval == 100
     assert record.moves[0].engine_info.nodes == 1000
     assert record.moves[0].engine_info.depth == 8
     assert record.moves[0].engine_info.wall_time_ms == 110
     assert record.moves[0].engine_info.latency_delta_ms == 10
     assert record.moves[0].engine_info.extras["wall_time_ms"] == 110
     assert record.moves[0].engine_info.extras["latency_delta_ms"] == 10
+    assert record.moves[1].engine_info is not None
+    assert record.moves[1].engine_info.eval == 120
     assert record.main_terminal is not None
     assert record.main_terminal.kind == "RESIGN"
     assert record.result == rs.record.GameResult.WHITE_WIN
@@ -308,8 +310,8 @@ def test_game_record_to_psv_exports_all_main_line_entries() -> None:
     board = rs.core.Board()
     init_sfen = board.to_sfen()
 
-    move1 = rs.record.MoveEntry("7g7f", engine_info=rs.record.EngineInfo(eval=120))
-    move2 = rs.record.MoveEntry("3c3d", engine_info=rs.record.EngineInfo(eval=-80))
+    move1 = rs.record.MoveEntry("7g7f", engine_info=rs.record.EngineInfo(eval=100))
+    move2 = rs.record.MoveEntry("3c3d", engine_info=rs.record.EngineInfo(eval=120))
     terminal = rs.record.SpecialMoveEntry("RESIGN", rs.record.GameResult.WHITE_WIN)
     record = rs.record.Record.from_main_line(init_sfen, [move1, move2], terminal)
 
@@ -321,7 +323,7 @@ def test_game_record_to_psv_exports_all_main_line_entries() -> None:
 
     expected0 = board.to_psv(
         mv=rs.core.Move.from_usi("7g7f"),
-        score=120,
+        score=100,
         game_result=rs.record.GameResult.WHITE_WIN,
         game_ply=1,
     )
@@ -330,7 +332,7 @@ def test_game_record_to_psv_exports_all_main_line_entries() -> None:
     board.apply_usi("7g7f")
     expected1 = board.to_psv(
         mv=rs.core.Move.from_usi("3c3d"),
-        score=-80,
+        score=120,
         game_result=rs.record.GameResult.WHITE_WIN,
         game_ply=2,
     )
@@ -896,16 +898,25 @@ def test_csa_millisecond_elapsed_time_needs_v30_output() -> None:
 
 
 def test_csa_analysis_line_roundtrips() -> None:
-    text = "V3.0\nPI\n+\n+7776FU\nT15\n'** 99 -8384FU +7776FU #1234\n%TORYO\n"
+    text = (
+        "V3.0\nPI\n+\n"
+        "+7776FU\nT15\n'** 100 -8384FU +7776FU #1234\n"
+        "-3334FU\n'** 120\n%TORYO\n"
+    )
     record = rs.record.Record.from_csa_str(text)
 
     info = record.moves[0].engine_info
     assert info is not None
-    assert info.eval == 99
+    assert info.eval == 100
     assert info.nodes == 1234
     assert info.extras["csa_pv"] == "-8384FU +7776FU"
+    second_info = record.moves[1].engine_info
+    assert second_info is not None
+    assert second_info.eval == 120
 
-    assert "'** 99 -8384FU +7776FU #1234" in record.to_csa()
+    exported = record.to_csa()
+    assert "'** 100 -8384FU +7776FU #1234" in exported
+    assert "\n'** 120\n" in exported
 
 
 def test_csa_export_omits_elapsed_line_when_unrecorded() -> None:

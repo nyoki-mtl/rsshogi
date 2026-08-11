@@ -3,7 +3,7 @@
 # The workspace contains two crates: `rsshogi` (core library) and
 # `rsshogi-py` (PyO3 bindings). Recipes here are thin wrappers around cargo /
 # mdBook for day-to-day development. `just check` delegates to the Makefile so
-# local checks match CI coverage (Rust all-features lint/tests + Python checks).
+# local checks are the canonical CI gate (Rust all-features lint/tests + Python checks).
 
 default:
 	@just --list
@@ -19,14 +19,7 @@ release:
 # Run all tests (nextest if available, plus doctests)
 # data ecosystem は default-off feature のため all-features で実行する（make test / CI と同一）。
 test:
-	@if cargo nextest --version >/dev/null 2>&1; then \
-		echo "[just] cargo-nextest detected: running nextest (tests) + cargo test (doctests)"; \
-		cargo nextest run --workspace --tests --all-features; \
-		cargo test --doc -p rsshogi --all-features; \
-	else \
-		cargo test --workspace --tests --all-features; \
-		cargo test --doc -p rsshogi --all-features; \
-	fi
+	make test-rust
 
 # Tests for the core crate only（data 系を含め all-features で検証）
 test-core:

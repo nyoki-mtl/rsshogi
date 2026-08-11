@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-11
+
+### Changed
+
+- `EngineInfo.eval` is now documented as a centipawn value from the side-to-move
+  perspective before its record entry. KIF `**評価値=` input and output convert this
+  internal value to and from ShogiHome-compatible Black perspective.
+
 ## [1.1.0] - 2026-08-05
 
 Despite the minor version bump, this release carries source-incompatible API changes: the
@@ -283,7 +291,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.1.0
 [1.0.2]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.2
 [1.0.1]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.1

@@ -108,6 +108,9 @@ impl From<bool> for EngineExtraValue {
 }
 
 /// 1 つのレコードノードに付随するエンジン情報。
+///
+/// `eval` はノードのエントリを適用する直前の局面における手番側視点の cp 値を保持する。
+/// 正の値はその局面の手番側に有利、負の値は相手側に有利であることを示す。
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct EngineInfo {
     eval: Option<Eval>,

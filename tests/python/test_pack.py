@@ -19,11 +19,11 @@ def _make_record(
     moves = [
         rsshogi.record.MoveEntry(
             "7g7f",
-            engine_info=rsshogi.record.EngineInfo(eval=120),
+            engine_info=rsshogi.record.EngineInfo(eval=100),
         ),
         rsshogi.record.MoveEntry(
             "3c3d",
-            engine_info=rsshogi.record.EngineInfo(eval=-80),
+            engine_info=rsshogi.record.EngineInfo(eval=120),
         ),
     ]
     terminal = rsshogi.record.SpecialMoveEntry(terminal_kind, result, raw=raw)
@@ -46,9 +46,9 @@ def test_game_record_pack_roundtrip_single_game() -> None:
 
     assert restored.result == rsshogi.record.GameResult.WHITE_WIN_BY_TIMEOUT
     assert restored.moves[0].engine_info is not None
-    assert restored.moves[0].engine_info.eval == 120
+    assert restored.moves[0].engine_info.eval == 100
     assert restored.moves[1].engine_info is not None
-    assert restored.moves[1].engine_info.eval == -80
+    assert restored.moves[1].engine_info.eval == 120
     assert restored.main_terminal is not None
     assert restored.main_terminal.raw == "pack:end_reason=time_up"
 
@@ -172,6 +172,19 @@ def test_sbinpack_batch_writer_accepts_per_record_metadata(tmp_path: Path) -> No
         rsshogi.record.write_sbinpack([record1], metadatas=[])
     with pytest.raises(ValueError, match="MetadataTooLarge"):
         rsshogi.record.write_sbinpack([record1], metadatas=[b"x" * 128])
+
+
+def test_sbinpack_roundtrip_preserves_side_to_move_evals() -> None:
+    record = _make_record(
+        terminal_kind="RESIGN",
+        result=rsshogi.record.GameResult.BLACK_WIN,
+    )
+
+    restored = rsshogi.record.Record.from_sbinpack(record.to_sbinpack())
+    assert restored.moves[0].engine_info is not None
+    assert restored.moves[0].engine_info.eval == 100
+    assert restored.moves[1].engine_info is not None
+    assert restored.moves[1].engine_info.eval == 120
 
 
 def test_pack_export_requires_eval() -> None:
