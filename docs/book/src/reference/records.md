@@ -58,7 +58,7 @@ Rust crate では通常の parse/export に加えて、棋譜ツリーを扱う�
 
 ## 制限事項
 
-- **評価値の出力**: KIF/KI2/JKF の出力では評価値を含めません。CSA は例外で、評価値・ノード数・読み筋を `'**` 行として出力します
+- **評価値の出力**: KIF/KI2 は `EngineInfo.eval` を `**評価値=` 行として出力します。JKF は評価値を出力しません。CSA は評価値・ノード数・読み筋を `'**` 行として出力します
 - **Python API の終局特殊手**: 本手順末尾は `Record.main_terminal`、任意ノードは `node_terminal(node_id)` で取得できます
 - **Python API の分岐**: `Record.moves` は本手順のみを返します。分岐の走査には `children()` / `node_move()` / `node_terminal()` を使用してください
 - **Python API の対応範囲**: callback ベースの traversal API や `*_bytes` API は未公開です。Python では `write_kif(..., encoding=...)` / `write_csa(..., encoding=...)` / `write_ki2(..., encoding=...)` を使用してください

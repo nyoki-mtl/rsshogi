@@ -2115,6 +2115,10 @@ impl PyRecord {
         Ok(Self { inner })
     }
 
+    /// Builds a record from a USI main line and optional per-move telemetry.
+    ///
+    /// Each value in `evals` is in centipawns from the side-to-move perspective of the
+    /// position before the corresponding move.
     #[classmethod]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (

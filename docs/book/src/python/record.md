@@ -392,7 +392,7 @@ rsshogi.record.EngineInfo
 
 | プロパティ | 型 | 書込 | 説明 |
 |------------|-----|:----:|------|
-| `eval` | `int \| None` | o | 評価値（先手視点、センチポーン単位） |
+| `eval` | `int \| None` | o | 評価値（対応する着手前局面の手番側視点、センチポーン単位） |
 | `depth` | `int \| None` | o | 探索深度 |
 | `nodes` | `int \| None` | o | 探索ノード数 |
 | `seldepth` | `int \| None` | o | 選択深度 |

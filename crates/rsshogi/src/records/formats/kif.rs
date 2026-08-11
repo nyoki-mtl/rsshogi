@@ -535,6 +535,7 @@ fn parse_kif_variation_moves(
     let mut pos = pos_start.clone();
     let mut moves: Vec<AnnotatedMoveEntry> = Vec::new();
     let mut last_to = last_to;
+    let mut last_move_color: Option<Color> = None;
     let mut refresh_counter = 0usize;
     let mut pending_comment: Option<String> = None;
     let mut pending_time_ms: Option<u32> = None;
@@ -546,6 +547,14 @@ fn parse_kif_variation_moves(
         }
         if line.starts_with("変化") || line.starts_with("まで") {
             break;
+        }
+        if line.starts_with("**評価値=") {
+            if let (Some(last), Some(side_to_move)) = (moves.last_mut(), last_move_color)
+                && let Ok(value) = line.trim_start_matches("**評価値=").parse::<i32>()
+            {
+                last.set_eval(Some(kif_eval_to_internal(value, side_to_move)));
+            }
+            continue;
         }
         if line.starts_with('*') || line.starts_with('\'') {
             let comment = line.trim_start_matches(['*', '\'']).trim();
@@ -568,14 +577,6 @@ fn parse_kif_variation_moves(
             }
             continue;
         }
-        if line.starts_with("**評価値=") {
-            if let Some(last) = moves.last_mut()
-                && let Ok(value) = line.trim_start_matches("**評価値=").parse::<i32>()
-            {
-                last.set_eval(Some(Eval::from_i32(value)));
-            }
-            continue;
-        }
         if line.starts_with("手数") && line.contains("指手") {
             continue;
         }
@@ -595,8 +596,10 @@ fn parse_kif_variation_moves(
                     {
                         mv_record = mv_record.with_time_ms(Some(time_ms));
                     }
+                    let move_color = pos.turn();
                     pos.apply_move(mv16);
                     moves.push(mv_record);
+                    last_move_color = Some(move_color);
                     last_to = Some(to_sq);
                     refresh_position_if_needed(&mut pos, &mut refresh_counter)?;
                 }
@@ -1293,7 +1296,27 @@ fn format_kif_summary(terminal: &SpecialMoveEntry, side_to_move: Color, ply: usi
     }
 }
 
-fn append_kif_eval_line(lines: &mut Vec<String>, annotation: &RecordAnnotation) {
+fn kif_eval_to_internal(value: i32, side_to_move: Color) -> Eval {
+    let value = if side_to_move == Color::WHITE { value.saturating_neg() } else { value };
+    Eval::from_i32(value)
+}
+
+fn internal_eval_to_kif(eval: Eval, side_to_move: Color) -> i32 {
+    let value = eval.to_i32();
+    if side_to_move == Color::WHITE { -value } else { value }
+}
+
+fn append_kif_eval_line(
+    lines: &mut Vec<String>,
+    annotation: &RecordAnnotation,
+    side_to_move: Color,
+) {
+    if let Some(eval) = annotation.eval() {
+        lines.push(format!("**評価値={}", internal_eval_to_kif(eval, side_to_move)));
+    }
+}
+
+fn append_ki2_eval_line(lines: &mut Vec<String>, annotation: &RecordAnnotation) {
     if let Some(eval) = annotation.eval() {
         lines.push(format!("**評価値={}", eval.to_i32()));
     }
@@ -1530,6 +1553,7 @@ pub fn parse_kif_str(text: &str) -> Result<Record, KifError> {
 
     let mut moves: Vec<AnnotatedMoveEntry> = Vec::new();
     let mut last_to: Option<Square> = None;
+    let mut last_move_color: Option<Color> = None;
     let mut terminal: Option<(SpecialMoveEntry, RecordAnnotation)> = None;
     let mut refresh_counter = 0usize;
     let mut initial_comment = if initial_comment_lines.is_empty() {
@@ -1575,6 +1599,14 @@ pub fn parse_kif_str(text: &str) -> Result<Record, KifError> {
             }
             break;
         }
+        if line.starts_with("**評価値=") {
+            if let (Some(last), Some(side_to_move)) = (moves.last_mut(), last_move_color)
+                && let Ok(value) = line.trim_start_matches("**評価値=").parse::<i32>()
+            {
+                last.set_eval(Some(kif_eval_to_internal(value, side_to_move)));
+            }
+            continue;
+        }
         if line.starts_with('*') {
             let comment = line.trim_start_matches('*').trim();
             if !comment.is_empty() {
@@ -1607,14 +1639,6 @@ pub fn parse_kif_str(text: &str) -> Result<Record, KifError> {
             }
             continue;
         }
-        if line.starts_with("**評価値=") {
-            if let Some(last) = moves.last_mut()
-                && let Ok(value) = line.trim_start_matches("**評価値=").parse::<i32>()
-            {
-                last.set_eval(Some(Eval::from_i32(value)));
-            }
-            continue;
-        }
         if line.starts_with("手数") && line.contains("指手") {
             continue;
         }
@@ -1630,8 +1654,10 @@ pub fn parse_kif_str(text: &str) -> Result<Record, KifError> {
                     {
                         mv_record = mv_record.with_time_ms(Some(time_ms));
                     }
+                    let move_color = pos.turn();
                     pos.apply_move(mv16);
                     moves.push(mv_record);
+                    last_move_color = Some(move_color);
                     last_to = Some(to_sq);
                     refresh_position_if_needed(&mut pos, &mut refresh_counter)?;
                     pos_history.push(pos.clone());
@@ -2010,7 +2036,7 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
             record.children(*node_id).len() > 1,
         );
         lines.push(line);
-        append_kif_eval_line(&mut lines, node.annotation());
+        append_kif_eval_line(&mut lines, node.annotation(), pos.turn());
         if let Some(comment) = node.comment() {
             append_kif_comments(&mut lines, comment);
         }
@@ -2076,7 +2102,7 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
                     record.children(node_id).len() > 1,
                 );
                 lines.push(line);
-                append_kif_eval_line(&mut lines, node.annotation());
+                append_kif_eval_line(&mut lines, node.annotation(), var_pos.turn());
                 if let Some(comment) = node.comment() {
                     append_kif_comments(&mut lines, comment);
                 }
@@ -2173,7 +2199,7 @@ pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
             move_count_in_line = 0;
             last_move_len = 0;
         }
-        append_kif_eval_line(&mut lines, node.annotation());
+        append_ki2_eval_line(&mut lines, node.annotation());
         if let Some(comment) = node.comment() {
             append_kif_comments(&mut lines, comment);
         }
@@ -2249,7 +2275,7 @@ pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
                     var_count = 0;
                     var_last_len = 0;
                 }
-                append_kif_eval_line(&mut lines, node.annotation());
+                append_ki2_eval_line(&mut lines, node.annotation());
                 if let Some(comment) = node.comment() {
                     append_kif_comments(&mut lines, comment);
                 }
@@ -2839,6 +2865,104 @@ mod tests {
         assert!(kif.contains("( 0:00/00:00:00)"));
         assert!(kif.contains("**評価値=120"));
         assert!(kif.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_kif_eval_uses_black_perspective_and_roundtrips() {
+        let pos = hirate_position();
+        let mut record = Record::new(pos.to_sfen(None)).unwrap();
+        let first = record
+            .append_move_with_annotation(
+                record.root_id(),
+                MoveEntry::new(Move::from_usi("7g7f").unwrap()),
+                annotation_with_eval(100),
+            )
+            .unwrap();
+        record
+            .append_move_with_annotation(
+                first,
+                MoveEntry::new(Move::from_usi("3c3d").unwrap()),
+                annotation_with_eval(120),
+            )
+            .unwrap();
+
+        let kif = export_kif(&record).unwrap();
+        let eval_lines =
+            kif.lines().filter(|line| line.starts_with("**評価値=")).collect::<Vec<_>>();
+        assert_eq!(eval_lines, vec!["**評価値=100", "**評価値=-120"]);
+
+        let parsed = parse_kif_str(&kif).unwrap();
+        assert_eq!(main_node(&parsed, 0).eval().map(Eval::to_i32), Some(100));
+        assert_eq!(main_node(&parsed, 1).eval().map(Eval::to_i32), Some(120));
+    }
+
+    #[test]
+    fn test_kif_eval_flips_first_move_from_white_to_move_position() {
+        let mut pos = Position::empty();
+        pos.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL w - 1").unwrap();
+        let mut record = Record::new(pos.to_sfen(None)).unwrap();
+        record
+            .append_move_with_annotation(
+                record.root_id(),
+                MoveEntry::new(Move::from_usi("3c3d").unwrap()),
+                annotation_with_eval(100),
+            )
+            .unwrap();
+
+        let kif = export_kif(&record).unwrap();
+        assert!(kif.contains("**評価値=-100"));
+    }
+
+    #[test]
+    fn test_kif_variation_eval_uses_actual_side_to_move() {
+        let pos = hirate_position();
+        let mut record = Record::new(pos.to_sfen(None)).unwrap();
+        let first = record
+            .append_move_with_annotation(
+                record.root_id(),
+                MoveEntry::new(Move::from_usi("7g7f").unwrap()),
+                annotation_with_eval(100),
+            )
+            .unwrap();
+        record
+            .append_move_with_annotation(
+                first,
+                MoveEntry::new(Move::from_usi("3c3d").unwrap()),
+                annotation_with_eval(120),
+            )
+            .unwrap();
+        let variation = record
+            .append_move_with_annotation(
+                first,
+                MoveEntry::new(Move::from_usi("8c8d").unwrap()),
+                annotation_with_eval(130),
+            )
+            .unwrap();
+
+        let kif = export_kif(&record).unwrap();
+        let eval_lines =
+            kif.lines().filter(|line| line.starts_with("**評価値=")).collect::<Vec<_>>();
+        assert_eq!(eval_lines, vec!["**評価値=100", "**評価値=-120", "**評価値=-130"]);
+
+        let parsed = parse_kif_str(&kif).unwrap();
+        let parsed_first = parsed.main_line_ids()[0];
+        let parsed_variation = parsed.children(parsed_first)[1];
+        assert_eq!(parsed.node(parsed_variation).eval().map(Eval::to_i32), Some(130));
+        assert_eq!(record.node(variation).eval().map(Eval::to_i32), Some(130));
+    }
+
+    #[test]
+    fn test_kif_eval_conversion_preserves_eval_boundaries() {
+        let values = [i16::MIN, -32001, -32000, -1, 0, 1, 32000, 32001, i16::MAX];
+        for raw in values {
+            let eval = Eval::from_raw(raw);
+            for color in [Color::BLACK, Color::WHITE] {
+                let kif_value = internal_eval_to_kif(eval, color);
+                assert_eq!(kif_eval_to_internal(kif_value, color).raw(), raw);
+            }
+        }
+
+        assert_eq!(kif_eval_to_internal(i32::MIN, Color::WHITE).raw(), i16::MAX);
     }
 
     #[test]

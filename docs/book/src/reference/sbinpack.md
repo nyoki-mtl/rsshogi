@@ -175,6 +175,9 @@ EncodedScore = ULEB128(ZigZag(delta))
 - 差分を取る前に、stem 側視点へ正規化します。現行の `MoveEntry` では `moves[i].eval` は「その手を指す前の局面」の評価値なので、`moves[0]` は stem と同一視点で反転しません。
 - `stem_score` / 復元後の `move_eval` の意味は side-to-move のままです。正規化は wire 上の差分計算だけに使います。
 - 評価値は ZigZag + ULEB128 で符号化された `i32` として扱います。`-32000..=32000` 外の値も特殊符号化せず、そのまま差分に乗せます。
+- この視点は Stockfish binpack の
+  [score は局面の side-to-move 視点であるという契約](https://github.com/official-stockfish/Stockfish/blob/9a4c7cf4e311f8d9526b79295b80c4d0464c07cf/docs/binpack.md#L38-L41)
+  と一致します。
 
 ### ZigZag 定義
 

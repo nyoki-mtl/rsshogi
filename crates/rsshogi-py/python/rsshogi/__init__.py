@@ -44,7 +44,7 @@ AlphaZero training format (sazpack / SAZ2):
 from . import book, core, initial_positions, numpy, policy, record, sazpack, svg, types, usi
 
 # Version
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 __all__ = [
     # Submodules

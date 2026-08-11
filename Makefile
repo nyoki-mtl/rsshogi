@@ -4,22 +4,23 @@ else
 POWERSHELL := pwsh -NoProfile -File
 endif
 
-.PHONY: help format lint lint-fix test test-rust test-rust-nextest py-format py-lint typecheck check check-public-export clean sync check-env setup-native
+.PHONY: help format format-check lint lint-fix test test-rust py-format py-lint typecheck check check-public-export clean sync check-env setup-native
 
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  format     - Format Rust + Python examples"
+	@echo "  format-check - Check Rust + Python formatting without modifying files"
 	@echo "  lint       - Lint Rust + Python examples"
 	@echo "  lint-fix   - Auto-fix Python lint issues"
-	@echo "  test       - Run Rust tests (workspace)"
+	@echo "  test       - Run core Rust tests and Python binding tests"
 	@echo "  sync       - Sync Python dev dependencies (uv)"
 	@echo "  py-format  - Format Python examples only"
 	@echo "  py-lint    - Lint Python examples only"
 	@echo "  typecheck  - Run Python type checks (ty)"
 	@echo "  check-public-export - Dry-run public export hygiene checks"
-	@echo "  check      - format, lint, test"
+	@echo "  check      - format-check, lint, test, typecheck"
 	@echo "  clean      - Remove build and cache artifacts"
 	@echo "  check-env  - Show native Windows tool status"
 	@echo "  setup-native - Install/sync native Windows development tools"
@@ -27,6 +28,10 @@ help:
 format:
 	cargo fmt --all
 	uv run ruff format examples/python
+
+format-check:
+	cargo fmt --all -- --check
+	uv run ruff format --check examples/python
 
 lint:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -47,16 +52,12 @@ else
 	cargo test --doc -p rsshogi --all-features
 	@if cargo nextest --version >/dev/null 2>&1; then \
 		echo "[make] cargo-nextest detected: running nextest"; \
-		cargo nextest run --workspace --tests --all-features; \
+		cargo nextest run -p rsshogi --tests --all-features; \
 	else \
 		echo "[make] cargo-nextest not found: falling back to cargo test"; \
-		cargo test --workspace --tests --all-features; \
+		cargo test -p rsshogi --tests --all-features; \
 	fi
 endif
-
-test-rust-nextest:
-	cargo test --doc -p rsshogi --all-features
-	cargo nextest run --workspace --tests --all-features
 
 py-format:
 	uv run ruff format examples/python
@@ -70,7 +71,7 @@ typecheck:
 check-public-export:
 	$(POWERSHELL) scripts/check_public_export.ps1
 
-check: format lint test typecheck
+check: format-check lint test typecheck
 
 sync:
 	uv sync --dev

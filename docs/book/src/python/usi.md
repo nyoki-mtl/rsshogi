@@ -95,6 +95,8 @@ print(cmd.to_string())
 
 `Record.from_usi_main_line()` は初期局面、USI 手順、任意のテレメトリ、
 終局結果から合法手を適用しながら `Record` を作ります。
+`evals[i]` は対応する `usi_moves[i]` の着手前局面における手番側視点の
+センチポーン値です。正の値は、その局面の手番側が有利であることを示します。
 
 シグネチャ（すべてキーワードで渡せます）:
 
@@ -122,7 +124,7 @@ record = rs.record.Record.from_usi_main_line(
     "startpos",
     ["7g7f", "3c3d"],
     result=rs.record.GameResult.WHITE_WIN,
-    evals=[12, -8],
+    evals=[12, 8],
     nodes=[1000, 2000],
 )
 ```

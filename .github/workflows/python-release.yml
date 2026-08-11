@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -83,6 +82,7 @@ jobs:
         with:
           name: wheels-standard-${{ matrix.os }}
           path: dist/*.whl
+          retention-days: 1
 
   build-wheels-avx2:
     if: github.repository == 'nyoki-mtl/rsshogi'
@@ -127,6 +127,7 @@ jobs:
         with:
           name: wheels-avx2-${{ matrix.os }}
           path: dist/*.whl
+          retention-days: 1
 
   build-sdist:
     if: github.repository == 'nyoki-mtl/rsshogi'
@@ -149,6 +150,7 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+          retention-days: 1
 
   build-sdist-avx2:
     if: github.repository == 'nyoki-mtl/rsshogi'
@@ -175,6 +177,7 @@ jobs:
         with:
           name: sdist-avx2
           path: dist/*.tar.gz
+          retention-days: 1
 
   publish-standard:
     name: Publish standard distribution to PyPI
