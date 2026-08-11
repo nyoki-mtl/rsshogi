@@ -16,7 +16,7 @@ build:
 release:
 	cargo build --release
 
-# Run all tests (nextest if available, plus doctests)
+# Run core Rust tests (nextest if available, plus doctests)
 # data ecosystem は default-off feature のため all-features で実行する（make test / CI と同一）。
 test:
 	make test-rust

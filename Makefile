@@ -14,7 +14,7 @@ help:
 	@echo "  format-check - Check Rust + Python formatting without modifying files"
 	@echo "  lint       - Lint Rust + Python examples"
 	@echo "  lint-fix   - Auto-fix Python lint issues"
-	@echo "  test       - Run Rust tests (workspace)"
+	@echo "  test       - Run core Rust tests and Python binding tests"
 	@echo "  sync       - Sync Python dev dependencies (uv)"
 	@echo "  py-format  - Format Python examples only"
 	@echo "  py-lint    - Lint Python examples only"
@@ -52,10 +52,10 @@ else
 	cargo test --doc -p rsshogi --all-features
 	@if cargo nextest --version >/dev/null 2>&1; then \
 		echo "[make] cargo-nextest detected: running nextest"; \
-		cargo nextest run --workspace --tests --all-features; \
+		cargo nextest run -p rsshogi --tests --all-features; \
 	else \
 		echo "[make] cargo-nextest not found: falling back to cargo test"; \
-		cargo test --workspace --tests --all-features; \
+		cargo test -p rsshogi --tests --all-features; \
 	fi
 endif
 
