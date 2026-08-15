@@ -1,0 +1,49 @@
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    // ```mermaid のコードブロックを mermaid コンテナへ差し替える。
+    // 再描画のために元のソースを data-src に保持する。
+    document.querySelectorAll('code.language-mermaid').forEach(function (code) {
+      var container = document.createElement('div');
+      container.classList.add('mermaid');
+      container.dataset.src = code.textContent;
+      container.textContent = code.textContent;
+      code.parentElement.replaceWith(container);
+    });
+
+    var DARK_THEMES = ['ayu', 'coal', 'navy'];
+
+    // mdbook 0.5 はテーマ名を <html> の class に置く（data-theme ではない）。
+    function currentTheme() {
+      var classes = document.documentElement.classList;
+      for (var i = 0; i < DARK_THEMES.length; i++) {
+        if (classes.contains(DARK_THEMES[i])) return 'dark';
+      }
+      return 'default';
+    }
+
+    var rendered = null;
+
+    function render() {
+      var theme = currentTheme();
+      if (theme === rendered) return;
+      rendered = theme;
+      var nodes = Array.prototype.slice.call(document.querySelectorAll('div.mermaid'));
+      if (nodes.length === 0) return;
+      nodes.forEach(function (node) {
+        node.removeAttribute('data-processed');
+        node.textContent = node.dataset.src;
+      });
+      mermaid.initialize({ startOnLoad: false, theme: theme });
+      mermaid.run({ nodes: nodes });
+    }
+
+    render();
+
+    // テーマ切り替えはリロードを伴わないため、class の変化を見て描き直す。
+    new MutationObserver(render).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+  });
+</script>
