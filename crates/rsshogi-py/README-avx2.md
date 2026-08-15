@@ -25,4 +25,4 @@ python -m pip install rsshogi-avx2
 API リファレンスは mdBook ドキュメントにまとめています。
 
 - [ドキュメント全体](https://nyoki-mtl.github.io/rsshogi/)
-- [Python API（Board / Record など）](https://nyoki-mtl.github.io/rsshogi/python-api.html)
+- [Python API（Board / Record など）](https://nyoki-mtl.github.io/rsshogi/python/index.html)

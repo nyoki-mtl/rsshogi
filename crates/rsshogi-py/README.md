@@ -8,7 +8,7 @@ python -m pip install rsshogi
 ```
 
 AVX2 対応 x86_64 CPU では `rsshogi-avx2` も選択できます。
-通常版とAVX2版を同じ環境へインストールしないでください。
+どちらも `rsshogi` として読み込むため、環境ごとに一方をインストールします。
 
 ```python
 from rsshogi.core import Board, Move
@@ -30,6 +30,5 @@ assert board.turn.name == "WHITE"
 `Board.legal_moves()` は合法手だけを含み、順序は契約ではありません。
 `Move32` metadata は受け手 API が必要とする場合だけ保持してください。
 
-HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は 1.1.1 の表現を維持します。
+HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は文書化されたワイヤ表現を使用します。
 PACK は駒打ち・成りを含む AperyMove layout を使用し、`Record.from_pack()` / `to_pack()` と `decode_pack_file()` から利用できます。
-1.1.1 から更新する場合は [移行ガイド](https://nyoki-mtl.github.io/rsshogi/migration.html) を確認してください。

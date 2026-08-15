@@ -1,6 +1,6 @@
 # rsshogi
 
-[![crates.io](https://img.shields.io/crates/v/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://crates.io/crates/rsshogi) [![docs.rs](https://img.shields.io/docsrs/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://docs.rs/rsshogi) [![Documentation](https://img.shields.io/badge/docs-mdBook-1f6feb?style=flat-square&logo=readthedocs&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/) [![PyPI](https://img.shields.io/pypi/v/rsshogi?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/rsshogi/) [![Python](https://img.shields.io/pypi/pyversions/rsshogi?style=flat-square&logo=python&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/python-api.html) [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/nyoki-mtl/rsshogi/blob/main/LICENSE)
+[![crates.io](https://img.shields.io/crates/v/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://crates.io/crates/rsshogi) [![docs.rs](https://img.shields.io/docsrs/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://docs.rs/rsshogi) [![Documentation](https://img.shields.io/badge/docs-mdBook-1f6feb?style=flat-square&logo=readthedocs&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/) [![PyPI](https://img.shields.io/pypi/v/rsshogi?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/rsshogi/) [![Python](https://img.shields.io/pypi/pyversions/rsshogi?style=flat-square&logo=python&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/nyoki-mtl/rsshogi/blob/main/LICENSE)
 
 `rsshogi` は、将棋局面の表現、合法手生成、棋譜の入出力、定跡・学習データ形式の操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージです。
 
@@ -22,7 +22,7 @@ rsshogi = "1.2.0"
 rsshogi = { version = "1.2.0", features = ["records", "book"] }
 ```
 
-利用できる機能は `records`、`book`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions` です。
+利用できる機能は `records`、`book`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions`、`hash-128` です。
 
 ### Python
 
@@ -66,8 +66,8 @@ board.apply_move(move)
 print(board.to_sfen())
 ```
 
-[マニュアル](docs/book/src/README.md) では API 群、局面の観測可能な意味論、棋譜・定跡形式、Python 固有の補助機能を説明します。
-1.1.1 から更新する場合は [1.2.0 への移行](docs/book/src/migration.md) と [CHANGELOG](CHANGELOG.md) を確認してください。
+[マニュアル](docs/book/src/introduction.md) では API、棋譜と定跡の形式、内部実装を詳しく説明します。
+[CHANGELOG](CHANGELOG.md) にはバージョンごとの変更点を記録しています。
 
 ## ライセンス
 

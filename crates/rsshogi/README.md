@@ -32,13 +32,10 @@ SFEN の解析・整形は失敗し得ます。
 `solve_mate_in_one` は、合法で王手を与え、相手に合法応手がない場合だけ `Move32` を返し、それ以外では `None` を返します。
 複数の詰みがある場合、任意の有効な手が返され得ます。
 
-削除済みの公開 `Bitboard256` サーフェスと `peta_shock` API は提供されません。
-`Bitboard` と文書化された board/move interfaces を使用してください。
-
-HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は 1.1.1 の表現を維持します。
+HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は文書化されたワイヤ表現を使用します。
 PACK の指し手は `AperyMove` layout なので、通常の `Move` raw 値との間は明示変換してください。
 
-公開契約と 1.2.0 の移行手順は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照してください。
+各 API とデータ形式の詳細は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照してください。
 
 ## ライセンス
 
