@@ -24,7 +24,9 @@ Python から rsshogi を使用するための API リファレンスです。
 pip install rsshogi
 ```
 
-AVX2 対応 x86_64 CPU 向けの高速版も利用できます（通常版とは同時にインストールできません）。迷った場合は通常版を使ってください。
+AVX2 対応 x86_64 CPU では高速版を選べます。
+通常版と高速版は同じ import 名を使うため、環境ごとに一方をインストールします。
+CPU 要件を意識せず導入する場合は通常版が適しています。
 
 ```bash
 pip install rsshogi-avx2

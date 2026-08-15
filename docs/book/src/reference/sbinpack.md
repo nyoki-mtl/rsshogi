@@ -102,7 +102,7 @@ fn visit(bytes: Vec<u8>) -> Result<(), SbinpackError> {
 
 - すべて **リトルエンディアン**。
 - 可変長整数は **ULEB128**。
-- v2 は `SBN2` マジックで識別する。v1 (`SBIN`) との後方互換読み込みは提供しない。
+- v2 は `SBN2` マジックで識別し、decoder はこの version を検証する。
 
 ### ルート構造
 
@@ -127,7 +127,7 @@ MoveText = (EncodedMove, EncodedScore) * Count
 - `MetadataLen` は 1 byte 固定です。v2 の metadata 上限は 127 bytes/chain なので、`0x80..=0xff` は不正値です。
 
 - `MetadataLen=0` の場合、Metadata は空です。
-- core v2 は Metadata の内部 schema を定義しません。rating、game id、engine name などを入れたい場合は、ユーザー側で bytes の内部構造を決めます。
+- Metadata は opaque bytes です。rating、game id、engine name などの内部構造は利用側で定義できます。
 - `MetadataLen` は `chunk_end` 内、かつ後続の `Count(u16)` を読める範囲に収まる必要があります。
 - metadata は小さな sideband 用です。v2 の実装上限は 127 bytes/chain で、これを超える場合は不正データとして扱います。
 

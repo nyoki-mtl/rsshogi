@@ -54,13 +54,12 @@ let entry = book.lookup_sfen(sfen)?;
 SFEN 検索ではキーの同一性のために行の手数を `1` に正規化し、元の行の手数は `min_ply`
 として保持します。
 
-`open()` は局面行のうち先頭の一定範囲だけを検証します。診断が `complete == false` を
-報告する場合、`validate_full()` がファイル全体のソートを確認するまで `lookup_sfen()`
-はエラーを返します。ソート検証がファイルの非ソートを報告した場合も、`lookup_sfen()`
-は（数 GB のファイルを暗黙に全走査しないよう）エラーを返します。低速な全件スキャンを
-意図する場合のみ `lookup_sfen_by_scan()` を使ってください。
+`open()` は局面行の先頭部分を検証します。
+診断が `complete == false` の場合は、`validate_full()` でファイル全体のソートを確認すると
+`lookup_sfen()` の二分探索を利用できます。
+ソート前のファイルを明示的に全件走査する場合は `lookup_sfen_by_scan()` を使います。
 
-`.db` リーダはファイルサイズに比例したメモリ確保を行いません。
+`.db` リーダはファイルをストリーミングし、ファイルサイズに依存しない一定量のメモリで検索します。
 
 明示的なストリーミング取り込みを意図する場合は `iter_entries()` を使います。
 
@@ -85,12 +84,12 @@ let book = YaneuraOuBook::open_with_options(
 )?;
 ```
 
-`SafeBinary` が既定で、全検証が完了するまで二分探索をブロックし続けます。
+`SafeBinary` が既定で、全検証の完了後に二分探索を開始します。
 `ValidateFullBeforeLookup` は open 時にファイル全体を検証します。
-`AssumeSortedAfterPrefix` と `AssumeSortedByCaller` は全検証の前に二分探索を許可しますが、
-そのリスク（非ソートのファイルに対する二分探索はエントリーを取りこぼし得る）を表面化
-させる責任は呼び出し側にあります。`AssumeSortedByCaller` は順序チェックを行わないため、
-`YaneuraOuBookDiagnostics::Unvalidated` を報告します。`ScanOnly` は `lookup_sfen()` を
+`AssumeSortedAfterPrefix` は先頭部分の検証後、`AssumeSortedByCaller` は呼び出し側の
+ソート保証を使って二分探索を開始します。
+`AssumeSortedByCaller` の診断結果は `YaneuraOuBookDiagnostics::Unvalidated` です。
+`ScanOnly` は `lookup_sfen()` を
 明示的なスキャン経路にしつつ、診断と早期のフォーマットエラー検出のために先頭の一定範囲は
 検証します。
 
@@ -112,9 +111,8 @@ book.validate_full_with_control(|progress| {
 
 キャンセルは協調的です。リーダが進捗コールバックを呼び出したときにのみ観測されます。
 
-DB2016 のテキストは現在 UTF-8 としてデコードされます。日本語の旧来ファイルで
-パースに失敗する場合は、行の構文が不正だと判断する前に、元データが CP932 / Shift_JIS で
-ないか確認してください。
+DB2016 のテキストは UTF-8 としてデコードされます。
+CP932 または Shift_JIS のファイルは UTF-8 へ変換してから開きます。
 
 ## YBB
 
@@ -133,9 +131,8 @@ let entry = book.lookup_position(&position)?;
 YBB リーダは open 時にファイル全体を読み込み、header、index、すべての move record を検証します。
 検索時は `PackedSfen[32]` の byte order でメモリ上の index を二分探索し、ヒットした局面の moves を復号します。
 
-候補手は `.ybb` の moves 領域に格納された順序で返します。参照実装の probe 時の
-候補手ソート（`.ybb` では実質 eval 降順）までは reader 内で再現しません。必要な順序で
-使う場合は呼び出し側で明示的に並べ替えてください。
+候補手は `.ybb` の moves 領域に格納された順序で返します。
+評価値順で使う場合は、取得後に呼び出し側で並べ替えます。
 
 対応する範囲:
 
@@ -146,11 +143,9 @@ YBB リーダは open 時にファイル全体を読み込み、header、index�
 - `FlippedBook` 相当の先後反転 lookup。
 
 `.ybb` は count / comment / ponder を持たないため、`YaneuraOuBookEntry` とは別の
-`YbbEntry` / `YbbMove` として公開します。`.db` 指定時に同 basename の `.ybb` へ暗黙
-fallback する 互換挙動は提供しません。必要な場合は呼び出し側で明示的に
-ファイル名を選んでください。
-
-Python binding は提供していません。
+`YbbEntry` / `YbbMove` として公開します。
+`.db` と `.ybb` はそれぞれ対応する reader へ明示的なファイル名を渡します。
+YBB は Rust API から利用します。
 
 ## SBK
 
@@ -193,10 +188,9 @@ let book = SbkBook::open_with_control("book.sbk", |progress| {
 `SbkBook::diagnostics()` は、重複した Packed SFEN 局面と未解決の state payload を
 報告します。
 
-SBK リーダはデコード済みの state グラフ全体を保持せず、ファイル全体をメモリに読み込む
-こともしません。コンパクトな state オフセット表と Packed SFEN インデックスは state 数に
-比例します。個々の state payload は、インデックス構築時や一致エントリーの検索時に読み込み・
-デコードされます。
+SBK リーダはコンパクトな state オフセット表と Packed SFEN インデックスを保持します。
+これらのサイズは state 数に比例し、個々の state payload はインデックス構築時や
+一致エントリーの検索時に読み込んでデコードします。
 
 `SbkBook::iter_entries()` はインデックス済みの state を反復し、各 state をオンデマンドで
 デコードします。
@@ -210,10 +204,10 @@ if let Some(child) = book.child_entry(&parent, 0)? {
 }
 ```
 
-`SbkBook::lookup_state_id()` はデコード済みの SBK `id` メタデータを使い、id が物理 state
-インデックスと等しいとは仮定しません。`SbkBook::lookup_state_index()` は物理 state payload
-インデックスを指します。負または不明な id・範囲外インデックス・`nextStateId` を持たない手・
-範囲外の手インデックスは、いずれも `Ok(None)` を返します。
+`SbkBook::lookup_state_id()` はデコード済みの SBK `id` メタデータ、
+`SbkBook::lookup_state_index()` は物理 state payload インデックスを使います。
+解決できるエントリがある場合は `Some`、負または不明な id、範囲外インデックス、
+終端の手には `None` を返します。
 
 SBK の full export には `BookDatabase::write_sbk()` / `to_sbk_bytes()` を使います。
 
@@ -226,16 +220,15 @@ let bytes = database.to_sbk_bytes(&SbkWriteOptions::new())?;
 writer は `BookDatabase` 全体を新しい SBK protobuf として再生成します。state ID は
 root を先に並べたうえで `BookStates[i].Id == i` の連番にし、候補手の合法遷移から
 `NextStateId` を再構築します。
-子局面が `BookDatabase` に存在しない候補手は `NextStateId = -1` として出力し、空の leaf
-state は合成しません。ShogiHome と同じく `BoardKey` / `HandKey` は 0 出力を許容します。
-top-level の author / description は現行 `BookDatabase` に格納先がないため出力しません。
+候補手に対応する子局面がある場合は `NextStateId` を付け、終端は `-1` で表します。
+ShogiHome と同じく `BoardKey` / `HandKey` は 0 出力を許容します。
+writer は `BookDatabase` が保持する局面と候補手を full export します。
 
-on-the-fly SBK の差分 patch merge writer と Python binding は提供していません。
+Python では `rsshogi.book.SbkBook` から SBK を参照できます。
 
 ## ローカルでの大容量ファイル検証
 
-大容量の参照ファイルは通常のテストには含まれません。ローカルに検証用ファイルがある場合は
-環境変数でパスを明示してから ignored test を実行します。
+大容量ファイルの検証には、環境変数でローカルファイルのパスを指定して ignored test を実行します。
 
 ```bash
 RSSHOGI_LARGE_YANEURAOU_DB=/path/to/book.db cargo test -p rsshogi test_yaneuraou_db_large_local_smoke -- --ignored --nocapture

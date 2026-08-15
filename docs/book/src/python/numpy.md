@@ -16,7 +16,11 @@ from rsshogi.numpy import (
 )
 ```
 
-**注意:** NumPy がインストールされていない場合、このモジュールは利用できません。
+このモジュールは NumPy と組み合わせて使います。
+
+```console
+python -m pip install rsshogi numpy
+```
 
 ## dtype 一覧
 

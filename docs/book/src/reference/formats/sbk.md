@@ -19,10 +19,8 @@ rsshogi は読み取り専用リーダ [`SbkBook`](external-books.md#sbk) と
   冗長な情報を省くことでファイルサイズを比較的小さく抑えます。
 - **状態グラフ構造**: 局面（state）を node、定跡手（move）の `nextStateId` を edge と
   するグラフ。1 つの局面から指し手をたどって次の局面へ遷移できます。
-- **バイナリサーチ非前提**: DB2016 や Apery BIN がソート済みで二分探索を
-  想定するのに対し、SBK は **そのままでは局面検索に向きません**。素朴に扱うなら
-  デコード結果をメモリへ展開してインデックスを作る必要があります
-  （rsshogi の対処は[後述](#rsshogi-のリーダ実装)）。
+- **グラフからの検索**：SBK は state と edge を格納します。
+  rsshogi は open 時に Packed SFEN の索引を作り、局面検索へ利用します。
 
 ## Protobuf スキーマ
 
@@ -76,15 +74,14 @@ message SBookEval {
 ## 局面のエンコード（BoardKey / HandKey の扱い）
 
 SBK の `SBookState` は局面を **SFEN 文字列**（`position`, フィールド 7）として持ち、
-加えて `BoardKey` / `HandKey`（フィールド 2 / 3）を格納します。ただし、
+加えて `BoardKey` / `HandKey`（フィールド 2 / 3）を格納します。
 
-- これらキーの**計算ロジックは非公開**で、BookConv にも含まれていません。
-  ShogiGUI は SFEN から独自に算出していると見られます。
+- これらのキーは ShogiGUI 固有の値です。
+  rsshogi は公開されている SFEN を局面同一性の基準にします。
 
-そのため rsshogi は **`BoardKey` / `HandKey` を読まず**、`position` の SFEN を
-`Position::from_sfen()` でパースし直し、自前の [Packed SFEN](external-books.md#packed-sfen)
-（`Position::to_packed_sfen()`）をキーとして使います。これにより、非公開キーの
-互換性に依存せず一貫した局面同一性で検索できます。
+rsshogi は `position` の SFEN を `Position::from_sfen()` で解析し、
+[Packed SFEN](external-books.md#packed-sfen)（`Position::to_packed_sfen()`）を
+検索キーとして使います。
 
 ## state グラフと nextStateId
 
@@ -102,14 +99,12 @@ if let Some(child) = book.child_entry(&parent, 0)? {
 }
 ```
 
-なお、`SBookState::id` は**論理 ID** であり物理的な格納順とは一致しません。
-rsshogi は両者を区別し、`lookup_state_id()` は `id` で、`lookup_state_index()` は
-物理 state インデックスで解決します。
+`SBookState::id` は論理 ID、ファイル内の位置は物理 state インデックスです。
+`lookup_state_id()` は論理 ID、`lookup_state_index()` は物理インデックスで解決します。
 
 ## rsshogi のリーダ実装
 
-SBK はそのままでは二分探索に向かないフォーマットですが、rsshogi は
-**全グラフをメモリ展開せずに**検索可能にします。
+rsshogi は open 時に索引を作り、SBK の state グラフを局面から検索できるようにします。
 
 1. **オープン時**: protobuf の state オフセットだけを走査し、各 state を潜在的な
    ルートとしてたどって、`position` SFEN または `nextStateId` リンクから Packed SFEN
@@ -120,10 +115,8 @@ SBK はそのままでは二分探索に向かないフォーマットですが�
 不正なグラフ辺はスキップされるため、壊れた分岐があっても定跡の残りは開けます。
 `SbkBook::diagnostics()` は重複局面と未解決 payload を報告します。
 
-> ここで二分探索の対象になるのは rsshogi がオープン時に構築する**メモリ上の
-> 派生インデックス**であって、ファイルのバイト列ではありません。SBK のオンディスク
-> 表現は依然ソート済みではなく、これがフォーマット本来の「メモリ展開が必要」という
-> 性質への rsshogi の対処になっています。
+> 二分探索の対象は、rsshogi が open 時に構築するメモリ上の派生インデックスです。
+> SBK ファイル内の state 順序は保持されます。
 
 API の使い方は [外部定跡（DB2016 / YBB / SBK）](external-books.md#sbk) を参照してください。
 
@@ -141,10 +134,10 @@ SBK writer は [`BookDatabase`](book-architecture.md#編集-ir-層bookdatabase) 
   SBK 由来 metadata がある場合だけそれを保持します。未指定の候補手は `0` を出力します。
 - `SBookEval` の探索情報、state の games / 勝敗数 / comment、move の weight は
   SBK metadata として保持されている範囲で出力します。
-- top-level の author / description は現行 `BookDatabase` に格納先がないため出力しません。
-- `BoardKey` / `HandKey` は非公開計算に依存しないため 0 として出力します。
+- writer の入力は `BookDatabase` が保持する局面、候補手、SBK metadata です。
+- `BoardKey` / `HandKey` には ShogiHome が受理する 0 を出力します。
 
-on-the-fly の差分 patch merge writer は提供しません。
+writer はデータベース全体を再生成する full export API です。
 
 ## 関連ツール
 
