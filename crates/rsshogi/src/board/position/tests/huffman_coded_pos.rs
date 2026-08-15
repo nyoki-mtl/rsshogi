@@ -1,5 +1,25 @@
 use super::*;
 
+const KINGS_ONLY_HCP: [u8; 32] = [
+    0x58, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x24, 0x49, 0x92, 0x24,
+    0x49, 0x92, 0x94, 0x52, 0x4a, 0x6b, 0xad, 0xd5, 0x5a, 0x6b, 0xbd, 0xf7, 0xfe, 0x78, 0xbc, 0x5e,
+];
+
+#[test]
+fn test_huffman_coded_pos_matches_independent_kings_only_vector() {
+    // LSB-first encoding of side 0, kings on raw squares 44 and 36, 79 empty
+    // squares, then the standard piece-box counts in the documented wire order.
+    let sfen = "4k4/9/9/9/9/9/9/9/4K4 b - 1";
+    let pos = crate::board::position_from_sfen(sfen).expect("sfen should parse");
+    assert_eq!(pos.to_huffman_coded_pos().data, KINGS_ONLY_HCP);
+
+    let mut decoded = Position::empty();
+    decoded
+        .set_huffman_coded_pos(&crate::board::HuffmanCodedPos { data: KINGS_ONLY_HCP }, 1)
+        .expect("golden HCP should decode");
+    assert_eq!(decoded.to_sfen(None), sfen);
+}
+
 #[test]
 fn test_huffman_coded_pos_roundtrip_matches_to_sfen() {
     let cases = [

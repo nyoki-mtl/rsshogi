@@ -779,6 +779,23 @@ impl StateStack {
         true
     }
 
+    /// `start..=head` の履歴だけを 0 始まりの stack として複製する。
+    pub(crate) fn clone_suffix(&self, start: StateIndex) -> Self {
+        assert!(start <= self.head, "state suffix must begin within the live stack");
+        let new_head = self.head - start;
+        let mut cloned = Self::new();
+        cloned.ensure_chunk_for(new_head);
+        for new_index in 0..=new_head {
+            let source_index = start + new_index;
+            let (source_chunk, source_offset) = Self::locate(source_index);
+            let (target_chunk, target_offset) = Self::locate(new_index);
+            cloned.chunks[target_chunk][target_offset] =
+                self.chunks[source_chunk][source_offset].clone();
+        }
+        cloned.head = new_head;
+        cloned
+    }
+
     /// 次の state slot を allocation なしで利用できるかを返す。
     #[must_use]
     #[inline(always)]

@@ -56,27 +56,14 @@ lint:
 bench:
 	cargo bench -p rsshogi
 
-# Build Rustdoc + mdBook (bundles the TypeScript board asset first)
+# Build Rustdoc + mdBook
 docs:
-	cargo doc --no-deps --workspace
-	just docs-prepare-assets
+	cargo doc --no-deps -p rsshogi --all-features
 	mdbook build docs/book
 
-# mdBook only (skip Rustdoc)
+# mdBook only
 book:
-	just docs-prepare-assets
 	mdbook build docs/book
-
-# Bundle the mdBook front-end asset (TypeScript -> ESM)
-docs-prepare-assets:
-	npx --yes esbuild \
-		docs/book/src/assets/shogi-board.ts \
-		--bundle \
-		--format=iife \
-		--global-name=RShogiBoard \
-		--target=es2018 \
-		--outfile=docs/book/src/assets/shogi-board.js \
-		--minify
 
 # Full pre-commit check (delegates to Makefile for CI parity)
 check:

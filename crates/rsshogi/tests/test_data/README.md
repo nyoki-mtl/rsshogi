@@ -1,6 +1,6 @@
-# Test Data for P3 Board State Tests
+# 盤面テスト用データ
 
-このディレクトリにはP3フェーズ（盤面状態管理）のテストデータが含まれています。
+このディレクトリには、盤面状態と合法手生成を検証する test vector を置く。
 
 ## ファイル構成
 
@@ -13,11 +13,9 @@ SFEN形式の局面データ。以下のカテゴリを含む：
 - **Zobristテスト用**: 微妙に異なる2局面（ハッシュ値の違いを検証）
 - **不正局面**: 駒数超過など（ネガティブテスト用）
 
-### perft_results.txt
-参照実装で検証済みの perft 結果。以下を含む：
-
-- **初期局面**: depth 1-6 の正解ノード数
-- **複雑な中盤局面**: depth 3-4 の正解ノード数
+### perft_expectations.json
+公開 SFEN と複数実装で照合した node count。初期局面、複雑な中盤局面、
+pin、double check、最多合法手局面を含む。
 
 ### move_sequences.txt
 手順データ。以下を含む：
@@ -71,11 +69,10 @@ for mv_str in seq.split_whitespace().skip(3) { // "position startpos moves"を�
 assert!(pos.is_repetition(3));
 ```
 
-## データソース
+## データの由来
 
-- 参照実装: perft 正解値、benchmark 局面
-- haitaka: 詰将棋、特殊ケーステスト局面  
-- 手作り: 千日手、二歩、打ち歩詰めの手順
+- `sfen_positions.txt`、`move_sequences.txt`：この repository で作成した test vector。
+- `perft_expectations.json`：公開 SFEN に対して複数実装で一致を確認した node count。数値だけを correctness oracle として使用する。
 
 ## 注意事項
 

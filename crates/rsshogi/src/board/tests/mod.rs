@@ -1,1 +1,1 @@
-mod yaneuraou_compat;
+mod contracts;

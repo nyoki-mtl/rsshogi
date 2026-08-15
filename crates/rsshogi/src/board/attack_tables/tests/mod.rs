@@ -38,6 +38,52 @@ fn king_attacks(sq: Square) -> Bitboard {
     KING_ATTACKS[sq]
 }
 
+#[test]
+fn unchecked_step_attack_accessors_match_generated_geometry() {
+    for sq in Square::iter() {
+        for color in Color::iter() {
+            // SAFETY: `Square::iter` yields only board squares.
+            assert_eq!(
+                unsafe { pawn_attacks_unchecked(sq, color) },
+                PAWN_ATTACKS[sq][color.to_index()]
+            );
+            // SAFETY: `Square::iter` yields only board squares.
+            assert_eq!(
+                unsafe { knight_attacks_unchecked(sq, color) },
+                KNIGHT_ATTACKS[sq][color.to_index()]
+            );
+            // SAFETY: `Square::iter` yields only board squares.
+            assert_eq!(
+                unsafe { silver_attacks_unchecked(sq, color) },
+                SILVER_ATTACKS[sq][color.to_index()]
+            );
+            // SAFETY: `Square::iter` yields only board squares.
+            assert_eq!(
+                unsafe { gold_attacks_unchecked(sq, color) },
+                GOLD_ATTACKS[sq][color.to_index()]
+            );
+            let lance = LANCE_BEAMS[sq];
+            let expected_lance = match color {
+                Color::BLACK => lance.black,
+                Color::WHITE => lance.white,
+            };
+            assert_eq!(crate::board::attack_tables::lance_step_attacks(sq, color), expected_lance);
+        }
+        // SAFETY: `Square::iter` yields only board squares.
+        assert_eq!(unsafe { king_attacks_unchecked(sq) }, KING_ATTACKS[sq]);
+        let bishop = BISHOP_BEAMS[sq];
+        assert_eq!(
+            crate::board::attack_tables::bishop_step_attacks(sq),
+            bishop.ne | bishop.se | bishop.sw | bishop.nw
+        );
+        let rook = ROOK_BEAMS[sq];
+        assert_eq!(
+            crate::board::attack_tables::rook_step_attacks(sq),
+            rook.n | rook.e | rook.s | rook.w
+        );
+    }
+}
+
 fn lance_step_attacks(color: Color, sq: Square) -> Bitboard {
     let beams = LANCE_BEAMS[sq.to_index()];
     match color {
@@ -263,7 +309,6 @@ fn test_attack_tables_accessible() {
     assert_eq!(LANCE_BEAMS.len(), 81);
     assert_eq!(BISHOP_BEAMS.len(), 81);
     assert_eq!(ROOK_BEAMS.len(), 81);
-    assert_eq!(QUGIY_STEP_ATTACKS.len(), 6);
 }
 
 #[test]
@@ -446,7 +491,7 @@ fn test_beam_structs_equality() {
 
 /// 攻撃テーブルの生成結果を検証する。
 #[test]
-fn test_yaneu_compatibility_pawn() {
+fn test_pawn_attack_matches_board_geometry() {
     // SQ_55 (file=4, rank=4) の先手歩の利き
     // 期待値: SQ_54 (file=4, rank=3)
     let sq = SQ_55;
@@ -459,7 +504,7 @@ fn test_yaneu_compatibility_pawn() {
 }
 
 #[test]
-fn test_yaneu_compatibility_knight() {
+fn test_knight_attack_matches_board_geometry() {
     // SQ_55 (file=4, rank=4) の先手桂馬の利き
     // 期待値: SQ_43 (file=3, rank=2), SQ_63 (file=5, rank=2)
     let sq = SQ_55;
@@ -476,7 +521,7 @@ fn test_yaneu_compatibility_knight() {
 }
 
 #[test]
-fn test_yaneu_compatibility_silver() {
+fn test_silver_attack_matches_board_geometry() {
     // 銀は5方向に利きがある
     let sq = SQ_55;
     let attacks = SILVER_ATTACKS[sq][Color::BLACK.to_index()];
@@ -484,7 +529,7 @@ fn test_yaneu_compatibility_silver() {
 }
 
 #[test]
-fn test_yaneu_compatibility_gold() {
+fn test_gold_attack_matches_board_geometry() {
     // 金は6方向に利きがある
     let sq = SQ_55;
     let attacks = GOLD_ATTACKS[sq][Color::BLACK.to_index()];
@@ -492,7 +537,7 @@ fn test_yaneu_compatibility_gold() {
 }
 
 #[test]
-fn test_yaneu_compatibility_king() {
+fn test_king_attack_matches_board_geometry() {
     // 中央の玉は8方向に利きがある
     let sq = SQ_55;
     let attacks = KING_ATTACKS[sq];
@@ -735,13 +780,9 @@ fn test_rook_beams_edge() {
     assert_eq!(beams.s.count(), 8, "1段目からのSビームは8マス");
 }
 
-/// 飛び駒の利き実装が呼び出せることを確認する文書用テスト。
-///
-/// rsshogi は Magic Bitboard ではなく Qugiy 相当のステップテーブル + 差分抽出
-/// （byte_reverse + 減算）で利きを生成する。攻撃パターンの正しさ自体は perft
-/// と各駒の利きテストで検証しており、ここでは API の存在確認のみを行う。
+/// 飛び駒の利き API が空の占有でも呼び出せることを確認する。
 #[test]
-fn test_slider_attacks_implementation_note() {
+fn test_slider_attack_api_accepts_empty_occupancy() {
     // 利き生成関数が存在し呼び出せることを確認する。
     let sq = SQ_55;
     let occupied = Bitboard::EMPTY;
@@ -836,28 +877,6 @@ fn test_rook_attacks_with_occupied() {
 }
 
 #[test]
-fn test_qugiy_rook_mask_matches_generated_rays() {
-    let sq = SQ_55;
-    let file = sq.file().raw();
-    let rank = sq.rank().raw();
-
-    let mut west = Bitboard::EMPTY;
-    for f in (file + 1)..=File::FILE_9.raw() {
-        west.set(Square::from_file_rank(File::new(f), Rank::new(rank)));
-    }
-
-    let mut east = Bitboard::EMPTY;
-    for f in (File::FILE_1.raw()..file).rev() {
-        east.set(Square::from_file_rank(File::new(f), Rank::new(rank)));
-    }
-
-    let east_rev = east.byte_reverse();
-    let (hi, lo) = Bitboard::unpack(east_rev, west);
-    assert_eq!(lo, QUGIY_ROOK_MASK[sq.to_index()][0]);
-    assert_eq!(hi, QUGIY_ROOK_MASK[sq.to_index()][1]);
-}
-
-#[test]
 fn test_rook_file_attacks_matches_lance_pair() {
     let occupancies = [
         Bitboard::EMPTY,
@@ -877,101 +896,123 @@ fn test_rook_file_attacks_matches_lance_pair() {
     }
 }
 
-#[test]
-#[allow(clippy::similar_names)]
-fn test_qugiy_bishop_mask_matches_generated_rays() {
-    let sq = SQ_55;
-    let file = sq.file().raw();
-    let rank = sq.rank().raw();
-
-    let mut lu = Bitboard::EMPTY;
-    let mut ld = Bitboard::EMPTY;
-    let mut ru = Bitboard::EMPTY;
-    let mut rd = Bitboard::EMPTY;
-
-    let mut f = file + 1;
-    let mut r = rank - 1;
-    while f <= File::FILE_9.raw() && r >= Rank::RANK_1.raw() {
-        lu.set(Square::from_file_rank(File::new(f), Rank::new(r)));
-        f += 1;
-        r -= 1;
+fn scalar_ray_attacks(sq: Square, occupied: Bitboard, direction: (i8, i8)) -> Bitboard {
+    let mut attacks = Bitboard::EMPTY;
+    let (df, dr) = direction;
+    let mut file = sq.file().raw() + df;
+    let mut rank = sq.rank().raw() + dr;
+    while (0..9).contains(&file) && (0..9).contains(&rank) {
+        let target = Square::from_file_rank(File::new(file), Rank::new(rank));
+        attacks.set(target);
+        if occupied.test(target) {
+            break;
+        }
+        file += df;
+        rank += dr;
     }
+    attacks
+}
 
-    let mut f = file + 1;
-    let mut r = rank + 1;
-    while f <= File::FILE_9.raw() && r <= Rank::RANK_9.raw() {
-        ld.set(Square::from_file_rank(File::new(f), Rank::new(r)));
-        f += 1;
-        r += 1;
+fn scalar_slider_attacks(sq: Square, occupied: Bitboard, directions: [(i8, i8); 4]) -> Bitboard {
+    directions.into_iter().fold(Bitboard::EMPTY, |attacks, direction| {
+        attacks | scalar_ray_attacks(sq, occupied, direction)
+    })
+}
+
+fn blocker_choices(sq: Square, direction: (i8, i8)) -> Vec<Bitboard> {
+    let (df, dr) = direction;
+    let mut choices = vec![Bitboard::EMPTY];
+    let mut file = sq.file().raw() + df;
+    let mut rank = sq.rank().raw() + dr;
+    while (0..9).contains(&file) && (0..9).contains(&rank) {
+        choices
+            .push(Bitboard::from_square(Square::from_file_rank(File::new(file), Rank::new(rank))));
+        file += df;
+        rank += dr;
     }
+    choices
+}
 
-    let mut f = file - 1;
-    let mut r = rank - 1;
-    while f >= File::FILE_1.raw() && r >= Rank::RANK_1.raw() {
-        ru.set(Square::from_file_rank(File::new(f), Rank::new(r)));
-        f -= 1;
-        r -= 1;
-    }
-
-    let mut f = file - 1;
-    let mut r = rank + 1;
-    while f >= File::FILE_1.raw() && r <= Rank::RANK_9.raw() {
-        rd.set(Square::from_file_rank(File::new(f), Rank::new(r)));
-        f -= 1;
-        r += 1;
-    }
-
-    let ru = ru.byte_reverse();
-    let rd = rd.byte_reverse();
-    for (part, mask) in QUGIY_BISHOP_MASK[sq.to_index()].iter().enumerate().take(2) {
-        let [p0, p1, p2, p3] = mask.parts();
-        let [lu_lo, lu_hi] = lu.parts();
-        let [ru_lo, ru_hi] = ru.parts();
-        let [ld_lo, ld_hi] = ld.parts();
-        let [rd_lo, rd_hi] = rd.parts();
-        if part == 0 {
-            assert_eq!(p0, lu_lo);
-            assert_eq!(p1, ru_lo);
-            assert_eq!(p2, ld_lo);
-            assert_eq!(p3, rd_lo);
-        } else {
-            assert_eq!(p0, lu_hi);
-            assert_eq!(p1, ru_hi);
-            assert_eq!(p2, ld_hi);
-            assert_eq!(p3, rd_hi);
+fn assert_slider_matches_scalar(
+    attacks: fn(Square, Bitboard) -> Bitboard,
+    directions: [(i8, i8); 4],
+) {
+    for raw in 0..Square::COUNT as i8 {
+        let sq = Square::new(raw);
+        let choices = directions.map(|direction| blocker_choices(sq, direction));
+        for b0 in &choices[0] {
+            for b1 in &choices[1] {
+                for b2 in &choices[2] {
+                    for b3 in &choices[3] {
+                        let occupied = *b0 | *b1 | *b2 | *b3;
+                        let expected = scalar_slider_attacks(sq, occupied, directions);
+                        assert_eq!(attacks(sq, occupied), expected, "sq={sq:?}");
+                    }
+                }
+            }
         }
     }
 }
 
 #[test]
-fn test_qugiy_step_attacks_direction_order() {
-    let sq = SQ_55;
-    let file = sq.file().raw();
-    let rank = sq.rank().raw();
+fn test_rook_attacks_matches_scalar_for_every_nearest_blocker() {
+    assert_slider_matches_scalar(rook_attacks, [(0, -1), (1, 0), (0, 1), (-1, 0)]);
+}
 
-    let directions = [(-1, -1), (-1, 0), (-1, 1), (1, -1), (1, 0), (1, 1)];
-    let reverse_dirs = [true, true, true, false, false, false];
+#[test]
+fn test_bishop_attacks_matches_scalar_for_every_nearest_blocker() {
+    assert_slider_matches_scalar(bishop_attacks, [(1, -1), (1, 1), (-1, 1), (-1, -1)]);
+}
 
-    for (dir_idx, (df, dr)) in directions.iter().enumerate() {
-        let mut ray = Bitboard::EMPTY;
-        let mut f = file + df;
-        let mut r = rank + dr;
-        while (File::FILE_1.raw()..=File::FILE_9.raw()).contains(&f)
-            && (Rank::RANK_1.raw()..=Rank::RANK_9.raw()).contains(&r)
-        {
-            ray.set(Square::from_file_rank(File::new(f), Rank::new(r)));
-            f += df;
-            r += dr;
+#[test]
+fn test_lance_attacks_matches_scalar_for_every_nearest_blocker() {
+    for raw in 0..Square::COUNT as i8 {
+        let sq = Square::new(raw);
+        for (color, direction) in [(Color::BLACK, (0, -1)), (Color::WHITE, (0, 1))] {
+            for blocker in blocker_choices(sq, direction) {
+                let expected = scalar_ray_attacks(sq, blocker, direction);
+                assert_eq!(lance_attacks(sq, blocker, color), expected, "sq={sq:?} color={color}");
+            }
         }
-        if reverse_dirs[dir_idx] {
-            ray = ray.byte_reverse();
-        }
-        assert_eq!(ray, QUGIY_STEP_ATTACKS[dir_idx][sq.to_index()]);
     }
 }
 
 #[test]
-fn test_bitboard_attacks_counts_match_yaneuraou() {
+fn test_slider_attacks_match_scalar_for_randomized_occupancies() {
+    let mut state = 0xd1b5_4a32_d192_ed03u64;
+    for _ in 0..512 {
+        state ^= state << 7;
+        state ^= state >> 9;
+        state ^= state << 8;
+        let occupied = Bitboard::from_packed_bits(
+            u128::from(state) | (u128::from(state.rotate_left(29)) << 64),
+        );
+
+        for raw in 0..Square::COUNT as i8 {
+            let sq = Square::new(raw);
+            assert_eq!(
+                rook_attacks(sq, occupied),
+                scalar_slider_attacks(sq, occupied, [(0, -1), (1, 0), (0, 1), (-1, 0)]),
+                "rook sq={sq:?}"
+            );
+            assert_eq!(
+                bishop_attacks(sq, occupied),
+                scalar_slider_attacks(sq, occupied, [(1, -1), (1, 1), (-1, 1), (-1, -1)]),
+                "bishop sq={sq:?}"
+            );
+            for (color, direction) in [(Color::BLACK, (0, -1)), (Color::WHITE, (0, 1))] {
+                assert_eq!(
+                    lance_attacks(sq, occupied, color),
+                    scalar_ray_attacks(sq, occupied, direction),
+                    "lance sq={sq:?} color={color}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_piece_attack_counts_on_center_square() {
     let sq = SQ_55;
     let empty = Bitboard::EMPTY;
     let filled = Bitboard::ALL;

@@ -18,10 +18,11 @@ python -m pip install rsshogi-avx2
 
 - `rsshogi` と `rsshogi-avx2` は同時にインストールせず、どちらか一方だけを利用してください。
 - このビルドは AVX2 対応の x86_64 CPU が必要です。迷う場合は `rsshogi` を利用してください。
+- 標準版と AVX2 版の公開 API、合法手集合、wire format は共通です。
 
 ## ドキュメント
 
 API リファレンスは mdBook ドキュメントにまとめています。
 
 - [ドキュメント全体](https://nyoki-mtl.github.io/rsshogi/)
-- [Python API（Board / Record など）](https://nyoki-mtl.github.io/rsshogi/python/index.html)
+- [Python API（Board / Record など）](https://nyoki-mtl.github.io/rsshogi/python-api.html)

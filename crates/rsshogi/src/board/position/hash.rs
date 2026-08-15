@@ -69,7 +69,7 @@ impl Position {
 
     /// Zobrist ハッシュを完全計算する。
     ///
-    /// 差分更新の参照実装であり、局面の再構築時にのみ呼ぶ。
+    /// 差分更新を検証する全再計算 oracle であり、局面の再構築時にのみ呼ぶ。
     pub(in crate::board) fn compute_keys(&self) -> KeySet {
         let mut board_key = ZobristKey::default();
         let mut hand_contribution = ZobristKey::default();

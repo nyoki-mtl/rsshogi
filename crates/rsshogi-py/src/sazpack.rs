@@ -23,7 +23,7 @@ fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(format!("sazpack: {error}"))
 }
 
-#[pyclass(name = "SazWdl")]
+#[pyclass(from_py_object, name = "SazWdl")]
 #[derive(Clone)]
 pub(crate) struct PySazWdl {
     inner: SazWdl,
@@ -50,7 +50,7 @@ impl PySazWdl {
     }
 }
 
-#[pyclass(name = "SazPolicyEntry")]
+#[pyclass(from_py_object, name = "SazPolicyEntry")]
 #[derive(Clone)]
 pub(crate) struct PySazPolicyEntry {
     inner: SazSelfplayPolicyEntry,
@@ -111,7 +111,7 @@ impl PySazPolicyEntry {
     }
 }
 
-#[pyclass(name = "SazPosition")]
+#[pyclass(from_py_object, name = "SazPosition")]
 #[derive(Clone)]
 pub(crate) struct PySazPosition {
     inner: SazSelfplayPosition,
@@ -204,7 +204,7 @@ impl PySazPosition {
     }
 }
 
-#[pyclass(name = "SazGame")]
+#[pyclass(from_py_object, name = "SazGame")]
 #[derive(Clone)]
 pub(crate) struct PySazGame {
     inner: SazSelfplayGame,

@@ -1,337 +1,281 @@
+use crate::board::attack_tables::{
+    GOLD_ATTACKS, KING_ATTACKS, KNIGHT_ATTACKS, PAWN_ATTACKS, SILVER_ATTACKS, bishop_attacks,
+    lance_attacks, rook_attacks,
+};
 use crate::board::{Bitboard, Position};
-use crate::types::{Piece, PieceType, Rank, SQ_D, SQ_U, Square};
+use crate::types::{Color, Move, Piece, PieceType, Rank, Square};
 
-use super::types::MoveGenType;
-use super::{ColorMarker, MoveSink};
+use super::promotions::{can_promote_move, must_promote};
+use super::{MoveGenType, MoveSink};
+
+#[derive(Clone, Copy)]
+struct GenerationFacts {
+    us: crate::types::Color,
+    king_sq: Square,
+    pinned: Bitboard,
+    non_king_evasion_targets: Bitboard,
+    in_check: bool,
+}
+
+#[inline(always)]
+fn mode_accepts<T: MoveGenType>(
+    pos: &Position,
+    from: Square,
+    to: Square,
+    piece: Piece,
+    is_capture: bool,
+    promotion: bool,
+) -> bool {
+    if T::IS_RECAPTURES {
+        return true;
+    }
+    if T::IS_CHECKS || T::QUIET_CHECKS {
+        if T::QUIET_CHECKS && is_capture {
+            return false;
+        }
+        let mv = if promotion { Move::promotion(from, to) } else { Move::normal(from, to) };
+        return pos.gives_check_move(mv);
+    }
+    if T::IS_CAPTURE_PLUS_PRO {
+        return is_capture
+            || (piece.piece_type() == PieceType::PAWN
+                && (promotion
+                    || T::GENERATE_ALL_LEGAL && can_promote_move(from, to, piece.color())));
+    }
+    if T::IS_QUIETS_PRO_MINUS && promotion && piece.piece_type() == PieceType::PAWN {
+        return false;
+    }
+    (is_capture && T::CAPTURES) || (!is_capture && T::QUIETS)
+}
+
+#[inline(always)]
+fn legal_board_move(
+    pos: &Position,
+    from: Square,
+    to: Square,
+    piece: Piece,
+    facts: GenerationFacts,
+) -> bool {
+    if piece.piece_type() == PieceType::KING {
+        return !pos.is_attacked_by_color_with_king(facts.us.flip(), to, from);
+    }
+    if facts.in_check && !facts.non_king_evasion_targets.test(to) {
+        return false;
+    }
+    !facts.pinned.test(from) || Bitboard::is_aligned(from, to, facts.king_sq)
+}
+
+#[inline(always)]
+fn pseudo_ok<T: MoveGenType>(
+    pos: &Position,
+    from: Square,
+    to: Square,
+    piece: Piece,
+    promotion: bool,
+    facts: GenerationFacts,
+) -> bool {
+    if T::IS_LEGAL {
+        return legal_board_move(pos, from, to, piece, facts);
+    }
+    if !T::EVASIONS && !T::IS_CHECKS && !T::QUIET_CHECKS && !facts.in_check {
+        return true;
+    }
+    let mv = if promotion { Move::promotion(from, to) } else { Move::normal(from, to) };
+    pos.is_pseudo_legal_move(mv, T::GENERATE_ALL_LEGAL)
+}
+
+fn king_evasion_leaves_checker_attack(pos: &Position, from: Square, to: Square) -> bool {
+    let occupied = pos.bitboards().occupied().and_not(Bitboard::from_square(from));
+    let mut checkers = pos.checkers();
+    while let Some(checker) = checkers.pop_lsb() {
+        let piece = pos.piece_on(checker);
+        if Position::piece_attacks(piece.piece_type(), checker, piece.color(), occupied).test(to) {
+            return true;
+        }
+    }
+    false
+}
+
+#[inline(always)]
+fn emit_variants<T: MoveGenType>(
+    pos: &Position,
+    from: Square,
+    to: Square,
+    piece: Piece,
+    is_capture: bool,
+    facts: GenerationFacts,
+    list: &mut impl MoveSink,
+) {
+    let us = facts.us;
+    let pt = piece.piece_type();
+    // Pseudo evasions retain moves rejected by later pin/king-safety checks.
+    // A king destination still attacked by the checking piece itself does not
+    // evade at all, so exclude it before preserving those later distinctions.
+    if T::EVASIONS && pt == PieceType::KING && king_evasion_leaves_checker_attack(pos, from, to) {
+        return;
+    }
+    let promotable = matches!(
+        pt,
+        PieceType::PAWN
+            | PieceType::LANCE
+            | PieceType::KNIGHT
+            | PieceType::SILVER
+            | PieceType::BISHOP
+            | PieceType::ROOK
+    ) && can_promote_move(from, to, us);
+
+    let legal_all_variants = T::IS_LEGAL
+        && T::CAPTURES
+        && T::QUIETS
+        && T::GENERATE_ALL_LEGAL
+        && !T::EVASIONS
+        && !T::IS_CHECKS
+        && !T::QUIET_CHECKS
+        && !T::IS_CAPTURE_PLUS_PRO
+        && !T::IS_RECAPTURES;
+    if legal_all_variants {
+        if !legal_board_move(pos, from, to, piece, facts) {
+            return;
+        }
+        if promotable {
+            list.push_promotion(from, to, piece);
+        }
+        if !must_promote(pt, to, us) {
+            list.push_normal(from, to, piece);
+        }
+        return;
+    }
+
+    if promotable
+        && mode_accepts::<T>(pos, from, to, piece, is_capture, true)
+        && pseudo_ok::<T>(pos, from, to, piece, true, facts)
+    {
+        list.push_promotion(from, to, piece);
+    }
+
+    if must_promote(pt, to, us) {
+        return;
+    }
+
+    let lance_second_rank = pt == PieceType::LANCE
+        && ((us == Color::BLACK && to.rank() == Rank::RANK_2)
+            || (us == Color::WHITE && to.rank() == Rank::RANK_8));
+    let prefer_promotion = promotable
+        && !T::GENERATE_ALL_LEGAL
+        && (matches!(pt, PieceType::PAWN | PieceType::BISHOP | PieceType::ROOK)
+            || lance_second_rank);
+    if prefer_promotion {
+        return;
+    }
+
+    if mode_accepts::<T>(pos, from, to, piece, is_capture, false)
+        && pseudo_ok::<T>(pos, from, to, piece, false, facts)
+    {
+        list.push_normal(from, to, piece);
+    }
+}
+
+#[inline(always)]
+fn generate_destinations<T: MoveGenType>(
+    pos: &Position,
+    from: Square,
+    piece: Piece,
+    mut targets: Bitboard,
+    enemy: Bitboard,
+    facts: GenerationFacts,
+    list: &mut impl MoveSink,
+) {
+    if T::QUIET_CHECKS || (!T::CAPTURES && T::QUIETS && !T::IS_CHECKS) {
+        targets = targets.and_not(enemy);
+    } else if T::CAPTURES && !T::QUIETS && !T::IS_CAPTURE_PLUS_PRO && !T::IS_RECAPTURES {
+        targets &= enemy;
+    }
+    while let Some(to) = targets.pop_lsb() {
+        emit_variants::<T>(pos, from, to, piece, enemy.test(to), facts, list);
+    }
+}
 
 #[inline]
-fn push_move(list: &mut impl MoveSink, from: Square, to: Square, piece: Piece) {
-    list.push_normal(from, to, piece);
-}
-
-#[inline]
-fn push_promote(list: &mut impl MoveSink, from: Square, to: Square, piece: Piece) {
-    list.push_promotion(from, to, piece);
-}
-
-const GOLD_LIKE_TYPES: [PieceType; 5] = [
-    PieceType::GOLD,
-    PieceType::PRO_PAWN,
-    PieceType::PRO_LANCE,
-    PieceType::PRO_KNIGHT,
-    PieceType::PRO_SILVER,
-];
-
-/// 歩の移動手を生成
-fn pawn_bb_attacks<C: ColorMarker>(pawns: Bitboard) -> Bitboard {
-    // 参照実装の pawnBbEffect 相当:
-    // 1段目/9段目の歩を事前に落としてからビットシフトすることで筋またぎを防ぐ。
-    let movable = if C::IS_BLACK {
-        pawns.and_not(Bitboard::rank_mask(Rank::RANK_1))
-    } else {
-        pawns.and_not(Bitboard::rank_mask(Rank::RANK_9))
-    };
-    let shifted = if C::IS_BLACK { movable.packed_bits() >> 1 } else { movable.packed_bits() << 1 };
-    Bitboard::from_packed_bits(shifted)
-}
-
-/// 歩の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_pawn_moves<T: MoveGenType, C: ColorMarker>(
+fn generate_board_moves_with_facts<T: MoveGenType, const APPLY_EVASION_MASK: bool>(
     pos: &Position,
+    only_to: Option<Square>,
     list: &mut impl MoveSink,
-    target: Bitboard,
+    facts: GenerationFacts,
 ) {
-    let bb = pos.bitboards();
-    let us = C::COLOR;
-    let allow_underpromote = T::is_generate_all_legal();
-    let pawns = bb.pieces_for(PieceType::PAWN, us);
-    let mut destinations = pawn_bb_attacks::<C>(pawns).and(target);
-    let piece = Piece::from_parts(us, PieceType::PAWN);
+    let us = facts.us;
+    let occupied = pos.bitboards().occupied();
+    let ours = pos.bitboards().color_pieces(us);
+    let enemy = occupied.and_not(ours);
+    let destination_mask = only_to.map_or(Bitboard::ALL, Bitboard::from_square).and_not(ours);
 
-    if C::IS_BLACK {
-        while let Some(to) = destinations.pop_lsb() {
-            let from = Square::new(to.raw() + SQ_D);
-            let to_rank = to.rank().raw();
-            if to_rank == 0 {
-                push_promote(list, from, to, piece);
-                continue;
+    macro_rules! generate_piece_type {
+        ($piece_type:expr, |$from:ident| $attacks:expr) => {{
+            let piece = Piece::from_parts(us, $piece_type);
+            let mut sources = pos.bitboards().pieces_for($piece_type, us);
+            while let Some($from) = sources.pop_lsb() {
+                let mut targets = ($attacks) & destination_mask;
+                if APPLY_EVASION_MASK && $piece_type != PieceType::KING {
+                    targets &= facts.non_king_evasion_targets;
+                }
+                generate_destinations::<T>(pos, $from, piece, targets, enemy, facts, list);
             }
-
-            let can_promote = to_rank <= 2;
-            if can_promote {
-                push_promote(list, from, to, piece);
-            }
-            if allow_underpromote || !can_promote {
-                push_move(list, from, to, piece);
-            }
-        }
-    } else {
-        while let Some(to) = destinations.pop_lsb() {
-            let from = Square::new(to.raw() + SQ_U);
-            let to_rank = to.rank().raw();
-            if to_rank == 8 {
-                push_promote(list, from, to, piece);
-                continue;
-            }
-
-            let can_promote = to_rank >= 6;
-            if can_promote {
-                push_promote(list, from, to, piece);
-            }
-            if allow_underpromote || !can_promote {
-                push_move(list, from, to, piece);
-            }
-        }
+        }};
     }
+
+    generate_piece_type!(PieceType::PAWN, |from| PAWN_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::LANCE, |from| lance_attacks(from, occupied, us));
+    generate_piece_type!(PieceType::KNIGHT, |from| KNIGHT_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::SILVER, |from| SILVER_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::BISHOP, |from| bishop_attacks(from, occupied));
+    generate_piece_type!(PieceType::ROOK, |from| rook_attacks(from, occupied));
+    generate_piece_type!(PieceType::GOLD, |from| GOLD_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::KING, |from| KING_ATTACKS[from]);
+    generate_piece_type!(PieceType::PRO_PAWN, |from| GOLD_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::PRO_LANCE, |from| GOLD_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::PRO_KNIGHT, |from| GOLD_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::PRO_SILVER, |from| GOLD_ATTACKS[from][us.to_index()]);
+    generate_piece_type!(PieceType::HORSE, |from| bishop_attacks(from, occupied)
+        | KING_ATTACKS[from]);
+    generate_piece_type!(PieceType::DRAGON, |from| rook_attacks(from, occupied)
+        | KING_ATTACKS[from]);
 }
 
-/// 桂馬の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_knight_moves<T: MoveGenType, C: ColorMarker>(
+pub(super) fn generate_board_moves<T: MoveGenType>(
     pos: &Position,
+    only_to: Option<Square>,
     list: &mut impl MoveSink,
-    target: Bitboard,
 ) {
-    use crate::board::attack_tables::knight_attacks_unchecked;
+    let us = pos.turn();
+    let checkers = pos.checkers();
+    let ordinary_mode = !T::IS_LEGAL && !T::EVASIONS && !T::IS_CHECKS && !T::QUIET_CHECKS;
 
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let mut knights = bb.pieces_for(PieceType::KNIGHT, us);
-    let piece = Piece::from_parts(us, PieceType::KNIGHT);
-
-    while let Some(from) = knights.pop_lsb() {
-        let from_rank = from.rank().raw();
-        let attacks = knight_attacks_unchecked(from, us);
-        let mut destinations = attacks.and(target);
-
-        if C::IS_BLACK {
-            while let Some(to) = destinations.pop_lsb() {
-                let to_rank = to.rank().raw();
-                if to_rank <= 1 {
-                    push_promote(list, from, to, piece);
-                    continue;
-                }
-
-                if from_rank <= 2 || to_rank <= 2 {
-                    push_promote(list, from, to, piece);
-                }
-                push_move(list, from, to, piece);
-            }
-        } else {
-            while let Some(to) = destinations.pop_lsb() {
-                let to_rank = to.rank().raw();
-                if to_rank >= 7 {
-                    push_promote(list, from, to, piece);
-                    continue;
-                }
-
-                if from_rank >= 6 || to_rank >= 6 {
-                    push_promote(list, from, to, piece);
-                }
-                push_move(list, from, to, piece);
-            }
-        }
-    }
-}
-
-/// 銀の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_silver_moves<T: MoveGenType, C: ColorMarker>(
-    pos: &Position,
-    list: &mut impl MoveSink,
-    target: Bitboard,
-) {
-    use crate::board::attack_tables::silver_attacks_unchecked;
-
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let mut silvers = bb.pieces_for(PieceType::SILVER, us);
-    let piece = Piece::from_parts(us, PieceType::SILVER);
-    let enemy_territory = Bitboard::promotion_zone(us);
-
-    while let Some(from) = silvers.pop_lsb() {
-        let attacks = silver_attacks_unchecked(from, us);
-        let destinations = attacks.and(target);
-        if enemy_territory.test(from) {
-            list.push_promotion_then_normals_with_piece(from, piece, destinations, true);
-            continue;
-        }
-
-        let promotions = destinations.and(enemy_territory);
-        list.push_promotion_then_normals_with_piece(from, piece, promotions, true);
-
-        let non_promotions = destinations.and_not(enemy_territory);
-        list.push_normals_with_piece(from, piece, non_promotions);
-    }
-}
-
-/// 金相当 + 馬/龍 + 玉の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_gold_hdk_moves<T: MoveGenType, C: ColorMarker>(
-    pos: &Position,
-    list: &mut impl MoveSink,
-    target: Bitboard,
-    occupied: Bitboard,
-) {
-    use crate::board::attack_tables::{
-        bishop_attacks, gold_attacks_unchecked, king_attacks_unchecked, rook_attacks,
-    };
-
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let mut gold_like = Bitboard::EMPTY;
-    for piece_type in GOLD_LIKE_TYPES {
-        gold_like |= bb.pieces_for(piece_type, us);
-    }
-    // 参照実装の GPM_GHDK と同じく、金相当 + 王 + 馬 + 龍を同一Bitboardで走査する。
-    let mut pieces = gold_like
-        | bb.pieces_for(PieceType::KING, us)
-        | bb.pieces_for(PieceType::HORSE, us)
-        | bb.pieces_for(PieceType::DRAGON, us);
-    while let Some(from) = pieces.pop_lsb() {
-        // SAFETY: `pieces` は盤上駒 bitboard の反復であり、`from` は常に盤内。
-        let piece = unsafe { pos.piece_on_unchecked(from) };
-        let attacks = match piece.piece_type() {
-            PieceType::GOLD
-            | PieceType::PRO_PAWN
-            | PieceType::PRO_LANCE
-            | PieceType::PRO_KNIGHT
-            | PieceType::PRO_SILVER => gold_attacks_unchecked(from, us),
-            PieceType::KING => king_attacks_unchecked(from),
-            PieceType::HORSE => bishop_attacks(from, occupied) | king_attacks_unchecked(from),
-            PieceType::DRAGON => rook_attacks(from, occupied) | king_attacks_unchecked(from),
-            _ => Bitboard::EMPTY,
+    if ordinary_mode {
+        let facts = GenerationFacts {
+            us,
+            king_sq: Square::NONE,
+            pinned: Bitboard::EMPTY,
+            non_king_evasion_targets: Bitboard::ALL,
+            in_check: false,
         };
-        list.push_normals_with_piece(from, piece, attacks.and(target));
+        generate_board_moves_with_facts::<T, false>(pos, only_to, list, facts);
+        return;
     }
-}
 
-/// 金相当 + 馬/龍の移動手を生成（玉は除外）
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_gold_hd_moves<T: MoveGenType, C: ColorMarker>(
-    pos: &Position,
-    list: &mut impl MoveSink,
-    target: Bitboard,
-    occupied: Bitboard,
-) {
-    use crate::board::attack_tables::{
-        bishop_attacks, gold_attacks_unchecked, king_attacks_unchecked, rook_attacks,
-    };
-
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let mut gold_like = Bitboard::EMPTY;
-    for piece_type in GOLD_LIKE_TYPES {
-        gold_like |= bb.pieces_for(piece_type, us);
-    }
-    // 参照実装の GPM_GHD と同じく、金相当 + 馬 + 龍を同一Bitboardで走査する。
-    let mut pieces =
-        gold_like | bb.pieces_for(PieceType::HORSE, us) | bb.pieces_for(PieceType::DRAGON, us);
-    while let Some(from) = pieces.pop_lsb() {
-        // SAFETY: `pieces` は盤上駒 bitboard の反復であり、`from` は常に盤内。
-        let piece = unsafe { pos.piece_on_unchecked(from) };
-        let attacks = match piece.piece_type() {
-            PieceType::GOLD
-            | PieceType::PRO_PAWN
-            | PieceType::PRO_LANCE
-            | PieceType::PRO_KNIGHT
-            | PieceType::PRO_SILVER => gold_attacks_unchecked(from, us),
-            PieceType::HORSE => bishop_attacks(from, occupied) | king_attacks_unchecked(from),
-            PieceType::DRAGON => rook_attacks(from, occupied) | king_attacks_unchecked(from),
-            _ => Bitboard::EMPTY,
-        };
-        list.push_normals_with_piece(from, piece, attacks.and(target));
-    }
-}
-
-/// 香車の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_lance_moves<T: MoveGenType, C: ColorMarker>(
-    pos: &Position,
-    list: &mut impl MoveSink,
-    target: Bitboard,
-    occupied: Bitboard,
-) {
-    use crate::board::attack_tables::lance_attacks;
-    use crate::types::Rank;
-
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let mut lances = bb.pieces_for(PieceType::LANCE, us);
-    let allow_underpromote = T::is_generate_all_legal();
-    let enemy_territory = Bitboard::promotion_zone(us);
-    let non_promote_mask = if allow_underpromote {
-        if C::IS_BLACK {
-            Bitboard::ALL.and_not(Bitboard::rank_mask(Rank::RANK_1))
-        } else {
-            Bitboard::ALL.and_not(Bitboard::rank_mask(Rank::RANK_9))
-        }
-    } else if C::IS_BLACK {
+    let king_sq = pos.king_square(us);
+    let non_king_evasion_targets = if checkers.is_empty() {
         Bitboard::ALL
-            .and_not(Bitboard::rank_mask(Rank::RANK_1))
-            .and_not(Bitboard::rank_mask(Rank::RANK_2))
+    } else if checkers.more_than_one() {
+        Bitboard::EMPTY
     } else {
-        Bitboard::ALL
-            .and_not(Bitboard::rank_mask(Rank::RANK_8))
-            .and_not(Bitboard::rank_mask(Rank::RANK_9))
+        let checker_sq = checkers.lsb().expect("single checker");
+        Bitboard::between(checker_sq, king_sq).or(Bitboard::from_square(checker_sq))
     };
-
-    let piece = Piece::from_parts(us, PieceType::LANCE);
-
-    while let Some(from) = lances.pop_lsb() {
-        let attacks = lance_attacks(from, occupied, us);
-        let destinations = attacks.and(target);
-
-        let promotions = destinations.and(enemy_territory);
-        list.push_promotions_with_piece(from, piece, promotions);
-
-        let non_promotions = destinations.and(non_promote_mask);
-        list.push_normals_with_piece(from, piece, non_promotions);
-    }
-}
-
-/// 角と飛車の移動手を生成
-#[allow(clippy::extra_unused_type_parameters)]
-pub(super) fn generate_br_moves<T: MoveGenType + 'static, C: ColorMarker>(
-    pos: &Position,
-    list: &mut impl MoveSink,
-    target: Bitboard,
-    occupied: Bitboard,
-) {
-    use crate::board::attack_tables::{bishop_attacks, rook_attacks};
-
-    let us = C::COLOR;
-    let bb = pos.bitboards();
-    let allow_underpromote = T::is_generate_all_legal();
-    let enemy_territory = Bitboard::promotion_zone(us);
-    // 参照実装の GPM_BR と同じく、角+飛を同一Bitboardで走査する。
-    let mut pieces = bb.pieces_for(PieceType::BISHOP, us) | bb.pieces_for(PieceType::ROOK, us);
-    while let Some(from) = pieces.pop_lsb() {
-        // SAFETY: `pieces` は盤上駒 bitboard の反復であり、`from` は常に盤内。
-        let piece = unsafe { pos.piece_on_unchecked(from) };
-        let attacks = match piece.piece_type() {
-            PieceType::BISHOP => bishop_attacks(from, occupied),
-            PieceType::ROOK => rook_attacks(from, occupied),
-            _ => Bitboard::EMPTY,
-        };
-        let destinations = attacks.and(target);
-        let from_in_enemy = enemy_territory.test(from);
-
-        if from_in_enemy {
-            list.push_promotion_then_normals_with_piece(
-                from,
-                piece,
-                destinations,
-                allow_underpromote,
-            );
-            continue;
-        }
-
-        let promotions = destinations.and(enemy_territory);
-        list.push_promotion_then_normals_with_piece(from, piece, promotions, allow_underpromote);
-
-        let non_promotions = destinations.and_not(enemy_territory);
-        list.push_normals_with_piece(from, piece, non_promotions);
-    }
+    let facts = GenerationFacts {
+        us,
+        king_sq,
+        pinned: pos.blockers_for_king(us),
+        non_king_evasion_targets,
+        in_check: !checkers.is_empty(),
+    };
+    generate_board_moves_with_facts::<T, true>(pos, only_to, list, facts);
 }

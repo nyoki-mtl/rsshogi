@@ -114,7 +114,7 @@ fn generate_attack_tables(out_dir: &Path) {
     output.push_str(
         "// Auto-generated attack tables - DO NOT EDIT\n\
 \n\
-use crate::board::{Bitboard, Bitboard256};\n\
+use crate::board::Bitboard;\n\
 use crate::types::SquareTable;\n\
 \n",
     );
@@ -124,9 +124,8 @@ use crate::types::SquareTable;\n\
 
     // 滑り駒の攻撃テーブル
     output.push_str(&generate_slider_beams());
-    output.push_str(&generate_qugiy_step_attacks());
-    output.push_str(&generate_qugiy_rook_masks());
-    output.push_str(&generate_qugiy_bishop_masks());
+    output.push_str(&generate_rook_rank_extraction_masks());
+    output.push_str(&generate_bishop_diagonal_extraction_masks());
     output.push_str(&generate_check_candidate_table());
 
     // ファイルに書き込み
@@ -853,370 +852,126 @@ fn add_direction(file: i8, rank: i8, df: i8, dr: i8) -> Option<i8> {
     }
 }
 
-/// 滑り駒（香・角・飛）のビームテーブルを生成する。
 fn generate_slider_beams() -> String {
+    fn raw_bitboard_bits(packed: u128) -> u128 {
+        let low = packed & ((1u128 << 63) - 1);
+        let high = packed >> 63;
+        low | (high << 64)
+    }
+
     let mut output = String::new();
 
-    // LanceBeams構造体定義
-    output.push_str(
-        r"/// 香車のビーム構造
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LanceBeams {
-    pub black: Bitboard,
-    pub white: Bitboard,
-}
-
-",
-    );
-
-    // BishopBeams構造体定義
-    output.push_str(
-        r"/// 角のビーム構造
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BishopBeams {
-    pub ne: Bitboard,
-    pub se: Bitboard,
-    pub sw: Bitboard,
-    pub nw: Bitboard,
-}
-
-",
-    );
-
-    // RookBeams構造体定義
-    output.push_str(
-        r"/// 飛車のビーム構造
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RookBeams {
-    pub n: Bitboard,
-    pub e: Bitboard,
-    pub s: Bitboard,
-    pub w: Bitboard,
-}
-
-",
-    );
-
-    // 香車のビームテーブル
-    output.push_str("/// 香車のビームテーブル \\[sq\\]\n");
-    output.push_str("pub const LANCE_BEAMS: [LanceBeams; 81] = [\n");
-    for sq in 0..81 {
-        let (black_beam, white_beam) = generate_lance_beams(sq);
+    output.push_str("pub const LANCE_BEAMS: SquareTable<LanceBeams, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let black = slider_beam(square, 0, -1);
+        let white = slider_beam(square, 0, 1);
         let _ = writeln!(
             output,
-            "    LanceBeams {{ black: Bitboard::from_packed_bits({black_beam}u128), white: Bitboard::from_packed_bits({white_beam}u128) }},"
+            "    LanceBeams {{ black: Bitboard::from_packed_bits({black}u128), white: Bitboard::from_packed_bits({white}u128) }},"
         );
     }
-    output.push_str("];\n\n");
+    output.push_str("]);\n\n");
 
-    // 角のビームテーブル
-    output.push_str("/// 角のビームテーブル \\[sq\\]\n");
-    output.push_str("pub const BISHOP_BEAMS: [BishopBeams; 81] = [\n");
-    for sq in 0..81 {
-        let (ne, se, sw, nw) = generate_bishop_beams(sq);
+    output.push_str("const LANCE_RAY_BITS: SquareTable<LanceRayBits, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let black = slider_beam(square, 0, -1);
+        let white = slider_beam(square, 0, 1);
+        let _ = writeln!(output, "    LanceRayBits {{ black: {black}u128, white: {white}u128 }},");
+    }
+    output.push_str("]);\n\n");
+
+    output.push_str("pub const BISHOP_BEAMS: SquareTable<BishopBeams, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let ne = slider_beam(square, 1, -1);
+        let se = slider_beam(square, 1, 1);
+        let sw = slider_beam(square, -1, 1);
+        let nw = slider_beam(square, -1, -1);
         let _ = writeln!(
             output,
             "    BishopBeams {{ ne: Bitboard::from_packed_bits({ne}u128), se: Bitboard::from_packed_bits({se}u128), sw: Bitboard::from_packed_bits({sw}u128), nw: Bitboard::from_packed_bits({nw}u128) }},"
         );
     }
-    output.push_str("];\n\n");
+    output.push_str("]);\n\n");
 
-    // 飛車のビームテーブル
-    output.push_str("/// 飛車のビームテーブル \\[sq\\]\n");
-    output.push_str("pub const ROOK_BEAMS: [RookBeams; 81] = [\n");
-    for sq in 0..81 {
-        let (n, e, s, w) = generate_rook_beams(sq);
+    output.push_str("const BISHOP_RAY_BITS: SquareTable<BishopRayBits, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let ne = slider_beam(square, 1, -1);
+        let se = slider_beam(square, 1, 1);
+        let sw = slider_beam(square, -1, 1);
+        let nw = slider_beam(square, -1, -1);
+        let ne = raw_bitboard_bits(ne);
+        let se = raw_bitboard_bits(se);
+        let sw_reversed = raw_bitboard_bits(sw).reverse_bits();
+        let nw_reversed = raw_bitboard_bits(nw).reverse_bits();
         let _ = writeln!(
             output,
-            "    RookBeams {{ n: Bitboard::from_packed_bits({n}u128), e: Bitboard::from_packed_bits({e}u128), s: Bitboard::from_packed_bits({s}u128), w: Bitboard::from_packed_bits({w}u128) }},"
+            "    BishopRayBits {{ ne: {ne}u128, se: {se}u128, sw_reversed: {sw_reversed}u128, nw_reversed: {nw_reversed}u128 }},"
         );
     }
-    output.push_str("];\n\n");
+    output.push_str("]);\n\n");
+
+    output.push_str("pub const ROOK_BEAMS: SquareTable<RookBeams, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let north = slider_beam(square, 0, -1);
+        let east = slider_beam(square, 1, 0);
+        let south = slider_beam(square, 0, 1);
+        let west = slider_beam(square, -1, 0);
+        let _ = writeln!(
+            output,
+            "    RookBeams {{ n: Bitboard::from_packed_bits({north}u128), e: Bitboard::from_packed_bits({east}u128), s: Bitboard::from_packed_bits({south}u128), w: Bitboard::from_packed_bits({west}u128) }},"
+        );
+    }
+    output.push_str("]);\n\n");
+
+    output.push_str("const ROOK_RAY_BITS: SquareTable<RookRayBits, 81> = SquareTable::new([\n");
+    for square in 0..81 {
+        let north = slider_beam(square, 0, -1);
+        let east = slider_beam(square, 1, 0);
+        let south = slider_beam(square, 0, 1);
+        let west = slider_beam(square, -1, 0);
+        let east_raw = raw_bitboard_bits(east);
+        let south_raw = raw_bitboard_bits(south);
+        let north_reversed = raw_bitboard_bits(north).reverse_bits();
+        let west_reversed = raw_bitboard_bits(west).reverse_bits();
+        let _ = writeln!(
+            output,
+            "    RookRayBits {{ e: {east}u128, w: {west}u128, e_raw: {east_raw}u128, s_raw: {south_raw}u128, n_reversed: {north_reversed}u128, w_reversed: {west_reversed}u128 }},"
+        );
+    }
+    output.push_str("]);\n\n");
 
     output
 }
 
-/// Qugiy の方向利きステップテーブルを生成する。
-fn generate_qugiy_step_attacks() -> String {
-    let mut output = String::new();
-
-    output.push_str(
-        "/// Qugiyの方向利きステップテーブル \\[dir\\]\\[sq\\]\n\
-/// dir index: 0=RU, 1=R, 2=RD, 3=LU, 4=L, 5=LD\n\
-pub const QUGIY_STEP_ATTACKS: [[Bitboard; 81]; 6] = [\n",
-    );
-
-    // rayEffect の互換性のため、RU/R/RD 方向は byte_reverse したマスクを持つ。
-    let directions: [(i8, i8); 6] = [
-        (-1, -1), // RU（右上）
-        (-1, 0),  // R（右）
-        (-1, 1),  // RD（右下）
-        (1, -1),  // LU（左上）
-        (1, 0),   // L（左）
-        (1, 1),   // LD（左下）
-    ];
-
-    let reverse_dirs = [true, true, true, false, false, false];
-
-    for (dir_idx, (df, dr)) in directions.iter().enumerate() {
-        output.push_str("    [\n");
-        for sq in 0..81 {
-            let mut mask = generate_ray_mask(sq, *df, *dr);
-            if reverse_dirs[dir_idx] {
-                mask = byte_reverse_u128(mask);
-            }
-            let _ = writeln!(output, "        Bitboard::from_packed_bits_unchecked({mask}u128),");
-        }
-        output.push_str("    ],\n");
-    }
-
-    output.push_str("];\n\n");
-    output
+fn generate_rook_rank_extraction_masks() -> String {
+    String::new()
 }
 
-/// Qugiy の飛車マスクテーブルを生成する。
-fn generate_qugiy_rook_masks() -> String {
-    let mut output = String::new();
-
-    output.push_str("/// Qugiyの飛車マスクテーブル \\[sq\\]\\[lo/hi\\]\n");
-    output.push_str("pub const QUGIY_ROOK_MASK: [[Bitboard; 2]; 81] = [\n");
-
-    for sq in 0..81 {
-        let left = generate_ray_parts(sq, 1, 0);
-        let right = generate_ray_parts(sq, -1, 0);
-        let right_rev = (right.1.swap_bytes(), right.0.swap_bytes());
-        let (hi, lo) = unpack_parts(right_rev, left);
-        let hi = parts_to_raw_u128(hi);
-        let lo = parts_to_raw_u128(lo);
-        output.push_str("    [\n");
-        let _ = writeln!(output, "        Bitboard::from_packed_bits_unchecked({lo}u128),");
-        let _ = writeln!(output, "        Bitboard::from_packed_bits_unchecked({hi}u128),");
-        output.push_str("    ],\n");
-    }
-
-    output.push_str("];\n\n");
-    output
+fn generate_bishop_diagonal_extraction_masks() -> String {
+    String::new()
 }
 
-/// Qugiy の角マスクテーブルを生成する。
-#[allow(clippy::similar_names)]
-fn generate_qugiy_bishop_masks() -> String {
-    let mut output = String::new();
-
-    output.push_str("/// Qugiyの角マスクテーブル \\[sq\\]\\[part\\]\n");
-    output.push_str("pub const QUGIY_BISHOP_MASK: [[Bitboard256; 2]; 81] = [\n");
-
-    for sq in 0..81 {
-        let lu = generate_ray_mask(sq, 1, -1);
-        let ld = generate_ray_mask(sq, 1, 1);
-        let ru = byte_reverse_u128(generate_ray_mask(sq, -1, -1));
-        let rd = byte_reverse_u128(generate_ray_mask(sq, -1, 1));
-        output.push_str("    [\n");
-        for part in 0..2 {
-            let lu_part = extract64(lu, part);
-            let ru_part = extract64(ru, part);
-            let ld_part = extract64(ld, part);
-            let rd_part = extract64(rd, part);
-            let _ = writeln!(
-                output,
-                "        Bitboard256::new({lu_part}, {ru_part}, {ld_part}, {rd_part}),"
-            );
-        }
-        output.push_str("    ],\n");
-    }
-
-    output.push_str("];\n\n");
-    output
-}
-
-fn generate_ray_mask(sq: i8, df: i8, dr: i8) -> u128 {
-    let file = sq / 9;
-    let rank = sq % 9;
-
-    let mut mask = 0u128;
-    let mut f = file + df;
-    let mut r = rank + dr;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        mask |= 1u128 << raw_bit_index(target_sq);
-        f += df;
-        r += dr;
-    }
-    mask
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn parts_to_raw_u128(parts: (u64, u64)) -> u128 {
-    (parts.0 as u128) | ((parts.1 as u128) << 64)
-}
-
-fn square_parts(sq: i8) -> (u64, u64) {
-    let file = sq / 9;
-    let rank = sq % 9;
-    if file < 7 {
-        let shift = u32::try_from(file * 9 + rank).expect("square index fits in u32");
-        (1u64 << shift, 0)
-    } else {
-        let shift = u32::try_from((file - 7) * 9 + rank).expect("square index fits in u32");
-        (0, 1u64 << shift)
-    }
-}
-
-fn generate_ray_parts(sq: i8, df: i8, dr: i8) -> (u64, u64) {
-    let file = sq / 9;
-    let rank = sq % 9;
-
-    let mut p0 = 0u64;
-    let mut p1 = 0u64;
-    let mut f = file + df;
-    let mut r = rank + dr;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        let (b0, b1) = square_parts(target_sq);
-        p0 |= b0;
-        p1 |= b1;
-        f += df;
-        r += dr;
-    }
-    (p0, p1)
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn unpack_parts(hi_in: (u64, u64), lo_in: (u64, u64)) -> ((u64, u64), (u64, u64)) {
-    let hi_out = (lo_in.1, hi_in.1);
-    let lo_out = (lo_in.0, hi_in.0);
-    (hi_out, lo_out)
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn extract64(packed_bits: u128, part: usize) -> u64 {
-    if part == 0 { packed_bits as u64 } else { (packed_bits >> 64) as u64 }
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-const fn raw_bit_index(sq: i8) -> u32 {
-    if sq >= 63 { (sq as u32) + 1 } else { sq as u32 }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn byte_reverse_u128(packed_bits: u128) -> u128 {
-    let low = packed_bits as u64;
-    let high = (packed_bits >> 64) as u64;
-    ((low.swap_bytes() as u128) << 64) | (high.swap_bytes() as u128)
-}
-
-/// 香車のビームを生成する（先手：北、後手：南）。
 fn generate_lance_beams(sq: i8) -> (u128, u128) {
-    let file = sq / 9;
-    let rank = sq % 9;
-
-    let mut black_beam = 0u128; // 先手：北方向（rank減少）
-    let mut white_beam = 0u128; // 後手：南方向（rank増加）
-
-    // 先手（BLACK）：北方向（rank: current-1, current-2, ..., 0）
-    for r in (0..rank).rev() {
-        let target_sq = file * 9 + r;
-        black_beam |= 1u128 << target_sq;
-    }
-
-    // 後手（WHITE）：南方向（rank: current+1, current+2, ..., 8）
-    for r in (rank + 1)..9 {
-        let target_sq = file * 9 + r;
-        white_beam |= 1u128 << target_sq;
-    }
-
-    (black_beam, white_beam)
+    (slider_beam(sq, 0, -1), slider_beam(sq, 0, 1))
 }
 
-/// 角のビームを生成する（4方向：北東、南東、南西、北西）。
-#[allow(clippy::similar_names)]
 fn generate_bishop_beams(sq: i8) -> (u128, u128, u128, u128) {
-    let file = sq / 9;
-    let rank = sq % 9;
-
-    let mut ne_beam = 0u128; // 北東：file+1, rank-1
-    let mut se_beam = 0u128; // 南東：file+1, rank+1
-    let mut sw_beam = 0u128; // 南西：file-1, rank+1
-    let mut nw_beam = 0u128; // 北西：file-1, rank-1
-
-    // 北東方向
-    let mut f = file + 1;
-    let mut r = rank - 1;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        ne_beam |= 1u128 << target_sq;
-        f += 1;
-        r -= 1;
-    }
-
-    // 南東方向
-    let mut f = file + 1;
-    let mut r = rank + 1;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        se_beam |= 1u128 << target_sq;
-        f += 1;
-        r += 1;
-    }
-
-    // 南西方向
-    let mut f = file - 1;
-    let mut r = rank + 1;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        sw_beam |= 1u128 << target_sq;
-        f -= 1;
-        r += 1;
-    }
-
-    // 北西方向
-    let mut f = file - 1;
-    let mut r = rank - 1;
-    while (0..9).contains(&f) && (0..9).contains(&r) {
-        let target_sq = f * 9 + r;
-        nw_beam |= 1u128 << target_sq;
-        f -= 1;
-        r -= 1;
-    }
-
-    (ne_beam, se_beam, sw_beam, nw_beam)
+    (slider_beam(sq, 1, -1), slider_beam(sq, 1, 1), slider_beam(sq, -1, 1), slider_beam(sq, -1, -1))
 }
 
-/// 飛車のビームを生成する（4方向：北、東、南、西）。
-fn generate_rook_beams(sq: i8) -> (u128, u128, u128, u128) {
-    let file = sq / 9;
-    let rank = sq % 9;
+fn slider_beam(sq: i8, file_delta: i8, rank_delta: i8) -> u128 {
+    let mut file = sq / 9 + file_delta;
+    let mut rank = sq % 9 + rank_delta;
+    let mut bits = 0u128;
 
-    let mut n_beam = 0u128; // 北：rank-1, rank-2, ..., 0
-    let mut e_beam = 0u128; // 東：file+1, file+2, ..., 8
-    let mut s_beam = 0u128; // 南：rank+1, rank+2, ..., 8
-    let mut w_beam = 0u128; // 西：file-1, file-2, ..., 0
-
-    // 北方向
-    for r in (0..rank).rev() {
-        let target_sq = file * 9 + r;
-        n_beam |= 1u128 << target_sq;
+    while (0..9).contains(&file) && (0..9).contains(&rank) {
+        let target = file * 9 + rank;
+        bits |= 1u128 << target;
+        file += file_delta;
+        rank += rank_delta;
     }
 
-    // 東方向
-    for f in (file + 1)..9 {
-        let target_sq = f * 9 + rank;
-        e_beam |= 1u128 << target_sq;
-    }
-
-    // 南方向
-    for r in (rank + 1)..9 {
-        let target_sq = file * 9 + r;
-        s_beam |= 1u128 << target_sq;
-    }
-
-    // 西方向
-    for f in (0..file).rev() {
-        let target_sq = f * 9 + rank;
-        w_beam |= 1u128 << target_sq;
-    }
-
-    (n_beam, e_beam, s_beam, w_beam)
+    bits
 }
 
 #[cfg(test)]

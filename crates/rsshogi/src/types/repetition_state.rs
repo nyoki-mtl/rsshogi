@@ -14,7 +14,6 @@
 //! | `Superior` | 優等局面（持ち駒が過去局面より多い） |
 //! | `Inferior` | 劣等局面（持ち駒が過去局面より少ない） |
 
-// ANCHOR: repetition_state_enum
 /// 千日手の状態を表す enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RepetitionState {
@@ -32,7 +31,6 @@ pub enum RepetitionState {
     /// 劣等局面（持ち駒が過去局面より劣っている）
     Inferior,
 }
-// ANCHOR_END: repetition_state_enum
 
 /// 千日手状態の総数。
 pub(crate) const REPETITION_COUNT: usize = 6;

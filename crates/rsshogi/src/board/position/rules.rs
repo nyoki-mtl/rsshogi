@@ -631,29 +631,20 @@ impl Position {
         let current = self.current_hot();
         let history_limit = usize::from(current.plies_from_null.min(max_repetition_ply()));
         let keep_from = head.saturating_sub(history_limit);
+        let state_stack = self.state_stack.clone_suffix(keep_from);
 
-        let replay_moves: Vec<_> = if keep_from < head {
-            ((keep_from + 1)..=head).map(|idx| self.state_stack().cold(idx).last_move()).collect()
-        } else {
-            Vec::new()
-        };
-
-        let mut ancestor = self.clone();
-        for &mv in replay_moves.iter().rev() {
-            ancestor
-                .undo_move32(mv)
-                .expect("clone_for_search should rewind retained history safely");
+        Self {
+            board: self.board,
+            bitboards: self.bitboards,
+            hands: self.hands,
+            side_to_move: self.side_to_move,
+            entering_king_rule: self.entering_king_rule,
+            entering_king_point: self.entering_king_point,
+            ply: self.ply,
+            st_index: head - keep_from,
+            state_stack,
+            king_square: self.king_square,
         }
-
-        let ancestor_state = crate::board::generate_position_state(&ancestor);
-        let mut search = crate::board::position_from_position_state(&ancestor_state);
-        search.set_entering_king_rule(self.entering_king_rule);
-
-        for mv in replay_moves {
-            search.apply_move32(mv);
-        }
-
-        search
     }
 
     // ANCHOR: position_declare_win

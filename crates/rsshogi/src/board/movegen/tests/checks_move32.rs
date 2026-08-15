@@ -1,6 +1,7 @@
 use super::*;
 use crate::board::{Move32List, MoveList};
-use crate::types::Piece;
+use crate::types::{Move, Piece};
+use std::collections::BTreeSet;
 
 fn sorted_usi_move_list(list: &MoveList) -> Vec<String> {
     let mut moves = list.iter().map(|mv| mv.to_usi()).collect::<Vec<_>>();
@@ -27,6 +28,33 @@ fn test_generate_checks_move32_matches_move_list_output() {
 
     assert_eq!(sorted_usi_move_list(&move_list), sorted_usi_move32_list(&move32_list));
     assert!(move32_list.iter().all(|mv| mv.piece_after_move() != Piece::NONE));
+}
+
+#[test]
+fn test_generate_checks_all_move32_matches_generic_checks_all_set() {
+    // 5c5b は金で守られた飛車による合法な不成王手であり、`ChecksAll` にだけ含まれる。
+    let pos =
+        crate::board::position_from_sfen("4k4/9/4RG3/9/9/9/9/9/4K4 b - 1").expect("valid sfen");
+
+    let mut generic = MoveList::new();
+    generate_moves::<ChecksAll>(&pos, &mut generic);
+    let expected = generic
+        .iter()
+        .copied()
+        .filter(|mv| pos.gives_check_move(*mv))
+        .map(Move::raw)
+        .collect::<BTreeSet<_>>();
+
+    let mut direct = Move32List::new();
+    generate_checks_all_move32(&pos, &mut direct);
+    let actual = direct.iter().map(|mv| mv.to_move().raw()).collect::<BTreeSet<_>>();
+
+    assert_eq!(actual, expected);
+    assert!(
+        actual.contains(&Move::from_usi("5c5b").expect("valid nonpromotion check").raw()),
+        "the legal rook nonpromotion check must be retained"
+    );
+    assert!(direct.iter().all(|mv| mv.piece_after_move() != Piece::NONE));
 }
 
 #[test]

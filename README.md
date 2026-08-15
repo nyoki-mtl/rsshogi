@@ -1,100 +1,79 @@
 # rsshogi
 
-[crates.io](https://crates.io/crates/rsshogi) |
-[docs.rs](https://docs.rs/rsshogi) |
-[Documentation](https://nyoki-mtl.github.io/rsshogi/) |
-[PyPI](https://pypi.org/project/rsshogi/) |
-[Python 3.10+](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) |
-[MIT License](LICENSE)
+`rsshogi` は、将棋局面の表現、合法手生成、棋譜の入出力、定跡・学習データ形式の操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージです。
 
-Rust で実装された将棋ライブラリです。Python バインディングも提供しており、盤面管理、指し手生成、棋譜処理などの基本機能を高速に利用できます。
-
-## 主な機能
-
-- **盤面操作**: SFEN/USI 形式での読み書き、指し手の適用と取り消し
-- **合法手生成**: 高速な合法手と擬似合法手の列挙
-- **状態判定**: 王手、詰み、千日手、入玉宣言勝ちの判定
-- **棋譜処理**: `Record` API による KIF/KI2/CSA/JKF/USI position の読み書き、メタデータ、終局情報、コメントの保持
-- **定跡**: 大規模定跡の高速参照、DB2016 / YBB / SBK の外部定跡参照、DB2016 / SBK の書き出し
-- **学習データ**: sbinpack v2、sazpack、PackedSfen / HCPE / pack 系フォーマット
+本書はバージョン 1.2.0 の公開 API とワイヤ形式の互換契約を説明します。
 
 ## インストール
 
-### Python
-
-```bash
-pip install rsshogi
-```
-
-AVX2 版（AVX2 対応 x86_64 CPU 専用、より高速）:
-
-```bash
-pip install rsshogi-avx2
-```
-
-※ 迷った場合は通常版の `rsshogi` を使ってください。`rsshogi` と `rsshogi-avx2` は同時にインストールできません。
-
-### Python パッケージ名と import 名
-
-- `rsshogi`: 標準配布（推奨）
-- `rsshogi-avx2`: AVX2 最適化版（AVX2 対応 x86_64 CPU 専用）
-
-どちらも **import 名は `rsshogi`** です。
-
-### Rust
+Rust 利用者は `Cargo.toml` に core crate を追加します。
 
 ```toml
 [dependencies]
-rsshogi = "1.1.1"
+rsshogi = "1.2.0"
+```
+
+core crate はデータ形式機能を既定で有効にしません。
+用途に応じて `book`、`records`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions` を選択してください。
+`python-data` は Python バインディング向けのデータ機能群を有効にします。
+
+Python は 3.10 以降が必要です。
+通常版は `rsshogi`、AVX2 対応 x86_64 CPU 向けの最適化版は `rsshogi-avx2` です。
+両方を同じ環境へインストールしないでください。
+
+```console
+python -m pip install rsshogi
 ```
 
 ## クイックスタート
 
-### Python
-
-```python
-from rsshogi.core import Board
-from rsshogi.record import Record
-
-# 盤面操作
-board = Board()
-board.apply_usi("7g7f")
-board.apply_usi("3c3d")
-print(board.to_sfen())
-
-# 合法手の列挙
-for move in board.legal_moves():
-    print(move.to_usi())
-
-# 棋譜の読み込み
-record = Record.from_kif_file("example.kif")
-print(record.metadata.black_player)
-```
-
-### Rust
+Rust:
 
 ```rust
 use rsshogi::board;
 
-fn main() {
-    let pos = board::hirate_position();
-    println!("{}", pos.to_sfen(None));
-}
+let position = board::position_from_sfen(
+    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+)?;
+assert_eq!(position.to_sfen(None),
+    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1");
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Rust API の破壊的変更（`rsshogi::core` 廃止、`Position::to_move` 改名など）は
-[`CHANGELOG.md`](CHANGELOG.md) を参照してください。
+Python:
 
-## ドキュメント
+```python
+from rsshogi.core import Board, Move
 
-- **[ドキュメント（mdBook / GitHub Pages）](https://nyoki-mtl.github.io/rsshogi/)** - ガイド、API、内部仕様を含む総合ドキュメント
-- **[Rust API リファレンス（docs.rs）](https://docs.rs/rsshogi)** - Rust API の詳細
+board = Board()
+move = Move.from_usi("7g7f")
+board.apply_move(move)
+print(board.to_sfen())
+```
 
-## サンプルコード
+[マニュアル](docs/book/src/README.md) では API 群、局面の観測可能な意味論、棋譜・定跡形式、Python 固有の補助機能を説明します。
+1.1.1 から更新する場合は [1.2.0 への移行](docs/book/src/migration.md) と [CHANGELOG](CHANGELOG.md) を確認してください。
 
-- [Python サンプル](examples/python/)
-- [Rust サンプル](examples/rust/)
+## 公開サーフェス
+
+- Rust: `board`、`mate`、`types`、`movegen`、および機能で有効化する `records`、`book`、`labels`。
+- Python: `rsshogi.core`、`types`、`record`、`book`、`policy`、`sazpack`、`numpy`、`svg`、`usi`、`initial_positions`。
+- 形式: SFEN と USI position text、KIF、KI2、CSA、JKF、PACK、SBINPACK、packed SFEN、Huffman-coded position、DB2016、YBB、SBK、SAZ2。
+
+## 互換性と削除
+
+公開 `Bitboard256` サーフェスと `peta_shock` API は削除されました。
+これらを使うコードは、文書化された `Bitboard`、board、move API へ移行してください。
+互換エイリアスはありません。
+
+手の生成が保証するのは合法手の**集合**であり、出力順ではありません。
+幾何、局面符号化、外部形式のバイト列・テキスト契約が互換性の境界です。
+
+HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は 1.1.1 の表現を維持します。
+既存データは 1.2.0 への更新だけを理由に再生成する必要はありません。
+完全な合法手集合には Rust の `LegalAll` または Python の `Board.legal_moves()` を使ってください。
 
 ## ライセンス
 
-MIT License
+MIT。
+`LICENSE` を参照してください。

@@ -96,7 +96,6 @@
 //! - [`zobrist`] - Zobrist ハッシュ
 
 pub mod attack_tables;
-mod bitboard256;
 mod bitboard_set;
 
 mod move_list;
@@ -113,7 +112,6 @@ mod lookup;
 pub mod zobrist;
 pub mod position;
 pub(crate) mod state_info;
-pub(crate) mod mate_constant;
 #[cfg(test)]
 pub(crate) mod test_support;
 
@@ -122,7 +120,6 @@ pub use attack_tables::{
     GOLD_ATTACKS, KING_ATTACKS, KNIGHT_ATTACKS, PAWN_ATTACKS, SILVER_ATTACKS, check_candidate_bb,
 };
 pub use bitboard_set::BitboardSet;
-pub use bitboard256::Bitboard256;
 #[cfg(feature = "initial-positions")]
 pub use initial_positions::InitialPosition;
 pub use move_list::{Move32List, MoveList};

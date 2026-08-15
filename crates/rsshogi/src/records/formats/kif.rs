@@ -2384,8 +2384,12 @@ pub fn move_to_bod(pos: &Position, mv: Move32) -> Option<String> {
     let turn = iter.next()?;
     let second = iter.next()?;
     if second == '同' {
-        let _ = iter.next();
-        let suffix: String = iter.collect();
+        let third = iter.next()?;
+        let suffix: String = if third == '　' {
+            iter.collect()
+        } else {
+            std::iter::once(third).chain(iter).collect()
+        };
         let square = kifu_square_name(mv.to_sq())?;
         return Some(format!("{turn}{square}同{suffix}"));
     }
@@ -3211,6 +3215,16 @@ mod tests {
         let mv = pos.move32_from_move(mv16);
         let bod = move_to_bod(&pos, mv).expect("bod move");
         assert_eq!(bod, "▲７六歩");
+    }
+
+    #[test]
+    fn test_move_to_bod_preserves_same_destination_piece() {
+        let mut pos = hirate_position();
+        for usi in ["7g7f", "3c3d", "8h2b+"] {
+            pos.apply_move(Move::from_usi(usi).expect("valid move"));
+        }
+        let mv = pos.move32_from_move(Move::from_usi("3a2b").expect("valid move"));
+        assert_eq!(move_to_bod(&pos, mv), Some("△２二同銀".to_string()));
     }
 
     // --- フェーズ 2 受け入れテスト ---

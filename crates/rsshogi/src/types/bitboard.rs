@@ -86,7 +86,6 @@ const fn rank_mask_bits(rank: i8) -> u128 {
     bits
 }
 
-// ANCHOR: bitboard_file_rank_masks
 const fn build_file_masks() -> [Bitboard; 9] {
     let mut masks = [Bitboard::EMPTY; 9];
     let mut file = 0u8;
@@ -116,9 +115,6 @@ const PROMOTION_ZONES: [Bitboard; 2] = {
     let white = rank_mask_bits(6) | rank_mask_bits(7) | rank_mask_bits(8);
     [Bitboard::from_packed_bits(black), Bitboard::from_packed_bits(white)]
 };
-// ANCHOR_END: bitboard_file_rank_masks
-
-// ANCHOR: bitboard_struct
 /// 81マス将棋盤のビット表現
 ///
 /// 下位81ビットを使用し、各ビットが1つのマスに対応する。
@@ -133,7 +129,6 @@ const _: () = {
     assert!(core::mem::size_of::<Bitboard>() == 16);
     assert!(core::mem::align_of::<Bitboard>() == 16);
 };
-// ANCHOR_END: bitboard_struct
 
 impl Default for Bitboard {
     fn default() -> Self {
@@ -178,15 +173,6 @@ impl Bitboard {
         let packed = packed_bits & ((1u128 << 81) - 1);
         let low = (packed & BOARD_MASK_LOW as u128) as u64;
         let high = ((packed >> 63) & BOARD_MASK_HIGH as u128) as u64;
-        Self { p: [low, high] }
-    }
-
-    #[inline]
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation)]
-    pub(crate) const fn from_packed_bits_unchecked(packed_bits: u128) -> Self {
-        let low = packed_bits as u64;
-        let high = (packed_bits >> 64) as u64;
         Self { p: [low, high] }
     }
 
@@ -350,7 +336,6 @@ impl Bitboard {
         }
     }
 
-    // ANCHOR: bitboard_pop_lsb
     /// 最下位の立っているビットを取り出してクリア
     #[inline]
     pub fn pop_lsb(&mut self) -> Option<Square> {
@@ -390,7 +375,6 @@ impl Bitboard {
             Square::new((63 + lsb) as i8)
         }
     }
-    // ANCHOR_END: bitboard_pop_lsb
 
     /// 最下位ビット（LSB）の位置を取得（破壊的でない）
     #[inline]
@@ -426,7 +410,6 @@ impl Bitboard {
         }
     }
 
-    // ANCHOR: bitboard_count
     /// 立っているビットの数を数える
     #[inline]
     #[must_use]
@@ -434,7 +417,6 @@ impl Bitboard {
         let parts = self.parts();
         parts[0].count_ones() + parts[1].count_ones()
     }
-    // ANCHOR_END: bitboard_count
 
     /// ビットごとのAND演算
     #[inline]
@@ -561,7 +543,7 @@ impl Bitboard {
 
     /// AND NOT演算（self & !other）
     ///
-    /// YaneuraOu の`andnot`は `!self & other` を指すため注意すること。
+    /// `self & !other` を返す。
     #[inline]
     #[must_use]
     pub fn and_not(&self, other: Self) -> Self {
@@ -575,46 +557,6 @@ impl Bitboard {
         #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
         {
             let parts = u64x2_ops::and_not(
-                (self.parts()[0], self.parts()[1]),
-                (other.parts()[0], other.parts()[1]),
-            );
-            Self::from_raw_bits_unmasked(raw_from_parts(parts))
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn and_raw(self, other: Self) -> Self {
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-        {
-            // SAFETY: SSE2 が有効な場合にのみコンパイルされ、
-            // レジスタ値のみを操作する。
-            let value = unsafe { _mm_and_si128(self.as_m128(), other.as_m128()) };
-            Self::from_m128(value)
-        }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-        {
-            let parts = u64x2_ops::and(
-                (self.parts()[0], self.parts()[1]),
-                (other.parts()[0], other.parts()[1]),
-            );
-            Self::from_raw_bits_unmasked(raw_from_parts(parts))
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn xor_raw(self, other: Self) -> Self {
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-        {
-            // SAFETY: SSE2 が有効な場合にのみコンパイルされ、
-            // レジスタ値のみを操作する。
-            let value = unsafe { _mm_xor_si128(self.as_m128(), other.as_m128()) };
-            Self::from_m128(value)
-        }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-        {
-            let parts = u64x2_ops::xor(
                 (self.parts()[0], self.parts()[1]),
                 (other.parts()[0], other.parts()[1]),
             );
@@ -815,7 +757,6 @@ fn blsr_u64(value: u64) -> u64 {
     }
 }
 
-// ANCHOR: bitboard_iter
 impl IntoIterator for &Bitboard {
     type Item = Square;
     type IntoIter = BitIter;
@@ -837,7 +778,6 @@ impl Iterator for BitIter {
         self.bb.pop_lsb()
     }
 }
-// ANCHOR_END: bitboard_iter
 
 impl fmt::Debug for Bitboard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -858,7 +798,6 @@ impl fmt::Debug for Bitboard {
     }
 }
 
-// ANCHOR: bitboard_bit_ops
 impl BitAnd for Bitboard {
     type Output = Self;
 
@@ -958,7 +897,6 @@ impl Not for Bitboard {
         Self { p: masked }
     }
 }
-// ANCHOR_END: bitboard_bit_ops
 
 impl fmt::Display for Bitboard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

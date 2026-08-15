@@ -145,40 +145,6 @@ impl Position {
         self.move32_from_move(base)
     }
 
-    /// センチネルチェックなしの高速 Move → Move32 変換。
-    ///
-    /// # Safety
-    /// - `mv` が合法手生成で生成された有効な移動手または駒打ち手であること。
-    /// - センチネル（`MOVE_NONE`/`NULL`/`RESIGN`/`WIN`/`END`）を渡してはならない。
-    /// - `from` マスが盤上の有効な座標であること（`piece_on_unchecked` を呼ぶため）。
-    #[inline]
-    pub(crate) unsafe fn move32_from_move_fast(&self, mv: Move) -> Move32 {
-        unsafe {
-            const MASK_7: u16 = 0x7f;
-            let raw = mv.raw();
-            let to = Square::new((raw & MASK_7) as i8);
-            debug_assert!(to.is_on_board(), "move32_from_move_fast: to must be on board");
-
-            if (raw & Move::MOVE_DROP) != 0 {
-                let pt_raw = (raw >> 7) & MASK_7;
-                let piece_type = PieceType::new(pt_raw as i8);
-                return Move32::drop(piece_type, to, self.turn());
-            }
-
-            let from = Square::new(((raw >> 7) & MASK_7) as i8);
-            debug_assert!(from.is_on_board(), "move32_from_move_fast: from must be on board");
-            // SAFETY: 呼び出し側が `mv` を合法手生成で得た盤上の指し手であることを保証する。
-            // デバッグビルドでは debug_assert が盤上座標の前提条件を文書化する。
-            let piece = self.piece_on_unchecked(from);
-
-            if (raw & Move::MOVE_PROMOTE) != 0 {
-                Move32::promotion(from, to, piece)
-            } else {
-                Move32::normal(from, to, piece)
-            }
-        }
-    }
-
     /// CSA形式の文字列から `Move32` を生成
     ///
     /// 先頭の手番記号（'+' / '-'）が含まれていても受け付ける。

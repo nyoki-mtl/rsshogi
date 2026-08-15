@@ -30,7 +30,7 @@ const SCENARIOS: [&str; 8] = [
     "4k4/9/9/9/9/9/9/9/4K4 b 15P2p 1",
 ];
 
-/// 持ち駒の寄与を全再計算する。合成キーの分解を検証する参照実装。
+/// 持ち駒の寄与を全再計算する。合成キーの分解を検証する oracle。
 fn recompute_hand_contribution(pos: &Position) -> ZobristKey {
     let mut key = ZobristKey::default();
     for color in [Color::BLACK, Color::WHITE] {

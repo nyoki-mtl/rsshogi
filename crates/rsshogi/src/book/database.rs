@@ -162,16 +162,6 @@ impl BookDatabase {
         Ok(database)
     }
 
-    /// 一意性を検証せずに所有エントリからデータベースを生成する。
-    ///
-    /// 内部 book ソルバおよびライターテストで使用する。
-    /// 不変条件が構築時に保証されているか、カバレッジのために意図的に破られる場合に用いる。
-    #[must_use]
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn from_entries_unchecked(entries: Vec<BookDatabaseEntry>) -> Self {
-        Self { entries }
-    }
-
     /// デコード済みの DB2016 エントリを1件取り込む。
     pub fn entry_from_yaneuraou(
         entry: &YaneuraOuBookEntry,
@@ -365,7 +355,7 @@ impl BookDatabaseEntry {
 
     /// デコード済みの DB2016 エントリを1件取り込む。
     pub fn from_yaneuraou(entry: &YaneuraOuBookEntry) -> Result<Self, BookError> {
-        let position = BookPosition::from_sfen(entry.sfen(), Some(entry.min_ply()))?;
+        let position = BookPosition::from_sfen(entry.sfen(), entry.original_ply())?;
         let candidates = entry
             .moves()
             .iter()

@@ -68,7 +68,6 @@ mod database;
 mod error;
 mod memory;
 mod sbk;
-mod solver;
 mod static_book;
 mod types;
 mod writer;
@@ -91,7 +90,6 @@ pub use sbk::{
     SbkBook, SbkDiagnostics, SbkEntries, SbkEntry, SbkEval, SbkMove, SbkOpenProgress,
     SbkWriteOptions,
 };
-pub use solver::{PetaShockOptions, solve_peta_shock_book};
 pub use static_book::StaticBook;
 pub use types::{BookEntry, BookKey, BookMove};
 pub use writer::YaneuraOuDb2016WriteOptions;

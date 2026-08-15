@@ -23,7 +23,7 @@ fn compare_bool(op: CompareOp, equal: bool) -> PyResult<bool> {
     }
 }
 
-#[pyclass(name = "Color")]
+#[pyclass(from_py_object, name = "Color")]
 #[derive(Clone, Copy)]
 pub struct PyColor {
     inner: Color,
@@ -111,7 +111,7 @@ impl PyColor {
     }
 }
 
-#[pyclass(name = "PieceType")]
+#[pyclass(from_py_object, name = "PieceType")]
 #[derive(Clone, Copy)]
 pub struct PyPieceType {
     inner: PieceType,
@@ -272,7 +272,7 @@ impl PyPieceType {
     }
 }
 
-#[pyclass(name = "Piece")]
+#[pyclass(from_py_object, name = "Piece")]
 #[derive(Clone, Copy)]
 pub struct PyPiece {
     inner: Piece,
@@ -367,7 +367,7 @@ impl PyPiece {
     }
 }
 
-#[pyclass(name = "Square")]
+#[pyclass(from_py_object, name = "Square")]
 #[derive(Clone, Copy)]
 pub struct PySquare {
     inner: Square,
@@ -483,7 +483,7 @@ impl PySquare {
     }
 }
 
-#[pyclass(name = "Bitboard")]
+#[pyclass(from_py_object, name = "Bitboard")]
 #[derive(Clone)]
 pub struct PyBitboard {
     inner: Bitboard,
@@ -573,7 +573,7 @@ impl PyBitboard {
     }
 }
 
-#[pyclass(name = "Hand")]
+#[pyclass(from_py_object, name = "Hand")]
 #[derive(Clone, Copy)]
 pub struct PyHand {
     inner: Hand,
@@ -634,7 +634,7 @@ impl PyHand {
     }
 }
 
-#[pyclass(name = "MoveType")]
+#[pyclass(from_py_object, name = "MoveType")]
 #[derive(Clone, Copy)]
 pub struct PyMoveType {
     inner: MoveType,
@@ -712,7 +712,7 @@ impl PyMoveType {
     }
 }
 
-#[pyclass(name = "RepetitionState")]
+#[pyclass(from_py_object, name = "RepetitionState")]
 #[derive(Clone, Copy)]
 pub struct PyRepetitionState {
     inner: RepetitionState,
