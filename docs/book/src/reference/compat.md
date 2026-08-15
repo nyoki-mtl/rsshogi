@@ -16,7 +16,7 @@ rsshogi と cshogi の API 対応をまとめたリファレンスです。
 | Move32 復元 | ✅ | `move32_from_move`, `move_from_csa` |
 | policy ラベル変換 | ✅ | `rsshogi.policy`, `rsshogi::labels::policy` |
 | 棋譜 I/O | ✅ | `from_kif_str`, `from_ki2_str`, `from_csa_str`, `from_csa_games_str`, `to_kif`, `to_ki2`, `to_csa` |
-| USI エンジン連携 | ⚠️ | `rsshogi.usi`（USI 文字列の値オブジェクト変換のみ。エンジンプロセス制御は対象外）|
+| USI 文字列解析 | ✅ | `rsshogi.usi`（`info` / `bestmove` の値オブジェクト変換）|
 
 ## API 差分（主要）
 
@@ -139,8 +139,7 @@ cshogi (Apery 系) の `Move16` とはビットレイアウトが異なります
 
 ### rsshogi.usi（USI 文字列パーサ）
 
-`rsshogi.usi` モジュールは USI プロトコルの値オブジェクト変換を提供します。
-エンジンプロセスの起動・通信は対象外です。
+`rsshogi.usi` モジュールは USI プロトコルの `info` と `bestmove` を値オブジェクトへ変換します。
 
 | クラス / 関数 | 説明 |
 |---------------|------|

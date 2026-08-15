@@ -48,10 +48,10 @@ assert!(moves.iter().all(|&mv| position.is_legal_move(mv)));
 ## `Legal` と `LegalAll`
 
 `Legal` は現在局面で合法な手だけを生成し、探索向けの省略方針を適用する。
-`Legal` は歩、香、角、飛で通常省略する不成を生成しない。
+`Legal` は歩、香、角、飛に探索向けの成り優先方針を適用する。
 `LegalAll` は同じ合法性条件で、可能な不成も含める。
 
-成りが必須の升では、`LegalAll` でも不成を生成しない。
+成りが必須の升では、`LegalAll` も成り手だけを生成する。
 `LegalAll` は完全な選択肢を必要とする検証、探索、詰み判定に適する。
 `Legal` は通常の対局手を扱う経路に適する。
 
@@ -72,13 +72,15 @@ assert!(usual.iter().all(|mv| complete.as_slice().contains(mv)));
 
 ## pseudo-legal mode と legal mode
 
-`NonEvasions`、`Evasions`、`Checks`、`Captures` などの多くの mode は用途別の候補生成であり、全てが合法手であることを保証しない。
+`NonEvasions`、`Evasions`、`Checks`、`Captures` などの mode は用途別の候補を生成する。
+実際に適用する手は legal check を通して確定する。
 特に `Evasions` と `EvasionsAll` は王手回避の pseudo-legal 手であり、ピンによる王手放置や安全でない玉移動を含みうる。
 
 王手局面の合法な回避手だけが必要なら `generate_legal_evasions` または `generate_legal_evasions_all` を使う。
 任意の候補を個別に検査する場合は `Position::is_legal_move` または `is_legal_move32` を使う。
 
-`NonEvasions` と `NonEvasionsAll` は王手されていない局面の候補生成向けであり、王手中の全合法手 API の代替ではない。
+`NonEvasions` と `NonEvasionsAll` は非王手局面の候補生成に使う。
+王手局面では `generate_legal_evasions` 系を使う。
 
 `Checks` と `QuietChecks` は相手玉への王手という目的で候補を作る。
 自玉が王手されている局面でこれらを使う場合、候補が回避も満たすとは限らないため、最終的な手には legal check が必要である。
@@ -113,8 +115,7 @@ assert!(usual.iter().all(|mv| complete.as_slice().contains(mv)));
 `MoveListGen::<T>` は出力引数を使わずに固定容量の `MoveList` view を作る。
 対象升が既知なら `MoveListGen::<T>::new_with_target` を使える。
 
-生成順序は API 契約ではない。
-候補を比較、永続化、または決定規則へ渡すときは、必要な順序付けを呼び出し側で行う。
+候補を比較、永続化、または決定規則へ渡すときは、呼び出し側で必要な順序に並べる。
 
 ## 出力先を選ぶ
 
@@ -122,7 +123,7 @@ assert!(usual.iter().all(|mv| complete.as_slice().contains(mv)));
 `Move32List` は移動後の駒を使う apply、棋譜出力、評価差分に適する。
 独自の固定配列やスコア付きキューへ直接出力するときは、`MoveSink` または `Move32Sink` を実装して `*_into` API を使う。
 
-sink への出力は list への出力と同じ集合を意図するが、候補の順序には依存しない。
+sink と list は同じ候補集合を受け取り、順序付けは利用側が担当する。
 sink の `retain_unordered` は generator が候補を後段で除外するために必要な操作である。
 
 ## 次に読む

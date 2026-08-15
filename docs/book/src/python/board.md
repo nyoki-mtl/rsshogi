@@ -298,7 +298,7 @@ board.to_hcpe(best_move=None, score=0, game_result=None, out=None) -> bytes | No
 
 `best_move` は最終的に Apery 16bit (`bestMove16`) へ正規化されます。
 `Move32` や USI 文字列を渡した場合も、局面に応じて `AperyMove` に変換してから書き出します。
-`game_result` は必須です。未指定のまま `hcpe` を出力することはできません。
+`game_result` には `Draw`、`BlackWin`、`WhiteWin` のいずれかを指定します。
 
 ```python
 import numpy as np

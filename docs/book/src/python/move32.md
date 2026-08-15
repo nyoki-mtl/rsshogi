@@ -59,8 +59,9 @@ USI 文字列から `Move32` インスタンスを生成します。
 **例外:**
 - `ValueError`: USI 文字列のパースに失敗した場合
 
-**注意:** `from_usi()` で生成した Move32 には駒情報が含まれないため、
-CSA / KI2 形式への変換はできません。完全な Move32 を得るには `Board` 経由で取得してください。
+`from_usi()` は指し手の構造を持つ `Move32` を生成します。
+CSA または KI2 へ変換する場合は、`Board.legal_moves_move32()` や
+`Board.move32_from_move()` から駒情報付きの `Move32` を取得します。
 
 **使用例:**
 
@@ -103,9 +104,9 @@ move.to_csa() -> str | None
 Move32 を CSA 形式の指し手文字列に変換します。CSA 仕様では手番記号 `+` / `-` が
 指し手表記の必須要素なので、`"+7776FU"` のように記号を含む形で返します。
 
-手番は移動後の駒が持つ色から決まります。`Move32.from_usi()` で生成した Move32 は
-駒情報を持たないため変換できません。`Board.legal_moves_move32()` や
-`Board.move32_from_move()` から取得した Move32 を使ってください。
+手番は移動後の駒が持つ色から決まります。
+`Board.legal_moves_move32()` や `Board.move32_from_move()` が返す
+駒情報付きの `Move32` を使います。
 
 **戻り値:**
 - `str | None`: CSA 形式の指し手文字列（特殊手、または駒情報を持たない場合は `None`）

@@ -1,22 +1,22 @@
 # 定跡アーキテクチャ（3 層モデル）
 
-rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束させるのではなく、
-**用途の異なる 3 つの層**に分けて設計されています。なぜ `StaticBook` / `MemoryBook`
-と、`YaneuraOuBook` / `SbkBook` が別系統なのか、その理由をまとめます。
+rsshogi の定跡サポートは、参照、保存、編集という用途に合わせて 3 層に分かれています。
+`StaticBook` と `MemoryBook` は高速な参照を担い、`YaneuraOuBook`、`SbkBook`、
+`YbbBook` は各ファイル形式の情報を保持します。
+`BookDatabase` は形式間の編集と変換を受け持ちます。
 
-## なぜ 1 つに統一しないのか
+## 用途ごとの3層
 
-定跡には「速く引きたい」「忠実に保存したい」「編集・変換したい」という、
-互いに衝突する要求があります。これらを 1 つの型で満たすことはできません。
+定跡の扱い方は、次の三つに分けられます。
 
-- **速く引く**には、局面を `BookKey`（default 64bit / `hash-128` feature で 128bit）へ正規化し、メタ情報を削ぎ落として
-  メモリ上の表に並べるのが理想です。← `MemoryBook` / `StaticBook`
-- **忠実に保存する**には、各フォーマット固有の情報（評価・出現回数・コメント・ponder
-  など）を欠落なく保持する必要があります。← `YaneuraOuBook` / `SbkBook` / `YbbBook`
-- **編集・変換する**には、SFEN・Packed SFEN・元 row の手数・ファイル由来の同一性を
-  すべて復元できる中間表現が必要です。← `BookDatabase`
+- **参照**：局面を `BookKey`（既定は 64 bit、`hash-128` feature では 128 bit）へ正規化し、
+  探索で使う候補手をメモリ上の表から取得します。`MemoryBook` と `StaticBook` が担当します。
+- **保存**：評価、出現回数、コメント、ponder など、形式固有の情報を保持します。
+  `YaneuraOuBook`、`SbkBook`、`YbbBook` が担当します。
+- **編集**：SFEN、Packed SFEN、元の手数、ファイル上の同一性を保ちながら形式を変換します。
+  `BookDatabase` が担当します。
 
-そのため rsshogi は、これらを別の抽象として切り分けています。
+各型の役割を分けることで、参照速度と形式固有情報の両方を扱えます。
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
@@ -50,7 +50,7 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 - キーは [`book_key_from_position()`](book.md) が返す `BookKey`
   （盤面 + 持駒 + 手番の Zobrist key）。定跡における「同じ局面」の定義に忠実です。
 - 1 手分のデータは `BookMove { mv, score: i16, depth: u16 }` のみ。
-  **ponder・出現回数・勝率・コメントは保持しません（意図的に lossy）**。
+  参照に必要な候補手、評価値、深さに絞った lossy な表現です。
 - `MemoryBook` は `HashMap<BookKey, Vec<BookMove>>` のメモリ常駐表。
   `StaticBook` はそれをソート済みバイナリへ焼き込み、実行時コストゼロで参照します。
 - `Book::get()` は既にメモリ上にある `&[BookMove]` を借用して返す契約です。
@@ -59,7 +59,7 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 
 ### 外部リーダ層（`YaneuraOuBook` / `SbkBook` / `YbbBook`）
 
-外部フォーマットの **読み取り専用リーダ**です。`Book` トレイトは実装しません。
+外部フォーマットを形式固有の型で参照するリーダです。
 
 - キーが Zobrist ではなく SFEN 文字列（DB2016）/ Packed SFEN（SBK / YBB）。
   ファイルに記録された局面の同一性を保ったまま検索できます。
@@ -76,29 +76,24 @@ rsshogi の定跡サポートは、ひとつの「理想の定跡型」に収束
 
 外部フォーマットとルックアップ層を **橋渡しする中間表現**です。
 
-- `BookKey` だけでは SFEN・Packed SFEN・元 row の手数・ファイル由来の同一性を
-  復元できないため、`BookDatabase` は SFEN を含む position data を保持し、
-  `BookKey` は派生ヘルパ扱いにしています。
+- `BookDatabase` は SFEN、Packed SFEN、元 row の手数、ファイル由来の同一性を
+  position data として保持します。`BookKey` は参照表を作るときに導出します。
 - `BookDatabaseEntry::from_yaneuraou()` / `from_sbk()` で外部エントリを取り込み、
   `to_memory_book()` / `to_static_book()` で lossy なルックアップ表へ射影します。
 - `write_yaneuraou_db2016()` / `write_sbk()` で編集済みデータベースを外部形式へ
-  書き戻せます。SBK の top-level author / description は `BookDatabase` の対象外なので、
-  `write_sbk()` は局面と候補手のデータを出力します。
+  書き戻せます。`write_sbk()` は `BookDatabase` が保持する局面と候補手を出力します。
 
-## 「`MemoryBook` / `StaticBook` が一番理想なのか？」
+## 参照層と保存層の選び方
 
-用途を固定すれば Yes、ライブラリ全体の唯一解としては No です。
+探索中の参照には `MemoryBook` と `StaticBook` が適しています。
+形式固有の情報を扱う処理には外部リーダか `BookDatabase` を選びます。
 
-- 「局面を引く」用途では理想形。`StaticBook` は実行時コストゼロで配布にも向きます。
-- ただし `MemoryBook` は構造的に lossy で、局面そのものを保持しません
-  （`BookKey` ハッシュのみ）。Zobrist が衝突しても検証できず、キーから SFEN を
-  復元することもできません。これは「引ければ十分」な層だから許される割り切りです。
-- 大規模定跡をメモリ常駐させるのは重く、外部リーダの遅延ルックアップの方が
-  現実的な場面もあります。
+- `StaticBook` は配布用のソート済みバイナリ、`MemoryBook` は実行中に構築する参照表に向きます。
+- 両者は `BookKey` と候補手に情報を絞るため、元の SFEN や形式固有のメタデータが必要な処理には
+  `BookDatabase` を使います。
+- 大規模なファイルは、DB2016 や SBK の外部リーダを使うと必要なエントリを順次参照できます。
 
-つまり 3 つの層はどれかが上位なのではなく、用途ごとに理想が違うから併存している
-という設計です。参照の入口を `Book` トレイトに固定してあるのは、用途が増えたときに
-実装だけを足せるようにするためです。
+参照層は `Book` トレイトを共通の入口とし、保存層と編集層は形式固有の情報を明示的に扱います。
 
 ## 関連項目
 

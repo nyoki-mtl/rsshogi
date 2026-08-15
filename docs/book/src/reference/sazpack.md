@@ -3,13 +3,11 @@
 ## 用途
 
 **sazpack**は、AlphaZero系の自己対局から得た教師データを局単位で保存するバイナリ形式です。
-現行schemaのmagicは`SAZ2`、versionは`2`です。
-旧`SAZ1`およびSAZ2 version `1`との後方互換性はありません。
-version `1`のchunkはdecode時に`UnsupportedVersion`で拒否します。
+magic は `SAZ2`、version は `2` です。
+decoder は version `2` の chunk を読み込み、別の version には `UnsupportedVersion` を返します。
 
-SAZ2は局面そのもののfeature tensorを保存しません。
-開始局面の`PackedSfen`と各局面で指した手を保存し、loaderが対局をreplayして履歴featureを復元します。
-policy labelも保存せず、各`Move`を読み出し時に現行のlabel体系へ変換します。
+SAZ2 は開始局面の `PackedSfen` と各局面で指した手を保存します。
+loader は対局を replay して履歴 feature を復元し、各 `Move` を読み出し時の label 体系へ変換します。
 
 ## 保存する情報
 
@@ -42,7 +40,7 @@ raw fieldはこのどちらとも別で、探索を通す前のnetwork出力そ�
 探索定数の校正とtarget変換の評価を分離するために保存します。
 
 `raw_moves_left`はmoves-left headの予測手数で、対局結果から導く残り手数とは別の量です。
-`raw_mate`はmate headの確率で、探索が証明した`mate`とは別の量です。混同しないでください。
+`raw_mate` は mate head の確率、`mate` は探索が証明した詰み手数です。
 
 ## Rust API
 
@@ -56,7 +54,7 @@ let bytes = serialize_chunk(&games)?;
 let decoded: Vec<SazGame> = deserialize_chunk(&bytes)?;
 ```
 
-`serialize_chunk`と`deserialize_chunk`は次の不正入力を拒否します。
+`serialize_chunk` と `deserialize_chunk` は次の条件を検証します。
 
 - magicまたはversionの不一致
 - header 6byte目のflagsが`0`以外（`UnsupportedFlags`）
@@ -78,9 +76,8 @@ data = sazpack.write_sazpack(games)
 decoded = sazpack.decode_sazpack(data)
 ```
 
-このAPIはSAZ2のinspectionとround-tripに利用できます。
-学習pipelineがPyPI公開版`rsshogi`を必須依存にすることは想定していません。
-大規模なdecode、履歴復元、shuffle、batch化は、利用側projectがRust coreを直接使う構成を推奨します。
+この API は SAZ2 の inspection と round-trip に利用できます。
+大規模な decode、履歴復元、shuffle、batch 化には Rust core を直接組み込めます。
 
 ## Policy教師の組み立て
 
@@ -88,14 +85,14 @@ decoded = sazpack.decode_sazpack(data)
 tree reuseが有効な場合、`visits_after`は今回の探索以前に蓄積されたvisitを含みます。
 今回の探索だけで増えたvisit数は`visits_after - visits_before`で得られます。
 
-どちらをpolicy教師に使うかはSAZ2 codecでは決めません。
-学習pipelineが実験設定として明示し、manifestとcheckpoint provenanceへ記録します。
+学習 pipeline は `visits_after` または差分 visit のどちらを policy 教師にするかを選び、
+実験設定を manifest と checkpoint provenance へ記録します。
 
 ## 値の量子化
 
 `SazWdl`の`win`、`draw`、`loss`と、policy entryの`prior`および`raw_prior`は`u16`で保存します。
-各分布の総和は`65535`でなければなりません。
-`prior`と`raw_prior`はそれぞれ独立に総和を満たす必要があります。
+各分布は総和 `65535` で量子化します。
+`prior` と `raw_prior` はそれぞれ独立した分布です。
 
 `raw_mate`はmate headの確率を`u16 / 65535`で保存します。
 `raw_moves_left`は予測手数を`手数 * 32`の固定小数で保存し、分解能は1/32手です。
