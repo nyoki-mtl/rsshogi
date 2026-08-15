@@ -4,13 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "rsshogi-avx2"
-version = "1.1.1"
+version = "1.2.0"
 description = "Python bindings for the rsshogi core library (AVX2 build)."
 readme = "README-avx2.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "rsshogi contributors" }
+  { name = "Hiroki Taniai" }
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -25,3 +25,4 @@ module-name = "rsshogi._rsshogi"
 python-source = "python"
 manifest-path = "Cargo.toml"
 rustc-args = ["-C", "target-feature=+avx2"]
+exclude = ["python/rsshogi/*.pyd", "python/rsshogi/*.so"]

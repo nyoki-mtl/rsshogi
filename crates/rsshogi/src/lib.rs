@@ -3,12 +3,12 @@
 #![allow(unsafe_code)]
 // README 由来の固有名詞やプロトコル表記をそのまま rustdoc に載せるため許可する。
 #![allow(clippy::doc_markdown)]
-// 生成テーブルと movegen ホットパスでは、表現と実行順を維持するために一部 lint を抑制する。
+// 生成テーブルと movegen ホットパスでは、可読性と性能を優先して一部 lint を抑制する。
 #![allow(
     // 生成テーブルと盤面定数。
     clippy::unreadable_literal,
     clippy::similar_names,
-    // 分岐形状は将棋ルールや参照実装との対応を保つ。
+    // 将棋規則を直接表す分岐では、肯定形への機械的な反転を強制しない。
     clippy::if_not_else,
     clippy::map_unwrap_or,
     clippy::redundant_closure_for_method_calls,

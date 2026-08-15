@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rsshogi::board::{
-    self, CapturePlusPro, Captures, Evasions, MoveList, NonEvasionsAll, generate_moves,
+    self, CapturePlusPro, Captures, Evasions, Move32List, MoveList, NonEvasionsAll,
+    generate_legal_all_move32, generate_moves,
 };
 
-/// 参照実装のベンチマーク局面。
+/// 指し手生成の代表的なベンチマーク局面。
 const BENCHMARK_POSITIONS: &[(&str, &str)] = &[
     ("startpos", "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"),
     ("near_startpos", "lnsgkgsnl/1r7/p1ppp1bpp/1p3pp2/7P1/2P6/PP1PPPP1P/1B3S1R1/LNSGKG1NL b - 9"),
@@ -127,12 +128,33 @@ fn bench_pinned_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_legal_all_move32(c: &mut Criterion) {
+    let positions =
+        [("startpos", BENCHMARK_POSITIONS[0].1), ("complex_1", BENCHMARK_POSITIONS[2].1)];
+    let mut group = c.benchmark_group("legal_all_move32");
+
+    for (name, sfen) in positions {
+        group.bench_with_input(BenchmarkId::from_parameter(name), &sfen, |b, &sfen| {
+            let pos = board::position_from_sfen(sfen).unwrap();
+
+            b.iter(|| {
+                let mut moves = Move32List::new();
+                generate_legal_all_move32(&pos, &mut moves);
+                black_box(moves.len())
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     movegen_benches,
     bench_all_moves,
     bench_captures,
     bench_capture_plus_pro,
     bench_evasions,
-    bench_pinned_throughput
+    bench_pinned_throughput,
+    bench_legal_all_move32
 );
 criterion_main!(movegen_benches);

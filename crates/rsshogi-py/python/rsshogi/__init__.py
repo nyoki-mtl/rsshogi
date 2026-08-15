@@ -5,9 +5,6 @@ This package provides structured imports through submodules:
 Core primitives:
     >>> from rsshogi.core import Board, Move32, Move
 
-Core primitives:
-    >>> from rsshogi.core import Board, Move32, Move
-
 Types and Constants:
     >>> from rsshogi.types import Color, PieceType, Piece, Square
 
@@ -44,7 +41,7 @@ AlphaZero training format (sazpack / SAZ2):
 from . import book, core, initial_positions, numpy, policy, record, sazpack, svg, types, usi
 
 # Version
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 __all__ = [
     # Submodules

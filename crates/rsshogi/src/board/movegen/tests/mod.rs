@@ -2,6 +2,7 @@ use super::*;
 
 mod basic;
 mod checks_move32;
+mod compatibility;
 mod drops;
 mod evasions;
 mod is_legal;

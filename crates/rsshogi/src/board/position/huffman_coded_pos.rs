@@ -1,9 +1,7 @@
-use super::bit_io::{BitCursorOverflow, BitReader, BitWriter, bytes_to_words, words_to_bytes};
-use super::{Ply, Position};
-use crate::board::parser::generate_sfen;
-use crate::board::position::BoardArray;
-use crate::types::{Color, EnteringKingRule, Hand, HandPiece, Piece, PieceType, Square};
-use std::fmt;
+use super::bit_io::{BitCursorOverflow, BitReader, BitWriter};
+use super::{BoardArray, Ply, Position};
+use crate::types::{Color, Hand, HandPiece, Piece, PieceType, Square};
+use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HuffmanCodedPos {
@@ -20,11 +18,9 @@ pub enum HuffmanCodedPosError {
 impl fmt::Display for HuffmanCodedPosError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidCursor => write!(f, "invalid huffman cursor"),
-            Self::InvalidPieceCode => write!(f, "invalid huffman piece code"),
-            Self::InvalidKingSquare(sq) => {
-                write!(f, "invalid king square in HuffmanCodedPos: {sq}")
-            }
+            Self::InvalidCursor => f.write_str("Huffman cursor overflow"),
+            Self::InvalidPieceCode => f.write_str("invalid Huffman piece code"),
+            Self::InvalidKingSquare(square) => write!(f, "invalid king square: {square}"),
         }
     }
 }
@@ -37,91 +33,7 @@ impl From<BitCursorOverflow> for HuffmanCodedPosError {
     }
 }
 
-#[derive(Clone, Copy)]
-struct HuffmanCode {
-    code: u8,
-    bits: u8,
-}
-
-#[derive(Clone, Copy)]
-struct PieceCode {
-    piece: Piece,
-    code: HuffmanCode,
-}
-
-#[derive(Clone, Copy)]
-struct HandCode {
-    piece: Option<Piece>,
-    code: HuffmanCode,
-}
-
-const BOARD_CODES: [PieceCode; 29] = [
-    PieceCode { piece: Piece::NONE, code: HuffmanCode { code: 0x00, bits: 1 } },
-    PieceCode { piece: Piece::B_PAWN, code: HuffmanCode { code: 0x01, bits: 4 } },
-    PieceCode { piece: Piece::B_LANCE, code: HuffmanCode { code: 0x03, bits: 6 } },
-    PieceCode { piece: Piece::B_KNIGHT, code: HuffmanCode { code: 0x07, bits: 6 } },
-    PieceCode { piece: Piece::B_SILVER, code: HuffmanCode { code: 0x0b, bits: 6 } },
-    PieceCode { piece: Piece::B_BISHOP, code: HuffmanCode { code: 0x1f, bits: 8 } },
-    PieceCode { piece: Piece::B_ROOK, code: HuffmanCode { code: 0x3f, bits: 8 } },
-    PieceCode { piece: Piece::B_GOLD, code: HuffmanCode { code: 0x0f, bits: 6 } },
-    PieceCode { piece: Piece::B_PRO_PAWN, code: HuffmanCode { code: 0x09, bits: 4 } },
-    PieceCode { piece: Piece::B_PRO_LANCE, code: HuffmanCode { code: 0x23, bits: 6 } },
-    PieceCode { piece: Piece::B_PRO_KNIGHT, code: HuffmanCode { code: 0x27, bits: 6 } },
-    PieceCode { piece: Piece::B_PRO_SILVER, code: HuffmanCode { code: 0x2b, bits: 6 } },
-    PieceCode { piece: Piece::B_HORSE, code: HuffmanCode { code: 0x9f, bits: 8 } },
-    PieceCode { piece: Piece::B_DRAGON, code: HuffmanCode { code: 0xbf, bits: 8 } },
-    PieceCode { piece: Piece::W_PAWN, code: HuffmanCode { code: 0x05, bits: 4 } },
-    PieceCode { piece: Piece::W_LANCE, code: HuffmanCode { code: 0x13, bits: 6 } },
-    PieceCode { piece: Piece::W_KNIGHT, code: HuffmanCode { code: 0x17, bits: 6 } },
-    PieceCode { piece: Piece::W_SILVER, code: HuffmanCode { code: 0x1b, bits: 6 } },
-    PieceCode { piece: Piece::W_BISHOP, code: HuffmanCode { code: 0x5f, bits: 8 } },
-    PieceCode { piece: Piece::W_ROOK, code: HuffmanCode { code: 0x7f, bits: 8 } },
-    PieceCode { piece: Piece::W_GOLD, code: HuffmanCode { code: 0x2f, bits: 6 } },
-    PieceCode { piece: Piece::W_PRO_PAWN, code: HuffmanCode { code: 0x0d, bits: 4 } },
-    PieceCode { piece: Piece::W_PRO_LANCE, code: HuffmanCode { code: 0x33, bits: 6 } },
-    PieceCode { piece: Piece::W_PRO_KNIGHT, code: HuffmanCode { code: 0x37, bits: 6 } },
-    PieceCode { piece: Piece::W_PRO_SILVER, code: HuffmanCode { code: 0x3b, bits: 6 } },
-    PieceCode { piece: Piece::W_HORSE, code: HuffmanCode { code: 0xdf, bits: 8 } },
-    PieceCode { piece: Piece::W_DRAGON, code: HuffmanCode { code: 0xff, bits: 8 } },
-    PieceCode { piece: Piece::B_KING, code: HuffmanCode { code: 0x00, bits: 0 } },
-    PieceCode { piece: Piece::W_KING, code: HuffmanCode { code: 0x00, bits: 0 } },
-];
-
-const HAND_CODES: [HandCode; 21] = [
-    HandCode { piece: Some(Piece::B_PAWN), code: HuffmanCode { code: 0x00, bits: 3 } },
-    HandCode { piece: Some(Piece::W_PAWN), code: HuffmanCode { code: 0x04, bits: 3 } },
-    HandCode { piece: Some(Piece::B_LANCE), code: HuffmanCode { code: 0x01, bits: 5 } },
-    HandCode { piece: Some(Piece::W_LANCE), code: HuffmanCode { code: 0x11, bits: 5 } },
-    HandCode { piece: Some(Piece::B_KNIGHT), code: HuffmanCode { code: 0x03, bits: 5 } },
-    HandCode { piece: Some(Piece::W_KNIGHT), code: HuffmanCode { code: 0x13, bits: 5 } },
-    HandCode { piece: Some(Piece::B_SILVER), code: HuffmanCode { code: 0x05, bits: 5 } },
-    HandCode { piece: Some(Piece::W_SILVER), code: HuffmanCode { code: 0x15, bits: 5 } },
-    HandCode { piece: Some(Piece::B_GOLD), code: HuffmanCode { code: 0x07, bits: 5 } },
-    HandCode { piece: Some(Piece::W_GOLD), code: HuffmanCode { code: 0x17, bits: 5 } },
-    HandCode { piece: Some(Piece::B_BISHOP), code: HuffmanCode { code: 0x1f, bits: 7 } },
-    HandCode { piece: Some(Piece::W_BISHOP), code: HuffmanCode { code: 0x5f, bits: 7 } },
-    HandCode { piece: Some(Piece::B_ROOK), code: HuffmanCode { code: 0x3f, bits: 7 } },
-    HandCode { piece: Some(Piece::W_ROOK), code: HuffmanCode { code: 0x7f, bits: 7 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x02, bits: 3 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x09, bits: 5 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x0b, bits: 5 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x0d, bits: 5 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x1d, bits: 5 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x0f, bits: 7 } },
-    HandCode { piece: None, code: HuffmanCode { code: 0x2f, bits: 7 } },
-];
-
-const PIECEBOX_CODES: [(PieceType, HuffmanCode); 7] = [
-    (PieceType::PAWN, HuffmanCode { code: 0x02, bits: 3 }),
-    (PieceType::LANCE, HuffmanCode { code: 0x09, bits: 5 }),
-    (PieceType::KNIGHT, HuffmanCode { code: 0x0b, bits: 5 }),
-    (PieceType::SILVER, HuffmanCode { code: 0x0d, bits: 5 }),
-    (PieceType::GOLD, HuffmanCode { code: 0x1d, bits: 5 }),
-    (PieceType::BISHOP, HuffmanCode { code: 0x0f, bits: 7 }),
-    (PieceType::ROOK, HuffmanCode { code: 0x2f, bits: 7 }),
-];
-
-const HAND_PIECE_ORDER: [PieceType; 7] = [
+const HAND_ORDER: [PieceType; 7] = [
     PieceType::PAWN,
     PieceType::LANCE,
     PieceType::KNIGHT,
@@ -130,114 +42,202 @@ const HAND_PIECE_ORDER: [PieceType; 7] = [
     PieceType::BISHOP,
     PieceType::ROOK,
 ];
+const INVENTORY: [u8; 7] = [18, 4, 4, 4, 4, 2, 2];
 
-fn piecebox_index(piece_type: PieceType) -> usize {
-    match piece_type {
-        PieceType::PAWN => 0,
-        PieceType::LANCE => 1,
-        PieceType::KNIGHT => 2,
-        PieceType::SILVER => 3,
-        PieceType::GOLD => 4,
-        PieceType::BISHOP => 5,
-        PieceType::ROOK => 6,
-        _ => unreachable!("piecebox_index only accepts hand pieces"),
+fn board_code(piece: Piece) -> Option<(u16, u8)> {
+    let white = piece.color() == Color::WHITE;
+    let (code, bits) = match piece.piece_type() {
+        PieceType::NONE => return Some((0, 1)),
+        PieceType::PAWN => (if white { 0x05 } else { 0x01 }, 4),
+        PieceType::LANCE => (if white { 0x13 } else { 0x03 }, 6),
+        PieceType::KNIGHT => (if white { 0x17 } else { 0x07 }, 6),
+        PieceType::SILVER => (if white { 0x1b } else { 0x0b }, 6),
+        PieceType::GOLD => (if white { 0x2f } else { 0x0f }, 6),
+        PieceType::BISHOP => (if white { 0x5f } else { 0x1f }, 8),
+        PieceType::ROOK => (if white { 0x7f } else { 0x3f }, 8),
+        PieceType::PRO_PAWN => (if white { 0x0d } else { 0x09 }, 4),
+        PieceType::PRO_LANCE => (if white { 0x33 } else { 0x23 }, 6),
+        PieceType::PRO_KNIGHT => (if white { 0x37 } else { 0x27 }, 6),
+        PieceType::PRO_SILVER => (if white { 0x3b } else { 0x2b }, 6),
+        PieceType::HORSE => (if white { 0xdf } else { 0x9f }, 8),
+        PieceType::DRAGON => (if white { 0xff } else { 0xbf }, 8),
+        _ => return None,
+    };
+    Some((code, bits))
+}
+
+fn hand_code(color: Color, piece: PieceType) -> (u16, u8) {
+    let white = color == Color::WHITE;
+    match piece {
+        PieceType::PAWN => (if white { 0x04 } else { 0x00 }, 3),
+        PieceType::LANCE => (if white { 0x11 } else { 0x01 }, 5),
+        PieceType::KNIGHT => (if white { 0x13 } else { 0x03 }, 5),
+        PieceType::SILVER => (if white { 0x15 } else { 0x05 }, 5),
+        PieceType::GOLD => (if white { 0x17 } else { 0x07 }, 5),
+        PieceType::BISHOP => (if white { 0x5f } else { 0x1f }, 7),
+        PieceType::ROOK => (if white { 0x7f } else { 0x3f }, 7),
+        _ => unreachable!("only hand piece types are encoded"),
     }
 }
 
-fn board_code_for_piece(piece: Piece) -> HuffmanCode {
-    BOARD_CODES
-        .iter()
-        .find(|entry| entry.piece == piece)
-        .map(|entry| entry.code)
-        .expect("piece must be encodable in HuffmanCodedPos")
+fn box_code(piece: PieceType) -> (u16, u8) {
+    match piece {
+        PieceType::PAWN => (0x02, 3),
+        PieceType::LANCE => (0x09, 5),
+        PieceType::KNIGHT => (0x0b, 5),
+        PieceType::SILVER => (0x0d, 5),
+        PieceType::GOLD => (0x1d, 5),
+        PieceType::BISHOP => (0x0f, 7),
+        PieceType::ROOK => (0x2f, 7),
+        _ => unreachable!("only box piece types are encoded"),
+    }
 }
 
-fn hand_code_for_piece(piece: Piece) -> HuffmanCode {
-    HAND_CODES
-        .iter()
-        .find(|entry| entry.piece == Some(piece))
-        .map(|entry| entry.code)
-        .expect("hand piece must be encodable in HuffmanCodedPos")
+fn decode_code<T: Copy>(
+    reader: &mut BitReader<'_>,
+    table: &[(u16, u8, T)],
+) -> Result<T, HuffmanCodedPosError> {
+    let mut value = 0;
+    for bits in 1..=8 {
+        if reader.read_one_bit()? {
+            value |= 1 << (bits - 1);
+        }
+        if let Some((_, _, item)) =
+            table.iter().find(|(code, width, _)| *width == bits && *code == value)
+        {
+            return Ok(*item);
+        }
+    }
+    Err(HuffmanCodedPosError::InvalidPieceCode)
 }
 
-fn piecebox_code_for_piece_type(piece_type: PieceType) -> HuffmanCode {
-    PIECEBOX_CODES
-        .iter()
-        .find(|(candidate, _)| *candidate == piece_type)
-        .map(|(_, code)| *code)
-        .expect("piecebox piece must be encodable in HuffmanCodedPos")
+fn decode_board_piece(reader: &mut BitReader<'_>) -> Result<Piece, HuffmanCodedPosError> {
+    let mut table = [(0, 0, Piece::NONE); 29];
+    let mut next = 0;
+    table[next] = (0, 1, Piece::NONE);
+    next += 1;
+    for color in [Color::BLACK, Color::WHITE] {
+        for piece_type in [
+            PieceType::PAWN,
+            PieceType::LANCE,
+            PieceType::KNIGHT,
+            PieceType::SILVER,
+            PieceType::GOLD,
+            PieceType::BISHOP,
+            PieceType::ROOK,
+            PieceType::PRO_PAWN,
+            PieceType::PRO_LANCE,
+            PieceType::PRO_KNIGHT,
+            PieceType::PRO_SILVER,
+            PieceType::HORSE,
+            PieceType::DRAGON,
+        ] {
+            let piece = Piece::from_parts(color, piece_type);
+            let (code, bits) = board_code(piece).expect("declared board code");
+            table[next] = (code, bits, piece);
+            next += 1;
+        }
+    }
+    decode_code(reader, &table)
+}
+
+#[derive(Clone, Copy)]
+enum SuffixPiece {
+    Hand(Color, PieceType),
+    Box(PieceType),
+}
+
+fn decode_suffix_piece(reader: &mut BitReader<'_>) -> Result<SuffixPiece, HuffmanCodedPosError> {
+    let mut table = [(0, 0, SuffixPiece::Box(PieceType::PAWN)); 21];
+    let mut next = 0;
+    for color in [Color::BLACK, Color::WHITE] {
+        for piece_type in HAND_ORDER {
+            let (code, bits) = hand_code(color, piece_type);
+            table[next] = (code, bits, SuffixPiece::Hand(color, piece_type));
+            next += 1;
+        }
+    }
+    for piece_type in HAND_ORDER {
+        let (code, bits) = box_code(piece_type);
+        table[next] = (code, bits, SuffixPiece::Box(piece_type));
+        next += 1;
+    }
+    decode_code(reader, &table)
+}
+
+fn inventory_index(piece_type: PieceType) -> Option<usize> {
+    HAND_ORDER.iter().position(|&piece| piece == piece_type.demote())
+}
+
+fn hands_from_counts(
+    counts: [[u8; 7]; Color::COUNT],
+) -> Result<[Hand; Color::COUNT], HuffmanCodedPosError> {
+    let mut hands = [Hand::ZERO; Color::COUNT];
+    for color in [Color::BLACK, Color::WHITE] {
+        for (index, piece_type) in HAND_ORDER.into_iter().enumerate() {
+            let hand_piece = HandPiece::from_piece_type(piece_type).expect("declared hand type");
+            hands[color.to_index()] = hands[color.to_index()]
+                .checked_add(hand_piece, u32::from(counts[color.to_index()][index]))
+                .ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
+        }
+    }
+    Ok(hands)
 }
 
 impl Position {
-    #[must_use]
     pub fn to_huffman_coded_pos(&self) -> HuffmanCodedPos {
-        let mut words = [0u64; 4];
-        let mut writer = BitWriter::new(&mut words);
+        let mut packed = HuffmanCodedPos::default();
+        let mut writer = BitWriter::new(&mut packed.data);
+        writer.write_one_bit(self.turn() == Color::WHITE);
+        writer.write_n_bits(self.king_square(Color::BLACK).raw() as u16, 7);
+        writer.write_n_bits(self.king_square(Color::WHITE).raw() as u16, 7);
 
-        writer.write_one_bit(self.turn().raw() != 0);
-
-        for color in [Color::BLACK, Color::WHITE] {
-            let king_sq = self.king_square(color);
-            let king_idx = u16::try_from(king_sq.raw()).expect("square fits in u16");
-            writer.write_n_bits(king_idx, 7);
-        }
-
-        let mut piecebox_count = [18, 4, 4, 4, 4, 2, 2];
-
-        for sq_idx in 0..Square::COUNT {
-            let sq = Square::from_index(sq_idx);
-            let piece = self.piece_on(sq);
-            if piece.piece_type() == PieceType::KING {
+        let mut used = [0u8; 7];
+        for raw in 0..Square::COUNT {
+            let square = Square::new(raw as i8);
+            if square == self.king_square(Color::BLACK) || square == self.king_square(Color::WHITE)
+            {
                 continue;
             }
-            let code = board_code_for_piece(piece);
-            writer.write_n_bits(u16::from(code.code), code.bits);
-            if piece != Piece::NONE {
+            let piece = self.piece_on(square);
+            let (code, bits) = board_code(piece).expect("serializable board piece");
+            writer.write_n_bits(code, bits);
+            if !piece.is_empty() {
                 let base = piece.piece_type().demote();
-                let idx = piecebox_index(base);
-                piecebox_count[idx] -= 1;
-            }
-        }
-
-        for color in [Color::BLACK, Color::WHITE] {
-            for piece_type in HAND_PIECE_ORDER {
-                let hand_piece =
-                    HandPiece::from_piece_type(piece_type).expect("hand piece must exist");
-                let count = self.hand(color).count(hand_piece);
-                for _ in 0..count {
-                    let piece = Piece::from_parts(color, piece_type);
-                    let code = hand_code_for_piece(piece);
-                    writer.write_n_bits(u16::from(code.code), code.bits);
+                if let Some(hand) = HandPiece::from_piece_type(base) {
+                    used[HAND_ORDER.iter().position(|&p| p == base).expect("base inventory")] += 1;
+                    let _ = hand;
                 }
-                let idx = piecebox_index(piece_type);
-                piecebox_count[idx] -= i32::try_from(count).expect("hand count fits in i32");
             }
         }
-
-        for piece_type in HAND_PIECE_ORDER {
-            let count = piecebox_count[piecebox_index(piece_type)];
-            let code = piecebox_code_for_piece_type(piece_type);
-            for _ in 0..count {
-                writer.write_n_bits(u16::from(code.code), code.bits);
+        for color in [Color::BLACK, Color::WHITE] {
+            for (index, piece_type) in HAND_ORDER.into_iter().enumerate() {
+                let count = self
+                    .hand(color)
+                    .count(HandPiece::from_piece_type(piece_type).expect("hand type"));
+                used[index] += count as u8;
+                let (code, bits) = hand_code(color, piece_type);
+                for _ in 0..count {
+                    writer.write_n_bits(code, bits);
+                }
             }
         }
-
-        debug_assert!(writer.cursor() == 256, "HuffmanCodedPos must be 256 bits");
-        HuffmanCodedPos { data: words_to_bytes(&words) }
+        for (index, piece_type) in HAND_ORDER.into_iter().enumerate() {
+            let (code, bits) = box_code(piece_type);
+            for _ in used[index]..INVENTORY[index] {
+                writer.write_n_bits(code, bits);
+            }
+        }
+        debug_assert_eq!(writer.cursor(), 256);
+        packed
     }
 
     pub fn huffman_coded_pos_unpack(
         packed: &HuffmanCodedPos,
     ) -> Result<String, HuffmanCodedPosError> {
-        let words = bytes_to_words(&packed.data);
-        let mut reader = BitReader::new(&words);
-        let (board, hands, side_to_move) = unpack_raw(&mut reader)?;
-        let mut pos = Self::empty();
-        pos.board = board;
-        pos.hands = hands;
-        pos.set_side_to_move(side_to_move);
-        pos.ply = 0;
-        Ok(generate_sfen(&pos))
+        let mut position = Position::empty();
+        position.set_huffman_coded_pos(packed, 0)?;
+        Ok(position.to_sfen(None))
     }
 
     pub fn set_huffman_coded_pos(
@@ -245,104 +245,76 @@ impl Position {
         packed: &HuffmanCodedPos,
         ply: Ply,
     ) -> Result<(), HuffmanCodedPosError> {
-        let words = bytes_to_words(&packed.data);
-        let mut reader = BitReader::new(&words);
-        let (board, hands, side_to_move) = unpack_raw(&mut reader)?;
-
-        self.board = board;
-        self.hands = hands;
-        self.set_side_to_move(side_to_move);
-        self.ply = ply;
-        self.entering_king_rule = EnteringKingRule::None;
-        self.entering_king_point = [0, 0];
-
-        self.rebuild_bitboards();
-
-        self.reset_state_stack_to_current_position();
-        self.update_entering_point();
-        self.debug_assert_partial_keys_consistent();
-
-        Ok(())
-    }
-}
-
-fn unpack_raw(
-    reader: &mut BitReader<'_>,
-) -> Result<(BoardArray, [Hand; Color::COUNT], Color), HuffmanCodedPosError> {
-    let side_to_move = if reader.read_one_bit()? { Color::WHITE } else { Color::BLACK };
-
-    let mut board = BoardArray::empty();
-    for color in [Color::BLACK, Color::WHITE] {
-        let sq_raw = reader.read_n_bits(7)?;
-        let sq = Square::new(i8::try_from(sq_raw).expect("square fits in i8"));
-        if !sq.is_on_board() {
-            return Err(HuffmanCodedPosError::InvalidKingSquare(sq_raw));
+        let mut reader = BitReader::new(&packed.data);
+        let side = if reader.read_one_bit()? { Color::WHITE } else { Color::BLACK };
+        let black_king = reader.read_n_bits(7)?;
+        if black_king >= Square::COUNT as u16 {
+            return Err(HuffmanCodedPosError::InvalidKingSquare(black_king));
         }
-        board.set(sq, Piece::from_parts(color, PieceType::KING));
-    }
-
-    for sq_idx in 0..Square::COUNT {
-        let sq = Square::from_index(sq_idx);
-        if board.get(sq).piece_type() == PieceType::KING {
-            continue;
+        let white_king = reader.read_n_bits(7)?;
+        if white_king >= Square::COUNT as u16 {
+            return Err(HuffmanCodedPosError::InvalidKingSquare(white_king));
         }
-        let piece = read_board_piece(reader)?;
-        if piece != Piece::NONE {
-            board.set(sq, piece);
+        if black_king == white_king {
+            return Err(HuffmanCodedPosError::InvalidPieceCode);
         }
-    }
-
-    let mut hands = [Hand::ZERO; Color::COUNT];
-    while reader.cursor() < 256 {
-        let piece = read_hand_piece(reader)?;
-        if piece == Piece::NONE {
-            continue;
-        }
-        let hand_piece =
-            HandPiece::from_piece_type(piece.piece_type()).expect("decoded hand piece is valid");
-        hands[piece.color().to_index()].add(hand_piece, 1);
-    }
-
-    if reader.cursor() != 256 {
-        return Err(HuffmanCodedPosError::InvalidCursor);
-    }
-
-    Ok((board, hands, side_to_move))
-}
-
-fn read_board_piece(reader: &mut BitReader<'_>) -> Result<Piece, HuffmanCodedPosError> {
-    let mut code = 0u8;
-    let mut bits = 0u8;
-    loop {
-        code |= u8::from(reader.read_one_bit()?) << bits;
-        bits += 1;
-        for entry in BOARD_CODES {
-            if entry.code.bits == 0 {
+        let black_king = Square::new(black_king as i8);
+        let white_king = Square::new(white_king as i8);
+        let mut board = BoardArray::empty();
+        let mut inventory = [0u8; 7];
+        let mut hand_counts = [[0u8; 7]; Color::COUNT];
+        board.set(black_king, Piece::from_parts(Color::BLACK, PieceType::KING));
+        board.set(white_king, Piece::from_parts(Color::WHITE, PieceType::KING));
+        for raw in 0..Square::COUNT {
+            let square = Square::new(raw as i8);
+            if square == black_king || square == white_king {
                 continue;
             }
-            if entry.code.code == code && entry.code.bits == bits {
-                return Ok(entry.piece);
+            let piece = decode_board_piece(&mut reader)?;
+            if !piece.is_empty() {
+                let Some(index) = inventory_index(piece.piece_type()) else {
+                    return Err(HuffmanCodedPosError::InvalidPieceCode);
+                };
+                inventory[index] = inventory[index]
+                    .checked_add(1)
+                    .ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
+            }
+            board.set(square, piece);
+        }
+        while reader.cursor() < 256 {
+            match decode_suffix_piece(&mut reader)? {
+                SuffixPiece::Hand(color, piece_type) => {
+                    let index = inventory_index(piece_type).expect("declared hand type");
+                    inventory[index] = inventory[index]
+                        .checked_add(1)
+                        .ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
+                    hand_counts[color.to_index()][index] = hand_counts[color.to_index()][index]
+                        .checked_add(1)
+                        .ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
+                }
+                SuffixPiece::Box(piece_type) => {
+                    let index = inventory_index(piece_type).expect("declared box type");
+                    inventory[index] = inventory[index]
+                        .checked_add(1)
+                        .ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
+                }
             }
         }
-        if bits > 8 {
+        if reader.cursor() != 256 {
+            return Err(HuffmanCodedPosError::InvalidCursor);
+        }
+        if inventory != INVENTORY {
             return Err(HuffmanCodedPosError::InvalidPieceCode);
         }
-    }
-}
-
-fn read_hand_piece(reader: &mut BitReader<'_>) -> Result<Piece, HuffmanCodedPosError> {
-    let mut code = 0u8;
-    let mut bits = 0u8;
-    loop {
-        code |= u8::from(reader.read_one_bit()?) << bits;
-        bits += 1;
-        for entry in HAND_CODES {
-            if entry.code.code == code && entry.code.bits == bits {
-                return Ok(entry.piece.unwrap_or(Piece::NONE));
-            }
-        }
-        if bits > 7 {
-            return Err(HuffmanCodedPosError::InvalidPieceCode);
-        }
+        let hands = hands_from_counts(hand_counts)?;
+        self.board = board;
+        self.hands = hands;
+        self.side_to_move = side;
+        self.ply = ply;
+        self.entering_king_rule = crate::types::EnteringKingRule::None;
+        self.entering_king_point = [0, 0];
+        self.rebuild_bitboards();
+        self.reset_state_stack_to_current_position();
+        Ok(())
     }
 }

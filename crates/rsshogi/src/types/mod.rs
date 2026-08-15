@@ -78,7 +78,7 @@ pub use moves::{
     Move32Metadata,
 };
 pub use piece::{Piece, PieceType};
-pub use rank::Rank;
+pub use rank::{Rank, is_promotable_rank};
 pub use repetition_state::RepetitionState;
 pub use square::{
     SQ_11, SQ_12, SQ_13, SQ_14, SQ_15, SQ_16, SQ_17, SQ_18, SQ_19, SQ_21, SQ_22, SQ_23, SQ_24,
@@ -88,5 +88,5 @@ pub use square::{
     SQ_68, SQ_69, SQ_71, SQ_72, SQ_73, SQ_74, SQ_75, SQ_76, SQ_77, SQ_78, SQ_79, SQ_81, SQ_82,
     SQ_83, SQ_84, SQ_85, SQ_86, SQ_87, SQ_88, SQ_89, SQ_91, SQ_92, SQ_93, SQ_94, SQ_95, SQ_96,
     SQ_97, SQ_98, SQ_99, SQ_D, SQ_L, SQ_LD, SQ_LU, SQ_NONE, SQ_R, SQ_RD, SQ_RU, SQ_U, SQ_ZERO,
-    Square, SquareTable,
+    Square, SquareTable, is_promotable_square,
 };

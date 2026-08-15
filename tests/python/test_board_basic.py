@@ -374,6 +374,16 @@ def test_move_special_constants() -> None:
     assert not Move.MOVE_WIN.is_normal()
     assert int(Move.MOVE_END) == (4 << 7) + 4
 
+    assert Move.from_usi("0000") == Move.MOVE_NULL
+    assert Move.from_usi("null") == Move.MOVE_NULL
+    assert Move32.from_usi("0000") == Move32.MOVE_NULL
+    assert Move32.from_usi("null") == Move32.MOVE_NULL
+    for special in ("none", "resign", "win", "end"):
+        with pytest.raises(ValueError, match="invalid USI move"):
+            Move.from_usi(special)
+        with pytest.raises(ValueError, match="invalid USI move"):
+            Move32.from_usi(special)
+
     assert int(Move.MOVE_NONE) == 0
     assert Move.MOVE_NONE.to_usi() == "none"
     assert Move.MOVE_NULL.to_usi() == "null"
@@ -460,7 +470,7 @@ def test_move32_to_csa() -> None:
     mv32 = board.move32_from_move(mv)
     assert mv32.to_csa() == "+7776FU"
 
-    board.apply_usi("7g7f 3c3d 8h2b+")
+    board.apply_usi("7g7f")
     drop = Move.from_usi("B*3c")
     drop32 = board.move32_from_move(drop)
     assert drop32.to_csa() == "-0033KA"

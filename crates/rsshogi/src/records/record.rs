@@ -442,12 +442,6 @@ impl AnnotatedMoveEntry {
     }
 
     #[must_use]
-    pub(crate) fn with_eval(mut self, eval: Option<Eval>) -> Self {
-        self.annotation.set_eval(eval);
-        self
-    }
-
-    #[must_use]
     pub(crate) const fn mv(&self) -> Move {
         self.entry.mv()
     }

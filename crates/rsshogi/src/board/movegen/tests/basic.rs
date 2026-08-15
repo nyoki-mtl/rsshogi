@@ -1,6 +1,7 @@
 use super::*;
 use crate::board::{Move32List, MoveList};
 use crate::types::{Move, Move32};
+use std::collections::BTreeSet;
 
 #[derive(Default)]
 struct TestMove32Sink {
@@ -102,6 +103,38 @@ fn test_generate_legal_all_matches_legal_all_generic() {
             sorted_move_raws(generic.as_slice()),
             "{label}: generate_legal_all and generate_moves::<LegalAll> must match",
         );
+    }
+}
+
+#[test]
+fn test_legal_all_fast_path_matches_full_legality_filter() {
+    let sfens = [
+        "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+        "l4S2l/4g1gs1/5p1p1/pr2N1pkp/4Gn3/PP3PPPP/2GPP4/1K2r4/L4+s2L b BS2N5Pb 1",
+        "lnsgkg1nl/1r5s1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL w Bb 1",
+        "1+P3Skn1/4+B1g2/4p1sp1/6p1p/LppL1P1P1/2PbP1Ps1/1P1+p5/3r2G1K/5G1NL b RSNL4Pgn 1",
+    ];
+
+    for sfen in sfens {
+        let pos = crate::board::position_from_sfen(sfen).expect("valid SFEN");
+        let mut candidates = MoveList::new();
+        generate_moves::<NonEvasionsAll>(&pos, &mut candidates);
+        let expected = candidates
+            .iter()
+            .copied()
+            .filter(|mv| pos.is_legal_move(*mv))
+            .map(Move::raw)
+            .collect::<BTreeSet<_>>();
+
+        let mut legal = MoveList::new();
+        generate_moves::<LegalAll>(&pos, &mut legal);
+        let actual = legal.iter().map(|mv| mv.raw()).collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "{sfen}");
+
+        let mut legal32 = Move32List::new();
+        generate_moves_move32::<LegalAll>(&pos, &mut legal32);
+        let actual32 = legal32.iter().map(|mv| mv.to_move().raw()).collect::<BTreeSet<_>>();
+        assert_eq!(actual32, expected, "Move32 {sfen}");
     }
 }
 

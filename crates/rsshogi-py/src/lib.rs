@@ -65,7 +65,7 @@ use ::rsshogi::types::{
     MOVE_NULL, MOVE_RESIGN, MOVE_WIN, Move, Move32, Piece, Square,
 };
 
-#[pyclass(name = "Move")]
+#[pyclass(from_py_object, name = "Move")]
 #[derive(Clone, Copy)]
 struct PyMove {
     inner: Move,
@@ -82,7 +82,7 @@ impl PyMove {
     #[classmethod]
     fn from_usi(_cls: &Bound<'_, PyType>, usi: &str) -> PyResult<Self> {
         Move::from_usi(usi)
-            .filter(|mv| mv.is_normal())
+            .filter(|mv| mv.is_normal() || *mv == Move::MOVE_NULL)
             .map(|mv| Self { inner: mv })
             .ok_or_else(|| PyValueError::new_err("invalid USI move"))
     }
@@ -220,7 +220,7 @@ impl PyMove {
     }
 }
 
-#[pyclass(name = "AperyMove")]
+#[pyclass(from_py_object, name = "AperyMove")]
 #[derive(Clone, Copy)]
 struct PyAperyMove {
     inner: AperyMove,
@@ -323,7 +323,7 @@ impl PyAperyMove {
     }
 }
 
-#[pyclass(name = "AperyMove32")]
+#[pyclass(from_py_object, name = "AperyMove32")]
 #[derive(Clone, Copy)]
 struct PyAperyMove32 {
     inner: AperyMove32,
@@ -448,7 +448,7 @@ impl PyAperyMove32 {
     }
 }
 
-#[pyclass(name = "Move32")]
+#[pyclass(from_py_object, name = "Move32")]
 #[derive(Clone, Copy)]
 struct PyMove32 {
     inner: Move32,
@@ -464,7 +464,7 @@ impl PyMove32 {
     #[classmethod]
     fn from_usi(_cls: &Bound<'_, PyType>, usi: &str) -> PyResult<Self> {
         Move32::from_usi(usi)
-            .filter(|mv| mv.is_normal())
+            .filter(|mv| mv.is_normal() || *mv == MOVE_NULL)
             .map(|mv| Self { inner: mv })
             .ok_or_else(|| PyValueError::new_err("invalid USI move"))
     }
@@ -602,7 +602,7 @@ impl PyMove32 {
     }
 }
 
-#[pyclass(name = "GameResult")]
+#[pyclass(from_py_object, name = "GameResult")]
 #[derive(Clone, Copy)]
 pub(crate) struct PyGameResult {
     pub(crate) inner: GameResult,
@@ -629,7 +629,7 @@ const GAME_RESULT_MEMBER_NAMES: &[&str] = &[
     "WHITE_WIN_BY_TIMEOUT",
 ];
 
-#[pyclass(name = "GameResultInfo")]
+#[pyclass(from_py_object, name = "GameResultInfo")]
 #[derive(Clone)]
 struct PyGameResultInfo {
     result: GameResult,
@@ -676,7 +676,7 @@ impl PyGameResultInfo {
     }
 }
 
-#[pyclass(name = "TimeControl")]
+#[pyclass(from_py_object, name = "TimeControl")]
 #[derive(Clone, Copy)]
 struct PyTimeControl {
     inner: TimeControl,
@@ -929,7 +929,7 @@ impl PyGameResult {
     }
 }
 
-#[pyclass(name = "EngineInfo")]
+#[pyclass(from_py_object, name = "EngineInfo")]
 #[derive(Clone)]
 struct PyEngineInfo {
     inner: EngineInfo,
@@ -1111,7 +1111,7 @@ impl PyEngineInfo {
     const LATENCY_KEY_ARENA: &'static str = "arena.latency_delta_ms";
 }
 
-#[pyclass(name = "MoveEntry")]
+#[pyclass(from_py_object, name = "MoveEntry")]
 #[derive(Clone)]
 struct PyMoveEntry {
     inner: MoveEntry,
@@ -1185,7 +1185,7 @@ impl PyMoveEntry {
     }
 }
 
-#[pyclass(name = "SpecialMoveEntry")]
+#[pyclass(from_py_object, name = "SpecialMoveEntry")]
 #[derive(Clone)]
 struct PySpecialMoveEntry {
     inner: SpecialMoveEntry,
@@ -1285,7 +1285,7 @@ impl PySpecialMoveEntry {
     }
 }
 
-#[pyclass(name = "RecordEntry")]
+#[pyclass(from_py_object, name = "RecordEntry")]
 #[derive(Clone)]
 struct PyRecordEntry {
     inner: RecordEntry,
@@ -1328,7 +1328,7 @@ impl PyRecordEntry {
     }
 }
 
-#[pyclass(name = "UsiPositionParts")]
+#[pyclass(from_py_object, name = "UsiPositionParts")]
 #[derive(Clone)]
 struct PyUsiPositionParts {
     initial_sfen: String,
@@ -1377,7 +1377,7 @@ impl PyUsiPositionParts {
     }
 }
 
-#[pyclass(name = "RecordNodeId")]
+#[pyclass(from_py_object, name = "RecordNodeId")]
 #[derive(Clone, Copy)]
 struct PyRecordNodeId {
     inner: RecordNodeId,
@@ -1477,7 +1477,7 @@ impl PyRecordMetadataKey {
     const COMMENT: &'static str = "comment";
 }
 
-#[pyclass(name = "RecordMetadata")]
+#[pyclass(from_py_object, name = "RecordMetadata")]
 #[derive(Clone)]
 struct PyRecordMetadata {
     inner: RecordMetadata,
@@ -1807,7 +1807,7 @@ impl PyRecordMetadata {
     }
 }
 
-#[pyclass(name = "Record")]
+#[pyclass(from_py_object, name = "Record")]
 #[derive(Clone)]
 pub(crate) struct PyRecord {
     pub(crate) inner: Record,
@@ -2902,7 +2902,7 @@ fn write_text_with_encoding(
     Ok(())
 }
 
-#[pyclass(name = "Svg")]
+#[pyclass(from_py_object, name = "Svg")]
 #[derive(Clone)]
 struct PySvg {
     inner: String,
@@ -2923,7 +2923,7 @@ impl PySvg {
     }
 }
 
-#[pyclass(name = "ValidationIssue")]
+#[pyclass(from_py_object, name = "ValidationIssue")]
 #[derive(Clone)]
 struct PyValidationIssue {
     inner: RawValidationIssue,
@@ -3016,7 +3016,7 @@ impl PyValidationIssue {
     }
 }
 
-#[pyclass(name = "ValidationReport")]
+#[pyclass(from_py_object, name = "ValidationReport")]
 #[derive(Clone)]
 struct PyValidationReport {
     inner: RawValidationReport,
@@ -3058,7 +3058,7 @@ impl PyValidationReport {
     }
 }
 
-#[pyclass(name = "PositionState")]
+#[pyclass(from_py_object, name = "PositionState")]
 #[derive(Clone)]
 struct PyPositionState {
     inner: RawPositionState,
@@ -5455,12 +5455,39 @@ mod tests {
         "ln2+r1r2/5s+Pkl/3+B1p1p1/p4B2p/2P6/P6PP/1PNP1P3/2G3SK1/L4G1NL w 2GSN3Ps3p 76";
 
     #[test]
-    fn py_move_from_usi_rejects_special_moves() {
+    fn py_move_from_usi_accepts_null_and_rejects_other_special_moves() {
         Python::attach(|py| {
             let cls = py.get_type::<PyMove>();
             assert!(PyMove::from_usi(&cls, "7g7f").expect("normal move").is_normal());
+            assert_eq!(
+                PyMove::from_usi(&cls, "0000").expect("USI null move").inner,
+                Move::MOVE_NULL
+            );
+            assert_eq!(
+                PyMove::from_usi(&cls, "null").expect("canonical null move").inner,
+                Move::MOVE_NULL
+            );
             assert!(PyMove::from_usi(&cls, "none").is_err());
-            assert!(PyMove::from_usi(&cls, "null").is_err());
+            assert!(PyMove::from_usi(&cls, "resign").is_err());
+            assert!(PyMove::from_usi(&cls, "win").is_err());
+            assert!(PyMove::from_usi(&cls, "end").is_err());
+        });
+    }
+
+    #[test]
+    fn py_move32_from_usi_accepts_null_and_rejects_other_special_moves() {
+        Python::attach(|py| {
+            let cls = py.get_type::<PyMove32>();
+            assert!(PyMove32::from_usi(&cls, "7g7f").expect("normal move").is_normal());
+            assert_eq!(PyMove32::from_usi(&cls, "0000").expect("USI null move").inner, MOVE_NULL);
+            assert_eq!(
+                PyMove32::from_usi(&cls, "null").expect("canonical null move").inner,
+                MOVE_NULL
+            );
+            assert!(PyMove32::from_usi(&cls, "none").is_err());
+            assert!(PyMove32::from_usi(&cls, "resign").is_err());
+            assert!(PyMove32::from_usi(&cls, "win").is_err());
+            assert!(PyMove32::from_usi(&cls, "end").is_err());
         });
     }
 

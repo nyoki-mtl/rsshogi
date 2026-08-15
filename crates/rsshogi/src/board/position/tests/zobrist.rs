@@ -236,7 +236,11 @@ fn test_zobrist_is_consistent_for_equivalent_sequences() {
 fn test_zobrist_initial_position_is_non_zero() {
     let pos = crate::board::hirate_position();
 
-    assert_ne!(pos.key().low_u64(), 0);
+    assert_eq!(pos.key().low_u64(), 0x5e36_b307_5c74_b019);
+    #[cfg(feature = "hash-128")]
+    assert_eq!(pos.key().high_u64(), 0xd0ad_2471_2620_daea);
+    #[cfg(not(feature = "hash-128"))]
+    assert_eq!(pos.key().high_u64(), 0);
 }
 
 #[test]
@@ -250,6 +254,11 @@ fn test_zobrist_changes_after_known_sequence() {
     }
 
     assert_ne!(pos.key(), initial);
+    assert_eq!(pos.key().low_u64(), 0x7917_4345_ee86_f2aa);
+    #[cfg(feature = "hash-128")]
+    assert_eq!(pos.key().high_u64(), 0x9f9b_6e80_1aca_6799);
+    #[cfg(not(feature = "hash-128"))]
+    assert_eq!(pos.key().high_u64(), 0);
 }
 
 #[test]

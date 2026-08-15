@@ -127,7 +127,7 @@ fn test_position_sfen_roundtrip_and_validation() {
 
 /// `flipped_sfen` が盤面はそのままで先後反転することを確認
 #[test]
-fn test_position_flipped_sfen_matches_yaneuraou() {
+fn test_position_flipped_sfen_matches_color_and_rank_transform() {
     let sfen = "lnsgk1snl/1r4g2/p1ppppb1p/6pP1/7R1/2P6/P2PPPP1P/1SG6/LN2KGSNL b BP2p 21";
     let expected = "lnsgk2nl/6gs1/p1pppp2p/6p2/1r7/1pP6/P1BPPPP1P/2G4R1/LNS1KGSNL w 2Pbp 21";
 

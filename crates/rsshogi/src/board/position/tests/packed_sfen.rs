@@ -41,22 +41,27 @@ impl PackedSfenSink for TestPackedSfenSink {
 fn test_fast_huffman_matches_reference_for_all_prefixes_and_alignments() {
     for offset in 0u8..8 {
         for prefix in 0u64..=u64::from(u8::MAX) {
-            let words = [prefix << offset, 0, 0, 0];
+            let mut bytes = [0u8; 32];
+            bytes[..8].copy_from_slice(&(prefix << offset).to_le_bytes());
 
-            let mut fast_board = BitReader::new(&words);
-            fast_board.advance(offset).expect("offset is in range");
-            let mut reference_board = BitReader::new(&words);
-            reference_board.advance(offset).expect("offset is in range");
+            let mut fast_board = BitReader::new(&bytes);
+            let mut reference_board = BitReader::new(&bytes);
+            for _ in 0..offset {
+                fast_board.read_one_bit().expect("offset is in range");
+                reference_board.read_one_bit().expect("offset is in range");
+            }
             assert_eq!(
                 read_board_piece_fast(&mut fast_board),
                 read_board_piece(&mut reference_board)
             );
             assert_eq!(fast_board.cursor(), reference_board.cursor());
 
-            let mut fast_hand = BitReader::new(&words);
-            fast_hand.advance(offset).expect("offset is in range");
-            let mut reference_hand = BitReader::new(&words);
-            reference_hand.advance(offset).expect("offset is in range");
+            let mut fast_hand = BitReader::new(&bytes);
+            let mut reference_hand = BitReader::new(&bytes);
+            for _ in 0..offset {
+                fast_hand.read_one_bit().expect("offset is in range");
+                reference_hand.read_one_bit().expect("offset is in range");
+            }
             assert_eq!(read_hand_piece_fast(&mut fast_hand), read_hand_piece(&mut reference_hand));
             assert_eq!(fast_hand.cursor(), reference_hand.cursor());
         }

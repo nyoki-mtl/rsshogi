@@ -233,7 +233,7 @@ fn test_evaluate_declaration_consistency_with_declaration_win_move() {
 }
 
 #[test]
-fn test_entering_king_required_points_match_yaneuraou_non_handicap_rules() {
+fn test_entering_king_required_points_for_standard_rules() {
     assert_eq!(required_points_for(EnteringKingRule::Point27, InitialPosition::Standard), 28);
     assert_eq!(
         required_points_for(EnteringKingRule::Point27, InitialPosition::Handicap2Pieces),
@@ -247,7 +247,7 @@ fn test_entering_king_required_points_match_yaneuraou_non_handicap_rules() {
 }
 
 #[test]
-fn test_entering_king_required_points_match_yaneuraou_handicap_rules() {
+fn test_entering_king_required_points_for_handicap_rules() {
     assert_eq!(
         required_points_for(EnteringKingRule::Point27Handicap, InitialPosition::Standard),
         28

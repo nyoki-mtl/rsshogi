@@ -6,8 +6,6 @@ import pytest
 
 rsshogi = pytest.importorskip("rsshogi")
 
-FIXTURE_PATH = Path("crates/rsshogi/tests/test_data/pack/sample.pack")
-
 
 def _make_record(
     *,
@@ -51,6 +49,46 @@ def test_game_record_pack_roundtrip_single_game() -> None:
     assert restored.moves[1].engine_info.eval == 120
     assert restored.main_terminal is not None
     assert restored.main_terminal.raw == "pack:end_reason=time_up"
+
+
+def test_pack_roundtrip_with_promotion_and_drop(tmp_path: Path) -> None:
+    moves = [
+        rsshogi.record.MoveEntry(
+            usi,
+            engine_info=rsshogi.record.EngineInfo(eval=eval_value),
+        )
+        for usi, eval_value in zip(
+            ["7g7f", "3c3d", "8h2b+", "3a2b", "B*4e"],
+            [10, -20, 300, 0, 125],
+            strict=True,
+        )
+    ]
+    record = rsshogi.record.Record.from_main_line(
+        rsshogi.core.Board().to_sfen(),
+        moves,
+        rsshogi.record.SpecialMoveEntry(
+            "RESIGN",
+            rsshogi.record.GameResult.BLACK_WIN,
+        ),
+    )
+
+    packed = record.to_pack()
+    path = tmp_path / "promotion-drop.pack"
+    path.write_bytes(packed)
+    restored_records = [
+        rsshogi.record.Record.from_pack(packed),
+        rsshogi.record.decode_pack(packed)[0],
+        rsshogi.record.decode_pack_file(path)[0],
+    ]
+    expected = [
+        "7g7f",
+        "3c3d",
+        "8h2b+",
+        "3a2b",
+        "B*4e",
+    ]
+    for restored in restored_records:
+        assert [entry.move.to_usi() for entry in restored.moves] == expected
 
 
 @pytest.mark.parametrize(
@@ -197,8 +235,18 @@ def test_pack_export_requires_eval() -> None:
         record.to_pack()
 
 
-def test_pack_fixture_smoke() -> None:
-    records = rsshogi.record.decode_pack_file(FIXTURE_PATH)
+def test_pack_generated_file_smoke(tmp_path: Path) -> None:
+    source = [
+        _make_record(
+            terminal_kind="RESIGN",
+            result=rsshogi.record.GameResult.BLACK_WIN,
+        )
+        for _ in range(5)
+    ]
+    path = tmp_path / "generated.pack"
+    rsshogi.record.write_pack_file(path, source)
+
+    records = rsshogi.record.decode_pack_file(path)
     assert len(records) == 5
     assert all(record.move_count > 0 for record in records)
     assert records[0].main_terminal is not None

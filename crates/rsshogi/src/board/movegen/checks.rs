@@ -427,6 +427,16 @@ pub fn generate_checks_move32(pos: &Position, list: &mut Move32List) {
     generate_checks(pos, &mut adapter);
 }
 
+/// 王手となる指し手を、不成りの候補も含めて `Move32` リストとして生成する。
+#[inline]
+pub fn generate_checks_all_move32(pos: &Position, list: &mut Move32List) {
+    let mut adapter = Move32SinkAdapter { pos, sink: list };
+    match pos.turn() {
+        Color::BLACK => generate_checks_for_color::<Black>(pos, &mut adapter, true, false),
+        Color::WHITE => generate_checks_for_color::<White>(pos, &mut adapter, true, false),
+    }
+}
+
 /// 王手となる静かな手を生成
 #[inline]
 pub fn generate_quiet_checks(pos: &Position, list: &mut impl MoveSink) {

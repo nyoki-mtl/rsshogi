@@ -12,7 +12,7 @@ use ::rsshogi::book::{
 
 use crate::{PyBoard, PyMove, PyRecord};
 
-#[pyclass(name = "BookKey")]
+#[pyclass(from_py_object, name = "BookKey")]
 #[derive(Clone, Copy)]
 pub(crate) struct PyBookKey {
     inner: BookKey,
@@ -73,7 +73,7 @@ impl PyBookKey {
     }
 }
 
-#[pyclass(name = "BookMove")]
+#[pyclass(from_py_object, name = "BookMove")]
 #[derive(Clone, Copy)]
 pub(crate) struct PyBookMove {
     inner: BookMove,
@@ -154,7 +154,7 @@ impl PyBookEntry {
     }
 }
 
-#[pyclass(name = "YaneuraOuBookDiagnostics")]
+#[pyclass(from_py_object, name = "YaneuraOuBookDiagnostics")]
 #[derive(Clone)]
 pub(crate) struct PyYaneuraOuBookDiagnostics {
     inner: YaneuraOuBookDiagnostics,
@@ -218,7 +218,7 @@ impl PyYaneuraOuBookDiagnostics {
     }
 }
 
-#[pyclass(name = "YaneuraOuBookMove")]
+#[pyclass(from_py_object, name = "YaneuraOuBookMove")]
 #[derive(Clone)]
 pub(crate) struct PyYaneuraOuBookMove {
     inner: YaneuraOuBookMove,
@@ -274,7 +274,7 @@ impl PyYaneuraOuBookMove {
     }
 }
 
-#[pyclass(name = "YaneuraOuBookEntry")]
+#[pyclass(from_py_object, name = "YaneuraOuBookEntry")]
 #[derive(Clone)]
 pub(crate) struct PyYaneuraOuBookEntry {
     inner: YaneuraOuBookEntry,
@@ -322,7 +322,7 @@ impl PyYaneuraOuBookEntry {
     }
 }
 
-#[pyclass(name = "YaneuraOuBook")]
+#[pyclass(from_py_object, name = "YaneuraOuBook")]
 #[derive(Clone)]
 pub(crate) struct PyYaneuraOuBook {
     inner: YaneuraOuBook,
@@ -375,7 +375,7 @@ impl PyYaneuraOuBook {
     }
 }
 
-#[pyclass(name = "SbkDiagnostics")]
+#[pyclass(from_py_object, name = "SbkDiagnostics")]
 #[derive(Clone)]
 pub(crate) struct PySbkDiagnostics {
     inner: SbkDiagnostics,
@@ -402,7 +402,7 @@ impl PySbkDiagnostics {
     }
 }
 
-#[pyclass(name = "SbkOpenProgress")]
+#[pyclass(from_py_object, name = "SbkOpenProgress")]
 #[derive(Clone, Copy)]
 pub(crate) struct PySbkOpenProgress {
     inner: SbkOpenProgress,
@@ -429,7 +429,7 @@ impl PySbkOpenProgress {
     }
 }
 
-#[pyclass(name = "SbkEval")]
+#[pyclass(from_py_object, name = "SbkEval")]
 #[derive(Clone)]
 pub(crate) struct PySbkEval {
     inner: SbkEval,
@@ -474,7 +474,7 @@ impl PySbkEval {
     }
 }
 
-#[pyclass(name = "SbkMove")]
+#[pyclass(from_py_object, name = "SbkMove")]
 #[derive(Clone)]
 pub(crate) struct PySbkMove {
     inner: SbkMove,
@@ -525,7 +525,7 @@ impl PySbkMove {
     }
 }
 
-#[pyclass(name = "SbkEntry")]
+#[pyclass(from_py_object, name = "SbkEntry")]
 #[derive(Clone)]
 pub(crate) struct PySbkEntry {
     inner: SbkEntry,
@@ -599,7 +599,7 @@ impl PySbkEntry {
     }
 }
 
-#[pyclass(name = "SbkBook")]
+#[pyclass(from_py_object, name = "SbkBook")]
 #[derive(Clone)]
 pub(crate) struct PySbkBook {
     inner: SbkBook,
@@ -748,7 +748,7 @@ impl PyMemoryBook {
     }
 }
 
-#[pyclass(name = "StaticBook")]
+#[pyclass(from_py_object, name = "StaticBook")]
 #[derive(Clone)]
 pub(crate) struct PyStaticBook {
     pub(crate) inner: StaticBook,

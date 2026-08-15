@@ -5,6 +5,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-15
+
+### Changed
+
+- Slider attacks, move generation, mate-in-one detection, position serialization, primitive
+  types, and external book handling were independently reimplemented. The supported package
+  remains MIT-licensed, and the core crate now includes its own `LICENSE` file.
+- Generated legal-move order is explicitly unspecified; callers that need an order must
+  sort or score moves themselves.
+- `AperyMove` and `AperyMove32` remain nominal transparent newtypes. Their raw layouts are
+  distinct from `Move` and `Move32`; convert with `to_move` / `to_apery` rather than
+  reinterpreting raw values.
+
+### Fixed
+
+- Packed position, PACK, YBB, and DB2016 readers now reject malformed inventories,
+  noncanonical move encodings, and inconsistent outcomes instead of accepting invalid
+  data or panicking.
+- Mate-in-one detection no longer returns a checking move from a position where the side to
+  move has already left its own king in check.
+- Wheel builds exclude in-place extension artifacts left by `maturin develop`, so a release
+  build from an already-tested working tree no longer collides with the newly built module.
+
+### Compatibility
+
+- HCP, PackedSfen, PACK, HCPE, YBB, SBK, `Position::key`, and the low 64 bits of the
+  `hash-128` key retain their 1.1.1 byte representation. Existing data does not need to be
+  regenerated for 1.2.0.
+- PACK plies continue to use the Apery 16-bit layout: the source field values 81 through 87
+  encode drops and bit 14 encodes promotion. Drops, promotions, and non-starting positions
+  round-trip through the Rust and Python record APIs. Converting a `Record` to PACK clamps
+  evaluation values to the centipawn range `-32000..=32000`, as in 1.1.1.
+- The generic move generators and their `Move32` facades retain the 1.1.1 move sets,
+  including quiet checking drops, optional unpromoted variants, and mode-specific behavior.
+  `LegalAll` is the complete legal set; `Legal` intentionally omits selected optional
+  unpromoted moves but includes the legal unpromoted lance move to the third rank.
+- DB2016 files are read incrementally. A position group containing a malformed move line is
+  reported by `iter_entries()` without discarding later groups, `resign` remains a valid move
+  token, and omitted `count` and ply fields remain omitted when written unless an option
+  supplies them.
+- `Move::from_usi` and `Move32::from_usi` accept USI `0000` as the null move. `Eval` ordering
+  follows the underlying signed numeric value, promoted pieces are not hand-piece values,
+  and `Hand::add` / `Hand::sub` fail on overflow or underflow rather than corrupting an
+  adjacent packed field.
+- KI2 notation retains the full-width space after `同`, and ambiguity resolution includes
+  geometric origin candidates even when a candidate piece is pinned.
+
+### Removed
+
+- **Breaking: the peta_shock-compatible book solver has been removed.** This removes
+  `solve_peta_shock_book`, `PetaShockOptions`, and the peta_shock-only lossy profile from
+  `YaneuraOuDb2016WriteOptions`. The lossless DB2016 reader and writer remain available.
+- **Breaking: generated Qugiy mask constants are no longer public.**
+  `QUGIY_STEP_ATTACKS`, `QUGIY_ROOK_MASK`, and `QUGIY_BISHOP_MASK` were implementation
+  details; use `rook_attacks`, `bishop_attacks`, and the public beam tables instead.
+- **Breaking: `board::Bitboard256` has been removed.** It was an implementation-detail
+  packed slider helper. Use the public `Bitboard` type and attack functions; there is no
+  replacement public SIMD wrapper.
+
 ## [1.1.1] - 2026-08-11
 
 ### Changed
@@ -291,7 +350,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.1.0
 [1.0.2]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.0.2

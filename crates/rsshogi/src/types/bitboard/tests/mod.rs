@@ -24,7 +24,7 @@ fn test_bitboard_from_square() {
 }
 
 #[test]
-fn test_bitboard_sq_occupied_and_pop_matches_yaneuraou() {
+fn test_bitboard_single_square_roundtrip() {
     for sq in 0..81 {
         let sq = Square::from_index(sq);
         let bb = Bitboard::from_square(sq);
@@ -151,7 +151,7 @@ fn test_bitboard_byte_reverse_matches_parts() {
 }
 
 #[test]
-fn test_bitboard_byte_reverse_matches_yaneuraou() {
+fn test_bitboard_byte_reverse_wire_layout() {
     let raw = (0x0123_4567_89ab_cdefu128) | ((0xfedc_ba98_7654_3210u128) << 64);
     let bb = Bitboard::from_raw_bits_unmasked(raw);
     let reversed = bb.byte_reverse();
@@ -159,7 +159,7 @@ fn test_bitboard_byte_reverse_matches_yaneuraou() {
 }
 
 #[test]
-fn test_bitboard_rank9_mask_matches_yaneuraou() {
+fn test_bitboard_rank9_mask_wire_layout() {
     let raw = (0x3fdf_eff7_fbfd_feffu128) | ((0x0000_0000_0001_feffu128) << 64);
     let mask = Bitboard::from_raw_bits_unmasked(raw);
     let rank9 = mask.not();
