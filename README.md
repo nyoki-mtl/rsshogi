@@ -4,28 +4,41 @@
 
 `rsshogi` は、将棋局面の表現、合法手生成、棋譜の入出力、定跡・学習データ形式の操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージです。
 
-本書はバージョン 1.2.0 の公開 API とワイヤ形式の互換契約を説明します。
-
 ## インストール
 
-Rust 利用者は `Cargo.toml` に core crate を追加します。
+### Rust
+
+`Cargo.toml` に追加します。
 
 ```toml
 [dependencies]
 rsshogi = "1.2.0"
 ```
 
-core crate はデータ形式機能を既定で有効にしません。
-用途に応じて `book`、`records`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions` を選択してください。
-`python-data` は Python バインディング向けのデータ機能群を有効にします。
+棋譜や定跡を扱う場合は、必要な機能を `features` に追加します。
 
-Python は 3.10 以降が必要です。
-通常版は `rsshogi`、AVX2 対応 x86_64 CPU 向けの最適化版は `rsshogi-avx2` です。
-両方を同じ環境へインストールしないでください。
+```toml
+[dependencies]
+rsshogi = { version = "1.2.0", features = ["records", "book"] }
+```
+
+利用できる機能は `records`、`book`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions` です。
+
+### Python
+
+Python 3.10 以降で利用できます。
 
 ```console
 python -m pip install rsshogi
 ```
+
+AVX2 対応の x86_64 CPU では最適化版を選べます。
+
+```console
+python -m pip install rsshogi-avx2
+```
+
+どちらも `rsshogi` として読み込むため、環境ごとに一方をインストールします。
 
 ## クイックスタート
 
