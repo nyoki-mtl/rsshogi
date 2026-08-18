@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@a6f333f62c4b46ed5190d00cab3b7f9a6996274c # Node 24
+        uses: peaceiris/actions-mdbook@062dc9e3eab0bad35531417c6bb6c6a7a184764f # v2
         with:
           mdbook-version: "latest"
 
