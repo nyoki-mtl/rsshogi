@@ -2,10 +2,10 @@
 
 KI2形式は、KIF形式をさらに簡略化した棋譜記述形式です。移動元座標を省略し、1行に複数の指し手を記録できるため、人間が読む際に読みやすくなっています。
 
-## 公式仕様
+## 参考資料
 
 - [Kifu for Windows の紹介（柿木義一氏）](https://kakinoki.o.oo7.jp/KifuwInt.htm)
-- [棋譜の表記方法（日本将棋連盟）](https://www.shogi.or.jp/faq/kihuhyouki.html)：公式な棋譜表記ルール
+- [将棋のルールに関するご質問（日本将棋連盟）](https://www.shogi.or.jp/faq/rules/)：棋譜で「打」を付ける条件
 
 ## 概要
 
@@ -74,6 +74,28 @@ KIF形式と異なり、KI2形式では手番記号が**必須**です。
 ▲５五角打     # 先手 ５五角打
 ```
 
+### Rust で 1 手分の KI2 を扱う
+
+`Move::to_ki2(position)` と `Move32::to_ki2(position)` は KI2 文字列を返します。
+文字列を作らずに比較または集計する場合は、`to_ki2_notation(position)` で `Ki2Notation` を取得します。
+
+```rust,ignore
+use rsshogi::board;
+use rsshogi::types::Ki2Notation;
+
+board::init();
+let position = board::hirate_position();
+let mv = board::move_from_usi_expect(&position, "7g7f");
+let notation = mv.to_ki2_notation(&position).unwrap();
+
+assert_eq!(notation.to_string(), "▲７六歩");
+assert_eq!("▲７六歩".parse::<Ki2Notation>().unwrap(), notation);
+assert_eq!(notation.to_move32(&position).unwrap(), mv);
+```
+
+`Ki2Notation::to_move32(position)` は、記法に一致する合法手が現在局面に一つだけある場合にその手を返します。
+`同` を含む記法の解決には直前手が必要なため、棋譜を進めた履歴を持つ局面を渡します。
+
 #### 移動先座標
 
 - `<X座標><Y座標>`：全角数字（例：`７六`）
@@ -101,7 +123,7 @@ KIF形式と異なり、KI2形式では手番記号が**必須**です。
 
 #### 駒の相対位置と動作
 
-日本将棋連盟の[公式な棋譜表記方法](https://www.shogi.or.jp/faq/kihuhyouki.html)に基づき、以下のように区別します：
+rsshogi では一般的な棋譜表記に合わせ、以下のように区別します：
 
 **駒の相対位置：**
 - `右`：指す側から見て右側の駒
@@ -132,8 +154,6 @@ KIF形式と異なり、KI2形式では手番記号が**必須**です。
 ▲８８竜左     # 左側の竜
 ▲８８竜右     # 右側の竜
 ```
-
-詳細は[日本将棋連盟の公式表記方法](https://www.shogi.or.jp/faq/kihuhyouki.html)を参照してください。
 
 ### 1行複数手の記述
 
@@ -336,7 +356,7 @@ let kif_text = kif::export_kif(&record)?;
 
 - [Kifu for Windows の紹介（公式）](https://kakinoki.o.oo7.jp/KifuwInt.htm)
 - [Kifu for Windows](https://kakinoki.o.oo7.jp/)
-- [棋譜の表記方法（日本将棋連盟）](https://www.shogi.or.jp/faq/kihuhyouki.html)：公式な棋譜表記ルール
+- [将棋のルールに関するご質問（日本将棋連盟）](https://www.shogi.or.jp/faq/rules/)：棋譜で「打」を付ける条件
 
 ## 関連項目
 

@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-18
+
+### Added
+
+- Added `Ki2Notation`, a compact, allocation-free value for one canonical KI2 move notation. It
+  supports parsing, formatting, hashing, and resolution to a legal `Move32` in a position.
+- Added `Move::to_ki2_notation` and `Move32::to_ki2_notation` for callers that need to compare or
+  aggregate KI2 notation without allocating a `String`.
+
+### Changed
+
+- `Move::to_ki2` and `Move32::to_ki2` now format from `Ki2Notation`, keeping string output and the
+  structured representation on one implementation path while allocating only the returned string.
+- KI2 formatting keeps board-origin candidates as a `Bitboard` instead of allocating a temporary
+  `Vec<Move>` for every formatted move.
+
+### Fixed
+
+- KI2 formatting now continues ambiguity resolution when multiple same-type pieces can move
+  sideways (`寄`) to the same destination. It adds `右` or `左` when needed instead of emitting
+  identical notation for distinct legal moves.
+- KI2 parsing now recognizes BOD headers before move lines, allowing records with custom initial
+  positions to round-trip through `export_ki2` and `parse_ki2_str`.
+
 ## [1.2.1] - 2026-08-18
 
 ### Added
@@ -376,7 +400,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.0...v1.1.1

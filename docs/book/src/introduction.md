@@ -32,7 +32,7 @@ Rust から使う場合は `Cargo.toml` に追加します。
 
 ```toml
 [dependencies]
-rsshogi = "1.2.1"
+rsshogi = "1.2.2"
 ```
 
 詳しい導入方法は [インストール](getting-started/installation.md)、最初の操作は [クイックスタート](getting-started/quickstart.md) を参照してください。

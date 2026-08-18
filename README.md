@@ -12,14 +12,14 @@
 
 ```toml
 [dependencies]
-rsshogi = "1.2.1"
+rsshogi = "1.2.2"
 ```
 
 棋譜や定跡を扱う場合は、必要な機能を `features` に追加します。
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.2.1", features = ["records", "book"] }
+rsshogi = { version = "1.2.2", features = ["records", "book"] }
 ```
 
 利用できる機能は `records`、`book`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions`、`hash-128` です。
