@@ -3,7 +3,7 @@
 # The workspace contains two crates: `rsshogi` (core library) and
 # `rsshogi-py` (PyO3 bindings). Recipes here are thin wrappers around cargo /
 # mdBook for day-to-day development. `just check` delegates to the Makefile so
-# local checks are the canonical CI gate (Rust all-features lint/tests + Python checks).
+# local checks are the canonical CI gate (Rust default build + all-features lint/tests + Python checks).
 
 default:
 	@just --list

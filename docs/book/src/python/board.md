@@ -216,6 +216,7 @@ board.to_packed_sfen(out=None) -> bytes | None
 ```
 
 現在局面を PackedSfen (psfen) 形式で取得します。
+片玉、玉なし、標準枚数を超える駒を含む局面は PackedSfen では表現できず、`ValueError` を送出します。
 
 **引数:**
 - **out**: `bytearray | numpy.ndarray | None`
@@ -273,6 +274,7 @@ board.to_psv(mv=None, score=0, game_result=None, game_ply=None, out=None) -> byt
 
 現在局面から `PackedSfenValue` 1件分（40バイト）を直接生成します。
 `out=None` の場合は `bytes` を返し、`out` 指定時は `None` を返します。
+内部の PackedSfen で表現できない局面では `ValueError` を送出します。
 
 - `mv`: `Move | Move32 | int | str | None`（未指定時は `MOVE_NONE`）
 - `score`: `int16`

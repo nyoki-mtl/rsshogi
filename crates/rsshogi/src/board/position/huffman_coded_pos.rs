@@ -13,6 +13,7 @@ pub enum HuffmanCodedPosError {
     InvalidCursor,
     InvalidPieceCode,
     InvalidKingSquare(u16),
+    InvalidInventory { piece: PieceType, count: u32, limit: u32 },
 }
 
 impl fmt::Display for HuffmanCodedPosError {
@@ -21,6 +22,9 @@ impl fmt::Display for HuffmanCodedPosError {
             Self::InvalidCursor => f.write_str("Huffman cursor overflow"),
             Self::InvalidPieceCode => f.write_str("invalid Huffman piece code"),
             Self::InvalidKingSquare(square) => write!(f, "invalid king square: {square}"),
+            Self::InvalidInventory { piece, count, limit } => {
+                write!(f, "invalid {piece} inventory: {count} exceeds {limit}")
+            }
         }
     }
 }
@@ -185,37 +189,84 @@ fn hands_from_counts(
 }
 
 impl Position {
+    /// 局面を HuffmanCodedPos に変換する。
+    ///
+    /// # Panics
+    ///
+    /// 玉位置または駒の総数が HCP の表現可能範囲外の場合に panic する。
+    /// 外部入力から構築した未検証局面には [`Self::try_to_huffman_coded_pos`] を使う。
     pub fn to_huffman_coded_pos(&self) -> HuffmanCodedPos {
+        self.try_to_huffman_coded_pos().expect("position must be representable as HuffmanCodedPos")
+    }
+
+    /// 局面を HuffmanCodedPos に変換し、表現不能な局面をエラーにする。
+    pub fn try_to_huffman_coded_pos(&self) -> Result<HuffmanCodedPos, HuffmanCodedPosError> {
+        let black_king = self.king_square(Color::BLACK);
+        let white_king = self.king_square(Color::WHITE);
+        if !black_king.is_valid() {
+            return Err(HuffmanCodedPosError::InvalidKingSquare(black_king.raw() as u16));
+        }
+        if !white_king.is_valid() {
+            return Err(HuffmanCodedPosError::InvalidKingSquare(white_king.raw() as u16));
+        }
+        if black_king == white_king {
+            return Err(HuffmanCodedPosError::InvalidPieceCode);
+        }
+
         let mut packed = HuffmanCodedPos::default();
         let mut writer = BitWriter::new(&mut packed.data);
         writer.write_one_bit(self.turn() == Color::WHITE);
-        writer.write_n_bits(self.king_square(Color::BLACK).raw() as u16, 7);
-        writer.write_n_bits(self.king_square(Color::WHITE).raw() as u16, 7);
+        writer.write_n_bits(black_king.raw() as u16, 7);
+        writer.write_n_bits(white_king.raw() as u16, 7);
 
-        let mut used = [0u8; 7];
+        let mut used = [0u32; 7];
         for raw in 0..Square::COUNT {
             let square = Square::new(raw as i8);
-            if square == self.king_square(Color::BLACK) || square == self.king_square(Color::WHITE)
-            {
+            if square == black_king || square == white_king {
                 continue;
             }
             let piece = self.piece_on(square);
-            let (code, bits) = board_code(piece).expect("serializable board piece");
-            writer.write_n_bits(code, bits);
+            let (code, bits) = board_code(piece).ok_or(HuffmanCodedPosError::InvalidPieceCode)?;
             if !piece.is_empty() {
                 let base = piece.piece_type().demote();
-                if let Some(hand) = HandPiece::from_piece_type(base) {
-                    used[HAND_ORDER.iter().position(|&p| p == base).expect("base inventory")] += 1;
-                    let _ = hand;
+                let Some(index) = inventory_index(base) else {
+                    return Err(HuffmanCodedPosError::InvalidPieceCode);
+                };
+                used[index] =
+                    used[index].checked_add(1).ok_or(HuffmanCodedPosError::InvalidInventory {
+                        piece: base,
+                        count: u32::MAX,
+                        limit: u32::from(INVENTORY[index]),
+                    })?;
+                if used[index] > u32::from(INVENTORY[index]) {
+                    return Err(HuffmanCodedPosError::InvalidInventory {
+                        piece: base,
+                        count: used[index],
+                        limit: u32::from(INVENTORY[index]),
+                    });
                 }
             }
+            writer.write_n_bits(code, bits);
         }
         for color in [Color::BLACK, Color::WHITE] {
             for (index, piece_type) in HAND_ORDER.into_iter().enumerate() {
                 let count = self
                     .hand(color)
                     .count(HandPiece::from_piece_type(piece_type).expect("hand type"));
-                used[index] += count as u8;
+                used[index] = used[index].checked_add(count).ok_or(
+                    HuffmanCodedPosError::InvalidInventory {
+                        piece: piece_type,
+                        count: u32::MAX,
+                        limit: u32::from(INVENTORY[index]),
+                    },
+                )?;
+                if used[index] > u32::from(INVENTORY[index]) {
+                    return Err(HuffmanCodedPosError::InvalidInventory {
+                        piece: piece_type,
+                        count: used[index],
+                        limit: u32::from(INVENTORY[index]),
+                    });
+                }
                 let (code, bits) = hand_code(color, piece_type);
                 for _ in 0..count {
                     writer.write_n_bits(code, bits);
@@ -224,12 +275,14 @@ impl Position {
         }
         for (index, piece_type) in HAND_ORDER.into_iter().enumerate() {
             let (code, bits) = box_code(piece_type);
-            for _ in used[index]..INVENTORY[index] {
+            for _ in used[index]..u32::from(INVENTORY[index]) {
                 writer.write_n_bits(code, bits);
             }
         }
-        debug_assert_eq!(writer.cursor(), 256);
-        packed
+        if writer.cursor() != 256 {
+            return Err(HuffmanCodedPosError::InvalidCursor);
+        }
+        Ok(packed)
     }
 
     pub fn huffman_coded_pos_unpack(

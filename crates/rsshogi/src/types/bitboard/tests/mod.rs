@@ -213,6 +213,14 @@ fn test_bitboard_unpack_and_decrement_pair() {
     assert_eq!(dec_lo_p1, lo_p1.wrapping_sub(1));
 }
 
+#[test]
+fn test_decrement_borrows_only_when_low_lane_is_zero() {
+    for raw in [1u128 << 63, (1u128 << 64) | (1u128 << 63), 1u128 << 64, 0] {
+        let value = Bitboard::from_raw_bits_unmasked(raw);
+        assert_eq!(value.decrement().raw_bits(), raw.wrapping_sub(1));
+    }
+}
+
 /// Bitboard 演算を成分ごとの演算と照合する。
 #[test]
 #[allow(clippy::cognitive_complexity)]

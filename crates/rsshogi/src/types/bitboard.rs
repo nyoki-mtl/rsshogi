@@ -42,13 +42,6 @@ use std::arch::x86_64::{
 #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sse4.1"))]
 use std::arch::x86_64::{_mm_add_epi64, _mm_cmpeq_epi64, _mm_set1_epi64x, _mm_setzero_si128};
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    not(all(target_feature = "sse4.1", target_feature = "ssse3"))
-))]
-use std::arch::x86_64::{_mm_set_epi64x, _mm_slli_si128, _mm_srli_epi64, _mm_sub_epi64};
-
 #[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
 use std::arch::x86_64::{_mm_alignr_epi8, _mm_setr_epi8, _mm_shuffle_epi8};
 
@@ -690,14 +683,8 @@ impl Bitboard {
             not(all(target_feature = "sse4.1", target_feature = "ssse3"))
         ))]
         {
-            // SAFETY: SSE2 が有効な場合にのみコンパイルされる。このフォールバックは
-            // レジスタのみの操作で 128 ビットデクリメントを実装する。
-            let c = unsafe { _mm_set_epi64x(0, 1) };
-            let mut t1 = unsafe { _mm_sub_epi64(self.as_m128(), c) };
-            let t2 = unsafe { _mm_srli_epi64(t1, 63) };
-            let t2 = unsafe { _mm_slli_si128(t2, 8) };
-            t1 = unsafe { _mm_sub_epi64(t1, t2) };
-            Self::from_m128(t1)
+            let raw = self.raw_bits().wrapping_sub(1);
+            Self::from_raw_bits_unmasked(raw)
         }
         #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
         {

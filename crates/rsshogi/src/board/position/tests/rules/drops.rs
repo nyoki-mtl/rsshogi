@@ -1,4 +1,30 @@
-use crate::types::{Move32, PieceType, Square};
+use crate::types::{Move, Move32, PieceType, Square};
+
+#[test]
+fn test_is_legal_rejects_invalid_raw_move32_without_panicking() {
+    let pos = crate::board::hirate_position();
+    let invalid = Move32::from_raw((82 << 7) | 1);
+    assert!(!pos.is_legal_move32(invalid));
+    let drop_and_promote = Move32::from_raw(u32::from(
+        Move::drop(PieceType::PAWN, Square::from_usi("5e").unwrap()).raw() | Move::MOVE_PROMOTE,
+    ));
+    assert!(!pos.is_legal_move32(drop_and_promote));
+}
+
+#[test]
+fn test_is_legal_rejects_dead_end_drops_and_unpromoted_knight_move() {
+    let pos =
+        crate::board::position_from_sfen("4k4/9/9/9/9/9/9/9/4K4 b PLN 1").expect("valid SFEN");
+    for usi in ["P*4a", "L*4a", "N*4a", "N*4b"] {
+        let mv = Move::from_usi(usi).expect("valid move encoding");
+        assert!(!pos.is_legal_move(mv), "{usi} must be rejected");
+    }
+
+    let knight_pos =
+        crate::board::position_from_sfen("4k4/9/1N7/9/9/9/9/9/4K4 b - 1").expect("valid SFEN");
+    assert!(!knight_pos.is_legal_move(Move::from_usi("8c7a").unwrap()));
+    assert!(knight_pos.is_legal_move(Move::from_usi("8c7a+").unwrap()));
+}
 
 #[test]
 fn test_pawn_drop_mate_reference_position_detected() {

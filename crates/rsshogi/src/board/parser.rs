@@ -11,7 +11,7 @@ pub enum SfenError {
     MissingField(MissingFieldKind),
     InvalidPiece(char),
     InvalidSquare,
-    InvalidHandCount { piece: PieceType, count: u8 },
+    InvalidHandCount { piece: PieceType, count: u32 },
     InvalidTurn(char),
     InvalidPly(std::num::ParseIntError),
     TrailingToken(String),
@@ -342,19 +342,20 @@ fn parse_hands(s: &str) -> Result<[Hand; Color::COUNT], SfenError> {
         return Ok(hands);
     }
 
-    let mut count = 1;
+    let mut count = 1u32;
     let mut chars = s.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch.is_ascii_digit() {
-            count = 0;
-            count = count * 10 + ch.to_digit(10).expect("digit");
+            count = ch.to_digit(10).expect("digit");
 
             // 複数桁の数字を読む
             while let Some(&next_ch) = chars.peek() {
                 if next_ch.is_ascii_digit() {
                     chars.next();
-                    count = count * 10 + next_ch.to_digit(10).expect("digit");
+                    count = count
+                        .saturating_mul(10)
+                        .saturating_add(next_ch.to_digit(10).expect("digit"));
                 } else {
                     break;
                 }
@@ -363,10 +364,10 @@ fn parse_hands(s: &str) -> Result<[Hand; Color::COUNT], SfenError> {
             let color = if ch.is_ascii_uppercase() { Color::BLACK } else { Color::WHITE };
             let piece = sfen_char_to_hand_piece(ch)?;
 
-            for _ in 0..count {
-                let idx = color.to_index();
-                hands[idx] = Hand::add_one(hands[idx], piece);
-            }
+            let idx = color.to_index();
+            hands[idx] = hands[idx]
+                .checked_add(piece, count)
+                .ok_or(SfenError::InvalidHandCount { piece: piece.to_piece_type(), count })?;
 
             count = 1;
         }
@@ -511,4 +512,26 @@ fn generate_hands_from_data(hands: [Hand; Color::COUNT]) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_hand_count_that_does_not_fit_packed_hand() {
+        assert_eq!(
+            parse_sfen("4k4/9/9/9/9/9/9/9/4K4 b 40P 1"),
+            Err(SfenError::InvalidHandCount { piece: PieceType::PAWN, count: 40 })
+        );
+    }
+
+    #[test]
+    fn rejects_huge_hand_count_in_bounded_time() {
+        let result = parse_sfen("4k4/9/9/9/9/9/9/9/4K4 b 999999999999999999999999999999999999P 1");
+        assert_eq!(
+            result,
+            Err(SfenError::InvalidHandCount { piece: PieceType::PAWN, count: u32::MAX })
+        );
+    }
 }

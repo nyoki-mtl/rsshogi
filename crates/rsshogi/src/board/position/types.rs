@@ -1,6 +1,6 @@
 use crate::board::state_info::PartialKeys;
 use crate::board::zobrist::ZobristKey;
-use crate::types::{Color, EnteringKingRule, File, HandPiece, Piece, PieceType, Square};
+use crate::types::{Color, EnteringKingRule, File, HandPiece, Move, Piece, PieceType, Square};
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -412,6 +412,11 @@ pub struct MoveStackSiteFacts {
 pub enum MoveError {
     NoStateInfo,
     StackUnderflow,
+    /// 指定された手が現在の state に記録された直前手と一致しない。
+    MoveMismatch {
+        expected: Move,
+        actual: Move,
+    },
     /// 探索で allocation なしに利用できる state slot がない。
     StateCapacityExceeded,
 }
@@ -422,6 +427,7 @@ pub enum ValidationError {
     TwoKings(Color),
     DoublePawn(File, Color),
     InvalidHandCount { piece: HandPiece, count: u32 },
+    ExcessivePieceCount { piece: PieceType, count: u32, limit: u32 },
     InvalidPlacement(Square, PieceType),
 }
 
@@ -442,6 +448,8 @@ pub enum ValidationIssue {
     DoublePawn(File, Color),
     /// 持ち駒数が上限を超えている
     InvalidHandCount { piece: HandPiece, count: u32 },
+    /// 盤上と両者の持ち駒を合わせた駒数が標準将棋の総数を超えている
+    ExcessivePieceCount { piece: PieceType, count: u32, limit: u32 },
     /// 行き場のない駒の配置（歩・香・桂の段制限違反）
     InvalidPlacement(Square, PieceType),
 }
@@ -456,6 +464,9 @@ impl fmt::Display for ValidationIssue {
             }
             Self::InvalidHandCount { piece, count } => {
                 write!(f, "invalid hand count for {piece:?}: {count}")
+            }
+            Self::ExcessivePieceCount { piece, count, limit } => {
+                write!(f, "excessive piece count for {piece:?}: {count} (limit {limit})")
             }
             Self::InvalidPlacement(sq, pt) => {
                 write!(f, "invalid placement of {pt:?} on {sq:?}")

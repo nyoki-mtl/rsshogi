@@ -93,7 +93,10 @@ fn parse_kif_time_minutes(value: &str) -> Option<u32> {
 /// KIF の「持ち時間」から秒単位の秒読みを取得する。
 #[must_use]
 fn parse_kif_byoyomi_seconds(value: &str) -> Option<u32> {
-    parse_number_before_marker(value, "秒")
+    value
+        .split_once("秒読み")
+        .and_then(|(_, rest)| parse_number_before_marker(rest, "秒"))
+        .or_else(|| parse_number_before_marker(value, "秒"))
 }
 
 /// KIF の「持ち時間」行を解析して (base_seconds, byoyomi_seconds) を返す。
@@ -128,7 +131,8 @@ pub fn parse_csa_time_control(value: &str) -> Option<TimeControl> {
 }
 
 fn parse_decimal_to_u32(text: &str) -> Option<u32> {
-    let cleaned = text.trim();
+    let normalized = normalize_decimal_digits(text);
+    let cleaned = normalized.trim();
     if cleaned.is_empty() {
         return None;
     }
@@ -140,6 +144,8 @@ fn parse_decimal_to_u32(text: &str) -> Option<u32> {
 }
 
 fn parse_number_before_marker(text: &str, marker: &str) -> Option<u32> {
+    let text = normalize_decimal_digits(text);
+    let text = text.as_str();
     let idx = text.find(marker)?;
     let before = &text[..idx];
     let digits: String = before.chars().rev().take_while(|ch| ch.is_ascii_digit()).collect();
@@ -151,6 +157,8 @@ fn parse_number_before_marker(text: &str, marker: &str) -> Option<u32> {
 }
 
 fn parse_number_after_plus(text: &str, marker: &str) -> Option<u32> {
+    let text = normalize_decimal_digits(text);
+    let text = text.as_str();
     let idx = text.find('+')?;
     let after = &text[idx + 1..];
     let idx_marker = after.find(marker)?;
@@ -159,4 +167,33 @@ fn parse_number_after_plus(text: &str, marker: &str) -> Option<u32> {
         return None;
     }
     digits.parse::<u32>().ok()
+}
+
+fn normalize_decimal_digits(text: &str) -> String {
+    text.chars()
+        .map(|ch| match ch {
+            '０'..='９' => char::from_u32('0' as u32 + (ch as u32 - '０' as u32))
+                .expect("normalized decimal digit"),
+            _ => ch,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_kif_exported_byoyomi_form() {
+        let parsed = parse_kif_time_control("30分秒読み30秒").unwrap();
+        assert_eq!(parsed.base_seconds(), 30 * 60);
+        assert_eq!(parsed.byoyomi_seconds(), 30);
+    }
+
+    #[test]
+    fn parse_kif_fullwidth_time_control() {
+        let parsed = parse_kif_time_control("１時間３０分秒読み３０秒").unwrap();
+        assert_eq!(parsed.base_seconds(), 90 * 60);
+        assert_eq!(parsed.byoyomi_seconds(), 30);
+    }
 }

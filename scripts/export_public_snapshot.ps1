@@ -141,19 +141,29 @@ $exportBranch = "export-release-$Version"
 $publicGitAuthorName = if ($env:PUBLIC_GIT_AUTHOR_NAME) { $env:PUBLIC_GIT_AUTHOR_NAME } else { "nyoki-mtl" }
 $publicGitAuthorEmail = if ($env:PUBLIC_GIT_AUTHOR_EMAIL) { $env:PUBLIC_GIT_AUTHOR_EMAIL } else { "charmer.popopo@gmail.com" }
 
-$excludePaths = @(
-    "AGENTS.md",
-    "CLAUDE.md",
-    "GEMINI.md",
-    ".agents/**",
-    ".cursor/**",
-    ".codex/**",
-    ".claude/**",
-    ".vscode/**",
-    "agent-docs/**",
-    "release-notes/**",
-    ".sandbox/**",
-    ".serena/**"
+$publicPaths = @(
+    ".config",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    ".python-version",
+    "CHANGELOG.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "Makefile",
+    "README.md",
+    "clippy.toml",
+    "crates",
+    "docs",
+    "examples",
+    "justfile",
+    "pyproject.toml",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    "scripts",
+    "tests",
+    "uv.lock"
 )
 
 # REMOVE_PATHS should only list paths that are committed in SourceRef. Untracked
@@ -205,10 +215,12 @@ if ($hasPublicBase) {
     & git rm -r -f --ignore-unmatch . *> $null
 }
 
-Write-Host "[3/5] Overlay $SourceRef with excluded dev-only paths"
-$checkoutArgs = @($SourceRef, "--", ".")
-foreach ($path in $excludePaths) {
-    $checkoutArgs += ":(exclude)$path"
+Write-Host "[3/5] Overlay public paths from $SourceRef"
+$checkoutArgs = @($SourceRef, "--")
+foreach ($path in $publicPaths) {
+    if (Test-GitSuccess cat-file "-e" "${SourceRef}:$path") {
+        $checkoutArgs += $path
+    }
 }
 Invoke-Git checkout @checkoutArgs
 
@@ -246,6 +258,20 @@ if ($DryRun) {
 }
 
 $commitMessageFile = [System.IO.Path]::GetTempFileName()
+$gitIdentityNames = @(
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL"
+)
+$savedGitIdentity = @{}
+foreach ($name in $gitIdentityNames) {
+    $savedGitIdentity[$name] = if (Test-Path "Env:$name") {
+        [pscustomobject]@{ Exists = $true; Value = (Get-Item "Env:$name").Value }
+    } else {
+        [pscustomobject]@{ Exists = $false; Value = $null }
+    }
+}
 try {
     $message = Build-CommitMessage -ReleaseVersion $Version -ReleaseNotesLines $releaseNotesLines -IncludeReleaseNotes:$includeReleaseNotes
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -257,6 +283,14 @@ try {
     $env:GIT_COMMITTER_EMAIL = $publicGitAuthorEmail
     Invoke-Git commit -F $commitMessageFile
 } finally {
+    foreach ($name in $gitIdentityNames) {
+        $saved = $savedGitIdentity[$name]
+        if ($saved.Exists) {
+            Set-Item "Env:$name" $saved.Value
+        } else {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+    }
     Remove-Item -LiteralPath $commitMessageFile -Force -ErrorAction SilentlyContinue
 }
 

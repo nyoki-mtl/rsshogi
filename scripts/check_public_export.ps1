@@ -113,6 +113,7 @@ try {
     Write-TestFile (Join-Path $source "release-notes/v0.9.0.txt") "previous project release"
     Write-TestFile (Join-Path $source ".sandbox/private.txt") "private sandbox"
     Write-TestFile (Join-Path $source ".serena/private.txt") "private serena"
+    Write-TestFile (Join-Path $source "private-notes/new-dev-dir.txt") "unlisted private data"
 
     Invoke-Git $source add -A
     Invoke-Git $source commit -q -m "source snapshot"
@@ -157,12 +158,13 @@ try {
                 $powerShellArgs += @("-ExecutionPolicy", "Bypass")
             }
             $powerShellArgs += @("-File", "scripts/export_public_snapshot.ps1", "v0.0.0", "develop/main", "public/main", "-NotesFile", "release-notes/v0.0.0.txt")
-            & $powerShellExe @powerShellArgs *> $null
+            $exportOutput = & $powerShellExe @powerShellArgs 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         if ($exitCode -ne 0) {
+            $exportOutput | ForEach-Object { Write-Host $_ }
             throw "export_public_snapshot.ps1 failed"
         }
     } finally {
@@ -189,6 +191,7 @@ try {
     Assert-NotTracked $exportWork "release-notes"
     Assert-NotTracked $exportWork ".sandbox"
     Assert-NotTracked $exportWork ".serena"
+    Assert-NotTracked $exportWork "private-notes"
 
     if (Git-Output $exportWork ls-files -- obsolete.txt) {
         throw "deleted upstream path is still tracked after export: obsolete.txt"

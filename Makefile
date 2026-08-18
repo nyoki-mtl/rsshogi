@@ -49,6 +49,7 @@ test-rust:
 ifeq ($(OS),Windows_NT)
 	$(POWERSHELL) scripts/windows/test-rust.ps1
 else
+	cargo check -p rsshogi --all-targets
 	cargo test --doc -p rsshogi --all-features
 	@if cargo nextest --version >/dev/null 2>&1; then \
 		echo "[make] cargo-nextest detected: running nextest"; \

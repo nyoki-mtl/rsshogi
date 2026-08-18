@@ -1,6 +1,6 @@
 [package]
 name = "rsshogi"
-version = "1.2.2"
+version = "1.2.3"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -109,3 +109,7 @@ required-features = ["records"]
 [[example]]
 name = "sbinpack_size_breakdown"
 required-features = ["records"]
+
+[[example]]
+name = "sfen_roundtrip"
+path = "examples/sfen_roundtrip.rs"

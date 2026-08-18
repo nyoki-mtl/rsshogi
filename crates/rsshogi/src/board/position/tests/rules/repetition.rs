@@ -124,7 +124,25 @@ fn test_is_repetition_detects_threefold() {
 }
 
 #[test]
-fn test_clone_for_search_truncates_history_and_preserves_current_state() {
+fn test_is_repetition_detects_cycle_longer_than_search_clone_window() {
+    let mut pos = crate::board::position_from_sfen("8k/9/9/9/9/9/9/9/K8 b - 1").unwrap();
+    let cycle = [
+        "9i8i", "1a2a", "8i7i", "2a3a", "7i7h", "3a3b", "7h7g", "3b3c", "7g8g", "3c2c", "8g9g",
+        "2c1c", "9g9h", "1c1b", "9h8h", "1b2b", "8h9i", "2b1a",
+    ];
+
+    for _ in 0..3 {
+        for usi in cycle {
+            apply_usi_move(&mut pos, usi);
+        }
+    }
+
+    assert!(pos.is_repetition(3));
+    assert_eq!(pos.repetition_state(), RepetitionState::Draw);
+}
+
+#[test]
+fn test_clone_for_search_preserves_repetition_history_and_current_state() {
     let mut pos = crate::board::hirate_position();
 
     let moves = [
@@ -145,6 +163,26 @@ fn test_clone_for_search_truncates_history_and_preserves_current_state() {
     assert_eq!(cloned.last_moved_piece_type(), pos.last_moved_piece_type());
     assert_eq!(cloned.repetition_counter(), pos.repetition_counter());
     assert_eq!(cloned.repetition_distance(), pos.repetition_distance());
+    assert_eq!(cloned.state_stack_depth(), pos.state_stack_depth());
+}
+
+#[test]
+fn test_clone_for_search_bounded_truncates_history_and_preserves_current_state() {
+    let mut pos = crate::board::hirate_position();
+
+    let moves = [
+        "7g7f", "3c3d", "2g2f", "4c4d", "3i4h", "3a4b", "5g5f", "5c5d", "4h5g", "4b5c", "5g4f",
+        "5c4b", "4f5g", "4b5c", "5g4f", "5c4b", "4f5g", "4b5c", "5g4f", "5c4b",
+    ];
+    for usi in moves {
+        apply_usi_move(&mut pos, usi);
+    }
+
+    let cloned = pos.clone_for_search_bounded(16);
+
+    assert_eq!(cloned.to_sfen(None), pos.to_sfen(None));
+    assert_eq!(cloned.key(), pos.key());
+    assert_eq!(cloned.repetition_counter(), pos.repetition_counter());
     assert_eq!(cloned.state_stack_depth(), 16);
     assert!(cloned.state_stack_depth() < pos.state_stack_depth());
 }
@@ -165,6 +203,45 @@ fn test_clone_for_search_keeps_enough_history_for_repetition() {
     }
 
     assert_eq!(cloned.repetition_state(), RepetitionState::Draw);
+}
+
+#[test]
+fn test_clone_for_search_detects_repetition_beyond_sixteen_plies_after_root() {
+    let mut pos = crate::board::position_from_sfen("8k/9/9/9/9/9/9/9/K8 b - 1").unwrap();
+    let cycle = [
+        "9i8i", "1a2a", "8i7i", "2a3a", "7i7h", "3a3b", "7h7g", "3b3c", "7g8g", "3c2c", "8g9g",
+        "2c1c", "9g9h", "1c1b", "9h8h", "1b2b", "8h9i", "2b1a",
+    ];
+
+    for _ in 0..2 {
+        for usi in cycle {
+            apply_usi_move(&mut pos, usi);
+        }
+    }
+    for usi in &cycle[..cycle.len() - 1] {
+        apply_usi_move(&mut pos, usi);
+    }
+
+    let mut cloned = pos.clone_for_search();
+    apply_usi_move(&mut cloned, cycle[cycle.len() - 1]);
+
+    assert_eq!(cloned.repetition_counter(), 3);
+    assert_eq!(cloned.repetition_state(), RepetitionState::Draw);
+}
+
+#[test]
+fn test_repetition_cycle_can_include_captures_and_drops() {
+    let mut pos = crate::board::position_from_sfen("4r3k/9/9/9/9/9/9/9/K4R3 b P 1").unwrap();
+    let cycle = ["P*5h", "5a5h", "9i8i", "P*4g", "4i4g", "1a2a", "4g4i", "2a1a", "8i9i", "5h5a"];
+
+    for _ in 0..3 {
+        for usi in cycle {
+            apply_usi_move(&mut pos, usi);
+        }
+    }
+
+    assert_eq!(pos.repetition_counter(), 3);
+    assert_eq!(pos.repetition_state(), RepetitionState::Draw);
 }
 
 #[test]

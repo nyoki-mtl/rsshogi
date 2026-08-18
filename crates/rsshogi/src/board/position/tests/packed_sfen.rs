@@ -3,7 +3,7 @@ use crate::board::position::{
     bit_io::BitReader,
     packed_sfen::{read_board_piece, read_board_piece_fast, read_hand_piece, read_hand_piece_fast},
 };
-use crate::types::HandPiece;
+use crate::types::{HandPiece, PieceType};
 
 struct TestPackedSfenSink {
     board: BoardArray,
@@ -109,6 +109,35 @@ fn test_packed_sfen_rejects_invalid_king_square() {
     assert_eq!(
         Position::sfen_unpack(&packed),
         Err(PackedSfenError::InvalidKingSquare { color: Color::BLACK, square: 81 })
+    );
+}
+
+#[test]
+fn test_packed_sfen_encoder_rejects_missing_king() {
+    let cases = [
+        (
+            "8k/9/9/9/9/9/9/9/9 b - 1",
+            PackedSfenError::InvalidKingSquare { color: Color::BLACK, square: 81 },
+        ),
+        (
+            "9/9/9/9/9/9/9/9/K8 b - 1",
+            PackedSfenError::InvalidKingSquare { color: Color::WHITE, square: 81 },
+        ),
+    ];
+
+    for (sfen, expected) in cases {
+        let position = Position::from_sfen(sfen).expect("one-king sfen should parse");
+        assert_eq!(position.try_to_packed_sfen(), Err(expected));
+    }
+}
+
+#[test]
+fn test_packed_sfen_encoder_rejects_excess_inventory() {
+    let position = Position::from_sfen("4k4/9/9/9/9/9/9/GGGGG4/4K4 b - 1")
+        .expect("structurally parseable position");
+    assert_eq!(
+        position.try_to_packed_sfen(),
+        Err(PackedSfenError::InvalidInventory { piece: PieceType::GOLD, count: 5, limit: 4 })
     );
 }
 

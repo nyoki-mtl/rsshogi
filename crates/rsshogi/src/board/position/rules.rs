@@ -13,8 +13,8 @@ use crate::types::{
 };
 use std::sync::atomic::{AtomicU16, Ordering};
 
-/// 千日手判定で遡る最大手数
-const DEFAULT_MAX_REPETITION_PLY: Ply = 16;
+/// `clone_for_search()` が既定で保持する反復判定履歴の最大手数。
+const DEFAULT_MAX_REPETITION_PLY: Ply = Ply::MAX;
 static MAX_REPETITION_PLY: AtomicU16 = AtomicU16::new(DEFAULT_MAX_REPETITION_PLY);
 
 #[inline]
@@ -53,6 +53,12 @@ impl Position {
     #[must_use]
     #[inline]
     pub fn gives_check_move32(&self, mv: Move32) -> bool {
+        if !mv.is_normal() {
+            return false;
+        }
+        if !mv.has_piece_info() {
+            return self.gives_check_impl(mv.to_move());
+        }
         let them = self.turn().flip();
         let king_sq = self.king_square(them);
         if king_sq.is_none() {
@@ -414,7 +420,7 @@ impl Position {
             return;
         }
 
-        let limit = plies_from_null.min(max_repetition_ply());
+        let limit = plies_from_null;
         let mut repetition_counter: i32 = 0;
         let mut repetition_distance: i32 = 0;
         let mut repetition_times: i32 = 0;
@@ -513,7 +519,7 @@ impl Position {
         // 遡り可能な手数を計算
         // null move より前と保持範囲の外側は走査しない。
         let plies_from_null = stack.hot(self.st_index).plies_from_null;
-        let ply_limit = ply.min(plies_from_null as usize).min(max_repetition_ply() as usize);
+        let ply_limit = ply.min(plies_from_null as usize).min(self.st_index);
 
         // 少なくとも4手かけないと千日手にはならない
         if ply_limit < 4 {
@@ -614,22 +620,33 @@ impl Position {
     }
     // ANCHOR_END: position_is_repetition
 
-    /// 千日手判定で遡る最大手数を設定する。
+    /// [`Position::clone_for_search`] が保持する反復判定履歴の最大手数を設定する。
+    ///
+    /// 既定値は `Ply::MAX` で、null move 以降の全履歴を保持する。これより短い値は
+    /// 長周期の千日手や連続王手を見逃しうるため、探索上の近似を明示的に選ぶ場合に限る。
     pub fn set_max_repetition_ply(ply: Ply) {
         MAX_REPETITION_PLY.store(ply, Ordering::Relaxed);
     }
 
-    /// 探索ワーカー向けに、直近の反復判定履歴だけを保持した clone を返す。
+    /// 探索ワーカー向けに、反復判定履歴を保持した clone を返す。
     ///
-    /// 全履歴を複製せず、千日手判定・連続王手判定に必要な範囲
-    /// `min(max_repetition_ply, plies_from_null)` だけを残す。
+    /// 既定では、千日手判定・連続王手判定に必要な null move 以降の全履歴を残す。
+    /// [`Position::set_max_repetition_ply`] で明示的に上限を下げた場合は、その範囲だけを残す。
     /// 返される局面の盤面・手駒・手番・ハッシュ・直近 state は元局面と等価で、
     /// `state_stack` だけが search 向けに切り詰められる。
     #[must_use]
     pub fn clone_for_search(&self) -> Self {
+        self.clone_for_search_bounded(max_repetition_ply())
+    }
+
+    /// 指定範囲の反復判定履歴だけを保持した内部探索用 clone を返す。
+    ///
+    /// 保持範囲を超える千日手と連続王手は検出できない。反復判定を使わない探索に限って使う。
+    #[must_use]
+    pub(crate) fn clone_for_search_bounded(&self, max_history_ply: Ply) -> Self {
         let head = self.st_index;
         let current = self.current_hot();
-        let history_limit = usize::from(current.plies_from_null.min(max_repetition_ply()));
+        let history_limit = usize::from(current.plies_from_null.min(max_history_ply));
         let keep_from = head.saturating_sub(history_limit);
         let state_stack = self.state_stack.clone_suffix(keep_from);
 

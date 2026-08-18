@@ -156,6 +156,22 @@ fn db2016_binary_mode_searches_the_file_without_materializing_it() {
 }
 
 #[test]
+fn db2016_binary_mode_accepts_bom_without_header() {
+    let path = temp_path("bom-headerless.db");
+    let position = "4k4/9/9/9/9/9/9/9/4K4 b - 1";
+    fs::write(&path, format!("\u{feff}sfen {position}\n5i5h none 1 1\n"))
+        .expect("write DB2016 fixture");
+
+    let options =
+        YaneuraOuBookOpenOptions::with_access_mode(YaneuraOuAccessMode::AssumeSortedByCaller);
+    let book = YaneuraOuBook::open_with_options(&path, options).expect("open DB2016 fixture");
+    let entry = book.lookup_sfen(position).expect("lookup").expect("entry");
+    assert_eq!(entry.sfen(), position);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn ybb_exact_single_record_layout_is_readable() {
     let path = temp_path("single.ybb");
     let position = hirate_position();

@@ -874,11 +874,17 @@ impl RecordNode {
     }
 
     #[must_use]
+    /// 直下の全 child node ID を返す。
+    ///
+    /// 互換名の `variations` も同じ全 child を返し、本譜以外だけを返す API ではない。
     pub fn children(&self) -> &[RecordNodeId] {
         &self.children
     }
 
     #[must_use]
+    /// 直下の全 child node ID を返す。
+    ///
+    /// 本譜以外だけを取得する場合は [`Record::variation_children`] を使う。
     pub fn variations(&self) -> &[RecordNodeId] {
         &self.children
     }
@@ -1161,6 +1167,12 @@ impl Record {
     }
 
     #[must_use]
+    /// node を取得する。
+    ///
+    /// # Panics
+    ///
+    /// `node_id` が無効または削除済みの場合に panic する。外部由来の ID には
+    /// [`Self::try_node`] を使う。
     pub fn node(&self, node_id: RecordNodeId) -> &RecordNode {
         self.try_node(node_id).expect("record node id must be valid")
     }
@@ -1182,6 +1194,12 @@ impl Record {
     }
 
     #[must_use]
+    /// node の全 child ID を取得する。
+    ///
+    /// # Panics
+    ///
+    /// `node_id` が無効または削除済みの場合に panic する。外部由来の ID には
+    /// [`Self::try_children`] を使う。
     pub fn children(&self, node_id: RecordNodeId) -> &[RecordNodeId] {
         self.try_children(node_id).expect("record node id must be valid")
     }
@@ -1462,15 +1480,20 @@ impl Record {
     }
 
     fn remove_subtree_slots(&mut self, node_id: RecordNodeId) -> Result<(), RecordError> {
-        let children = self.try_node(node_id)?.children.clone();
-        for child in children {
-            self.remove_subtree_slots(child)?;
+        let mut stack = vec![(node_id, false)];
+        while let Some((current, visited)) = stack.pop() {
+            if visited {
+                let slot = self
+                    .nodes
+                    .get_mut(current.slot_index())
+                    .ok_or(RecordError::InvalidNodeId(current.raw()))?;
+                *slot = NodeSlot::Removed;
+                continue;
+            }
+            let children = self.try_node(current)?.children.clone();
+            stack.push((current, true));
+            stack.extend(children.into_iter().map(|child| (child, false)));
         }
-        let slot = self
-            .nodes
-            .get_mut(node_id.slot_index())
-            .ok_or(RecordError::InvalidNodeId(node_id.raw()))?;
-        *slot = NodeSlot::Removed;
         Ok(())
     }
 }
@@ -1660,6 +1683,21 @@ impl RecordEditor {
         other: &Record,
         options: MergeOptions,
     ) -> Result<Vec<RecordNodeId>, RecordError> {
+        let mut staged = Self {
+            record: self.record.clone(),
+            current: self.current,
+            position: self.position.clone(),
+        };
+        let created = staged.merge_record_in_place(other, options)?;
+        *self = staged;
+        Ok(created)
+    }
+
+    fn merge_record_in_place(
+        &mut self,
+        other: &Record,
+        options: MergeOptions,
+    ) -> Result<Vec<RecordNodeId>, RecordError> {
         let mut created = Vec::new();
         let mut source = other.main_child(other.root_id());
         while let Some(source_id) = source {
@@ -1672,6 +1710,11 @@ impl RecordEditor {
                 DuplicateHandling::ReuseExisting => self.find_matching_child(self.current, &entry),
                 DuplicateHandling::AlwaysCreate => None,
             };
+            if let RecordEntry::Move(mv) = &entry
+                && !self.position.is_legal_move(mv.mv())
+            {
+                return Err(RecordError::IllegalMove);
+            }
             let child = if let Some(existing) = target {
                 existing
             } else {
@@ -1684,9 +1727,6 @@ impl RecordEditor {
                 child
             };
             if let RecordEntry::Move(mv) = &entry {
-                if !self.position.is_legal_move(mv.mv()) {
-                    return Err(RecordError::IllegalMove);
-                }
                 self.position.apply_move(mv.mv());
             }
             self.current = child;
@@ -1721,8 +1761,19 @@ fn copy_subtree(
         entry,
         source_node.annotation().clone(),
     )?;
-    for &child in source_node.children() {
-        copy_subtree(source, child, target, copied)?;
+    let mut pending: Vec<_> =
+        source_node.children().iter().rev().map(|&child| (child, copied)).collect();
+    while let Some((source_child, target_parent)) = pending.pop() {
+        let source_node = source.try_node(source_child)?;
+        let Some(entry) = source_node.entry().cloned() else {
+            continue;
+        };
+        let target_child = target.append_child_with_annotation(
+            target_parent,
+            entry,
+            source_node.annotation().clone(),
+        )?;
+        pending.extend(source_node.children().iter().rev().map(|&child| (child, target_child)));
     }
     Ok(copied)
 }
@@ -1733,14 +1784,19 @@ fn nodes_logically_equal(
     right_record: &Record,
     right_id: RecordNodeId,
 ) -> bool {
-    let left = left_record.node(left_id);
-    let right = right_record.node(right_id);
-    left.entry == right.entry
-        && left.annotation == right.annotation
-        && left.children.len() == right.children.len()
-        && left.children.iter().zip(&right.children).all(|(&left_child, &right_child)| {
-            nodes_logically_equal(left_record, left_child, right_record, right_child)
-        })
+    let mut pending = vec![(left_id, right_id)];
+    while let Some((left_id, right_id)) = pending.pop() {
+        let left = left_record.node(left_id);
+        let right = right_record.node(right_id);
+        if left.entry != right.entry
+            || left.annotation != right.annotation
+            || left.children.len() != right.children.len()
+        {
+            return false;
+        }
+        pending.extend(left.children.iter().copied().zip(right.children.iter().copied()));
+    }
+    true
 }
 
 fn special_from_game_result(result: GameResult) -> SpecialMove {
@@ -1837,5 +1893,45 @@ mod tests {
             subtree.node(subtree.children(subtree.root_id())[1]).mv().unwrap().mv().to_usi(),
             record.node(variation).mv().unwrap().mv().to_usi()
         );
+    }
+
+    #[test]
+    fn merge_record_is_atomic_on_illegal_move() {
+        let pos = hirate_position();
+        let mut editor = RecordEditor::new(pos.to_sfen(None)).unwrap();
+        let mut other = Record::new(pos.to_sfen(None)).unwrap();
+        let first = other
+            .append_move(other.root_id(), MoveEntry::new(Move::from_usi("7g7f").unwrap()))
+            .unwrap();
+        other.append_move(first, MoveEntry::new(Move::from_usi("7g7f").unwrap())).unwrap();
+        let before = editor.record().clone();
+        let before_sfen = editor.position().to_sfen(None);
+
+        assert!(matches!(
+            editor.merge_record(&other, MergeOptions::default()),
+            Err(RecordError::IllegalMove)
+        ));
+        assert_eq!(editor.record(), &before);
+        assert_eq!(editor.position().to_sfen(None), before_sfen);
+        assert_eq!(editor.current_node(), editor.record().root_id());
+    }
+
+    #[test]
+    fn deep_record_equality_and_subtree_copy_are_iterative() {
+        let pos = hirate_position();
+        let mut record = Record::new(pos.to_sfen(None)).unwrap();
+        let mut parent = record.root_id();
+        for _ in 0..20_000 {
+            parent = record
+                .append_move(parent, MoveEntry::new(Move::from_usi("7g7f").unwrap()))
+                .unwrap();
+        }
+
+        assert_eq!(record, record.clone());
+        let mut copied = record.subtree(record.root_id(), SubtreeOptions::default()).unwrap();
+        assert_eq!(copied.node_count(), record.node_count());
+        let first = copied.children(copied.root_id())[0];
+        copied.detach_subtree(first).unwrap();
+        assert_eq!(copied.node_count(), 1);
     }
 }

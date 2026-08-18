@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-08-18
+
+### Added
+
+- Added `Position::try_to_huffman_coded_pos` for fallible HCP encoding of externally supplied or
+  otherwise unvalidated positions.
+- Validation reports now identify inventories that exceed the standard total for each piece type.
+
+### Changed
+
+- Python record parsers release the GIL while parsing text, and PSV export traverses deep record
+  trees iteratively.
+- Repetition adjudication examines the retained game history without applying the search clone's
+  16-ply history limit. `Position::clone_for_search` also retains the full post-null history by
+  default, preserving long-period repetition adjudication after cloning.
+
+### Fixed
+
+- Move legality rejects malformed raw moves, dead-end drops, and unpromoted knight moves to ranks
+  where the knight would have no legal destination. Applying a piece-less `Move32` now restores
+  its board metadata before updating check state.
+- SFEN, static-book, SAZPACK, SBINPACK, KIF, KI2, CSA, JKF, YaneuraOu book, HCP, and PACK paths now
+  reject malformed counts, lengths, offsets, overflows, or inconsistent results instead of
+  panicking, allocating from untrusted headers, truncating, or silently corrupting data.
+- HCP, PackedSfen, and PackedSfenValue encoding now reject one-king and excess-inventory positions
+  through fallible Rust and Python APIs before writing past the 32-byte bitstream.
+- KI2 emits combined direction modifiers such as `左上` when required for an unambiguous
+  round-trip. KIF and KI2 also preserve exported time controls, comments, branches, and handicap
+  side names more accurately.
+- Record merges are atomic on validation failure, deep equality and subtree operations are
+  iterative, and safe undo rejects a move that does not match the current state.
+- Default-feature Rust builds are checked in CI in addition to the all-features configuration.
+
 ## [1.2.2] - 2026-08-18
 
 ### Added
@@ -400,7 +433,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...v1.2.0

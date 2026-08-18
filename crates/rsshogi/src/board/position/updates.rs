@@ -90,6 +90,7 @@ impl Position {
     /// 指し手を適用
     #[allow(clippy::too_many_lines, clippy::cast_possible_truncation, clippy::cognitive_complexity)]
     pub fn apply_move32(&mut self, mv: Move32) {
+        let mv = self.complete_move32(mv);
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
         let gives_check = self.gives_check_move32(mv);
         self.apply_move32_with_gives_check(mv, gives_check);
@@ -98,6 +99,7 @@ impl Position {
     /// 指し手を適用（王手判定を外部で計算済みの場合）
     #[inline]
     pub fn apply_move32_with_gives_check(&mut self, mv: Move32, gives_check: bool) {
+        let mv = self.complete_move32(mv);
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
         match self.turn() {
             Color::BLACK => {
@@ -120,6 +122,7 @@ impl Position {
     #[inline]
     #[must_use]
     pub fn apply_move32_with_facts(&mut self, mv: Move32, gives_check: bool) -> MoveApplyFacts {
+        let mv = self.complete_move32(mv);
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
         match self.turn() {
             Color::BLACK => self
@@ -128,6 +131,15 @@ impl Position {
             Color::WHITE => self
                 .apply_move32_with_gives_check_for::<false, true>(mv, gives_check)
                 .expect("delta must be present when requested"),
+        }
+    }
+
+    #[inline]
+    fn complete_move32(&self, mv: Move32) -> Move32 {
+        if mv.is_normal() && !mv.has_piece_info() {
+            self.move32_from_move(mv.to_move())
+        } else {
+            mv
         }
     }
 
@@ -539,6 +551,18 @@ impl Position {
         &mut self,
         m: Move,
     ) -> Result<Option<MoveDelta32>, MoveError> {
+        let last_move = self.last_move();
+        if last_move == Move32::MOVE_NONE {
+            return Err(MoveError::StackUnderflow);
+        }
+        if self.plies_from_null() == 0 {
+            return Err(MoveError::MoveMismatch { expected: Move::MOVE_NULL, actual: m });
+        }
+        let expected = last_move.to_move();
+        if expected != m {
+            return Err(MoveError::MoveMismatch { expected, actual: m });
+        }
+
         // StateStack から前の状態を取得する。キーの真実点は state 側にあるため、
         // st_index を戻すだけで復元される。
         let (captured, current_index) = {

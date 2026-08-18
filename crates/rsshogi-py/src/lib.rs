@@ -2013,37 +2013,47 @@ impl PyRecord {
 
     #[classmethod]
     fn from_kif_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Self> {
-        let record =
-            parse_kif_str_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_kif_str_record(text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
     #[classmethod]
     fn from_ki2_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Self> {
-        let record =
-            parse_ki2_str_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_ki2_str_record(text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
     #[classmethod]
     fn from_csa_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Self> {
-        let record =
-            parse_csa_str_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_csa_str_record(text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
     /// Parse a CSA text that may hold several games separated by a `/` line.
     #[classmethod]
     fn from_csa_games_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Vec<Self>> {
-        let games =
-            parse_csa_games_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let games = _cls
+            .py()
+            .detach(|| parse_csa_games_record(text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(games.into_iter().map(|inner| Self { inner }).collect())
     }
 
     #[classmethod]
     fn from_jkf_str(_cls: &Bound<'_, PyType>, text: &str) -> PyResult<Self> {
-        let record =
-            parse_jkf_str_record(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_jkf_str_record(text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
@@ -2384,8 +2394,10 @@ impl PyRecord {
         encoding: Option<&str>,
     ) -> PyResult<Self> {
         let text = read_text_with_encoding(path, encoding, default_kif_encoding)?;
-        let record =
-            parse_kif_str_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_kif_str_record(&text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
@@ -2397,8 +2409,10 @@ impl PyRecord {
         encoding: Option<&str>,
     ) -> PyResult<Self> {
         let text = read_text_with_encoding(path, encoding, default_ki2_encoding)?;
-        let record =
-            parse_ki2_str_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_ki2_str_record(&text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
@@ -2410,8 +2424,10 @@ impl PyRecord {
         encoding: Option<&str>,
     ) -> PyResult<Self> {
         let text = read_text_with_encoding(path, encoding, default_csa_encoding)?;
-        let record =
-            parse_csa_str_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_csa_str_record(&text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
@@ -2424,8 +2440,10 @@ impl PyRecord {
         encoding: Option<&str>,
     ) -> PyResult<Vec<Self>> {
         let text = read_text_with_encoding(path, encoding, default_csa_encoding)?;
-        let games =
-            parse_csa_games_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let games = _cls
+            .py()
+            .detach(|| parse_csa_games_record(&text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(games.into_iter().map(|inner| Self { inner }).collect())
     }
 
@@ -2437,8 +2455,10 @@ impl PyRecord {
         encoding: Option<&str>,
     ) -> PyResult<Self> {
         let text = read_text_with_encoding(path, encoding, default_jkf_encoding)?;
-        let record =
-            parse_jkf_str_record(&text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let record = _cls
+            .py()
+            .detach(|| parse_jkf_str_record(&text))
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(Self { inner: record })
     }
 
@@ -2731,17 +2751,20 @@ fn record_from_py_main_line(
 
 fn append_py_moves_to_record(
     record: &mut Record,
-    mut parent: RecordNodeId,
+    parent: RecordNodeId,
     moves: Vec<PyMoveEntry>,
 ) -> PyResult<Vec<usize>> {
+    let mut editor = RecordEditor::from_record(record.clone())
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    editor.go_to(parent).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let mut ids = Vec::with_capacity(moves.len());
     for mv in moves {
-        let child = record
-            .append_move_with_annotation(parent, mv.inner, mv.annotation)
+        let child = editor
+            .append_move_with_annotation(mv.inner, mv.annotation)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
         ids.push(child.raw());
-        parent = child;
     }
+    *record = editor.into_record();
     Ok(ids)
 }
 
@@ -2760,44 +2783,59 @@ fn collect_record_psv_entries(
     out: &Bound<'_, PyList>,
 ) -> PyResult<()> {
     let py = out.py();
-    for (index, &child_id) in record.children(node_id).iter().enumerate() {
-        let child_on_main_line = on_main_line && index == 0;
-        let include_node = (child_on_main_line && options.include_main)
-            || (!child_on_main_line && options.include_variations);
-        let node = record.node(child_id);
+    let mut stack = Vec::new();
+    for (index, &child_id) in record.children(node_id).iter().enumerate().rev() {
+        stack.push((child_id, position.clone(), on_main_line && index == 0));
+    }
+
+    while let Some((current_id, mut current_position, current_on_main_line)) = stack.pop() {
+        let include_node = (current_on_main_line && options.include_main)
+            || (!current_on_main_line && options.include_variations);
+        let node = record.node(current_id);
         if let Some(mv_record) = node.mv() {
+            let mv32 = current_position.move32_from_move(mv_record.mv());
+            if !current_position.is_legal_move32(mv32) {
+                return Err(PyValueError::new_err(format!(
+                    "to_psv: illegal move at node_id={} (move={})",
+                    current_id.raw(),
+                    mv_record.mv().to_usi()
+                )));
+            }
             if include_node {
                 let eval = node.eval().ok_or_else(|| {
                     PyValueError::new_err(format!(
                         "to_psv: missing eval at node_id={} (move={})",
-                        child_id.raw(),
+                        current_id.raw(),
                         mv_record.mv().to_usi()
                     ))
                 })?;
-                let value =
-                    build_psv_entry(position, eval.raw(), mv_record.mv(), options.game_result);
+                let value = build_psv_entry(
+                    &current_position,
+                    eval.raw(),
+                    mv_record.mv(),
+                    options.game_result,
+                )?;
                 out.append(PyBytes::new(py, &value))?;
             }
 
-            let mut next = position.clone();
-            next.apply_move(mv_record.mv());
-            collect_record_psv_entries(record, child_id, &next, child_on_main_line, options, out)?;
-        } else {
-            collect_record_psv_entries(
-                record,
-                child_id,
-                position,
-                child_on_main_line,
-                options,
-                out,
-            )?;
+            current_position.apply_move32(mv32);
+        }
+
+        for (index, &child_id) in record.children(current_id).iter().enumerate().rev() {
+            stack.push((child_id, current_position.clone(), current_on_main_line && index == 0));
         }
     }
     Ok(())
 }
 
-fn build_psv_entry(position: &Position, score: i16, mv: Move, game_result: GameResult) -> [u8; 40] {
-    let packed = position.to_packed_sfen();
+fn build_psv_entry(
+    position: &Position,
+    score: i16,
+    mv: Move,
+    game_result: GameResult,
+) -> PyResult<[u8; 40]> {
+    let packed =
+        position.try_to_packed_sfen().map_err(|err| PyValueError::new_err(err.to_string()))?;
     let mut value = [0u8; 40];
     value[..32].copy_from_slice(&packed.data);
     value[32..34].copy_from_slice(&score.to_le_bytes());
@@ -2805,7 +2843,7 @@ fn build_psv_entry(position: &Position, score: i16, mv: Move, game_result: GameR
     value[36..38].copy_from_slice(&position.game_ply().to_le_bytes());
     value[38] = (game_result as i8) as u8;
     value[39] = 0;
-    value
+    Ok(value)
 }
 
 pub(crate) fn path_to_string(path: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -2938,6 +2976,7 @@ impl PyValidationIssue {
             RawValidationIssue::TwoKings(_) => "TWO_KINGS",
             RawValidationIssue::DoublePawn(_, _) => "DOUBLE_PAWN",
             RawValidationIssue::InvalidHandCount { .. } => "INVALID_HAND_COUNT",
+            RawValidationIssue::ExcessivePieceCount { .. } => "EXCESSIVE_PIECE_COUNT",
             RawValidationIssue::InvalidPlacement(_, _) => "INVALID_PLACEMENT",
         }
     }
@@ -2949,6 +2988,7 @@ impl PyValidationIssue {
             | RawValidationIssue::TwoKings(color)
             | RawValidationIssue::DoublePawn(_, color) => Some(PyColor::from_color(color)),
             RawValidationIssue::InvalidHandCount { .. }
+            | RawValidationIssue::ExcessivePieceCount { .. }
             | RawValidationIssue::InvalidPlacement(_, _) => None,
         }
     }
@@ -2978,6 +3018,9 @@ impl PyValidationIssue {
             RawValidationIssue::InvalidPlacement(_, piece_type) => {
                 Some(PyPieceType::from_piece_type(piece_type))
             }
+            RawValidationIssue::ExcessivePieceCount { piece, .. } => {
+                Some(PyPieceType::from_piece_type(piece))
+            }
             _ => None,
         }
     }
@@ -2986,6 +3029,15 @@ impl PyValidationIssue {
     fn count(&self) -> Option<u32> {
         match self.inner {
             RawValidationIssue::InvalidHandCount { count, .. } => Some(count),
+            RawValidationIssue::ExcessivePieceCount { count, .. } => Some(count),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn limit(&self) -> Option<u32> {
+        match self.inner {
+            RawValidationIssue::ExcessivePieceCount { limit, .. } => Some(limit),
             _ => None,
         }
     }
@@ -3238,7 +3290,10 @@ impl PyBoard {
         py: Python<'_>,
         out: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let packed = self.position.to_packed_sfen();
+        let packed = self
+            .position
+            .try_to_packed_sfen()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         if let Some(out) = out {
             fill_psfen_output(out, &packed.data)?;
             Ok(py.None())
@@ -3249,7 +3304,10 @@ impl PyBoard {
 
     #[pyo3(signature = (out=None))]
     fn to_hcp(&self, py: Python<'_>, out: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        let packed = self.position.to_huffman_coded_pos();
+        let packed = self
+            .position
+            .try_to_huffman_coded_pos()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         if let Some(out) = out {
             fill_hcp_output(out, &packed.data)?;
             Ok(py.None())
@@ -3268,7 +3326,10 @@ impl PyBoard {
         game_ply: Option<u32>,
         out: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let packed = self.position.to_packed_sfen();
+        let packed = self
+            .position
+            .try_to_packed_sfen()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         let mv = mv.map_or(Ok(Move::MOVE_NONE), parse_move_arg)?;
         let result = game_result.map_or(Ok(GameResult::Invalid), parse_game_result_arg)?;
 
@@ -3345,12 +3406,11 @@ impl PyBoard {
             || Err(PyValueError::new_err("game_result is required for hcpe export")),
             parse_hcpe_game_result_arg,
         )?;
-        let entry = HuffmanCodedPosAndEval::new(
-            self.position.to_huffman_coded_pos(),
-            score,
-            best_move,
-            result,
-        );
+        let hcp = self
+            .position
+            .try_to_huffman_coded_pos()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let entry = HuffmanCodedPosAndEval::new(hcp, score, best_move, result);
         let value = encode_hcpe_entry(&entry);
 
         if let Some(out) = out {
@@ -3973,6 +4033,9 @@ fn validation_error_message(err: &RawValidationError) -> String {
         }
         RawValidationError::InvalidHandCount { piece, count } => {
             format!("invalid hand count for {piece:?}: {count}")
+        }
+        RawValidationError::ExcessivePieceCount { piece, count, limit } => {
+            format!("excessive piece count for {piece:?}: {count} (limit {limit})")
         }
         RawValidationError::InvalidPlacement(square, piece_type) => {
             format!("invalid placement of {piece_type:?} on {square:?}")

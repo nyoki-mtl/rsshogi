@@ -61,9 +61,14 @@ pub fn decode_uleb128_u32_bounded(input: &[u8], offset: &mut usize, end: usize) 
 }
 
 /// sbinpack の評価値差分をエンコードする。
-pub(crate) fn encode_score_delta(prev_eval: i32, current_eval: i32, out: &mut Vec<u8>) {
-    let delta = current_eval - prev_eval;
+pub(crate) fn encode_score_delta(
+    prev_eval: i32,
+    current_eval: i32,
+    out: &mut Vec<u8>,
+) -> Result<(), SbinpackError> {
+    let delta = current_eval.checked_sub(prev_eval).ok_or(SbinpackError::EvalOverflow)?;
     encode_uleb128_u32(zigzag_i32(delta), out);
+    Ok(())
 }
 
 /// `end` を上限として sbinpack の評価値差分をデコードする。
@@ -91,6 +96,12 @@ pub enum SbinpackError {
     MissingEval(usize),
     /// metadata が v2 の上限を超えている。
     MetadataTooLarge { len: usize, max: usize },
+    /// 1 チェーンの手数が `u16` の上限を超えている。
+    TooManyMoves(usize),
+    /// チャンク payload が `u32` の上限を超えている。
+    ChunkTooLarge(usize),
+    /// 評価値の符号反転または差分計算が `i32` の範囲を超えた。
+    EvalOverflow,
 }
 
 /// sbinpack チェーンの先頭局面データ（PackedSfen + 評価値 + 最善手 + 手数/結果）。
@@ -392,9 +403,13 @@ impl<B: AsRef<[u8]>> SbinpackDecoder<B> {
         let Some(mv) = move_from_index(&state.position, move_index) else {
             return self.fail(SbinpackError::InvalidMoveIndex(u32::from(move_index)));
         };
-        let normalized_eval = state.previous_normalized_eval + delta;
-        let eval =
-            if state.ply_index.is_multiple_of(2) { normalized_eval } else { -normalized_eval };
+        let Some(normalized_eval) = state.previous_normalized_eval.checked_add(delta) else {
+            return self.fail(SbinpackError::EvalOverflow);
+        };
+        let Some(eval) = denormalize_eval_from_delta(normalized_eval, usize::from(state.ply_index))
+        else {
+            return self.fail(SbinpackError::EvalOverflow);
+        };
         let ply_index = state.ply_index;
         state.previous_normalized_eval = normalized_eval;
         state.ply_index += 1;
@@ -589,10 +604,12 @@ pub fn serialize_file(chains: &[SbinpackChain]) -> Result<Vec<u8>, SbinpackError
     for chain in chains {
         serialize_chain(chain, &mut payload)?;
     }
+    let payload_len =
+        u32::try_from(payload.len()).map_err(|_| SbinpackError::ChunkTooLarge(payload.len()))?;
 
     let mut out = Vec::new();
     out.extend_from_slice(&SBINPACK_MAGIC);
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&payload_len.to_le_bytes());
     out.extend_from_slice(&payload);
     Ok(out)
 }
@@ -602,7 +619,8 @@ pub fn deserialize_file(input: &[u8]) -> Result<SbinpackFile, SbinpackError> {
     let mut offset = 0;
     let mut chains = Vec::new();
     while offset < input.len() {
-        if offset + 8 > input.len() {
+        let header_end = offset.checked_add(8).ok_or(SbinpackError::Truncated)?;
+        if header_end > input.len() {
             return Err(SbinpackError::Truncated);
         }
         if input[offset..offset + 4] != SBINPACK_MAGIC {
@@ -614,11 +632,11 @@ pub fn deserialize_file(input: &[u8]) -> Result<SbinpackFile, SbinpackError> {
             input[offset + 6],
             input[offset + 7],
         ]) as usize;
-        offset += 8;
-        if offset + chunk_size > input.len() {
+        offset = header_end;
+        let chunk_end = offset.checked_add(chunk_size).ok_or(SbinpackError::Truncated)?;
+        if chunk_end > input.len() {
             return Err(SbinpackError::Truncated);
         }
-        let chunk_end = offset + chunk_size;
         while offset < chunk_end {
             let (chain, next) = deserialize_chain(input, offset, chunk_end)?;
             chains.push(chain);
@@ -664,15 +682,17 @@ pub fn game_result_from_u8(value: u8) -> Option<GameResult> {
         13 => Some(GameResult::WhiteWinByIllegalMove),
         16 => Some(GameResult::BlackWinByTimeout),
         17 => Some(GameResult::WhiteWinByTimeout),
+        20 => Some(GameResult::BlackWinByTryRule),
+        21 => Some(GameResult::WhiteWinByTryRule),
         _ => None,
     }
 }
 
-fn normalize_eval_for_delta(eval: i32, ply_index: usize) -> i32 {
-    if ply_index.is_multiple_of(2) { eval } else { -eval }
+fn normalize_eval_for_delta(eval: i32, ply_index: usize) -> Option<i32> {
+    if ply_index.is_multiple_of(2) { Some(eval) } else { eval.checked_neg() }
 }
 
-fn denormalize_eval_from_delta(eval: i32, ply_index: usize) -> i32 {
+fn denormalize_eval_from_delta(eval: i32, ply_index: usize) -> Option<i32> {
     // The ply-parity normalization is an involution, so the same transform restores evals.
     normalize_eval_for_delta(eval, ply_index)
 }
@@ -722,22 +742,20 @@ fn serialize_chain(chain: &SbinpackChain, out: &mut Vec<u8>) -> Result<(), Sbinp
     out.extend_from_slice(&chain.stem.ply_result.to_le_bytes());
     encode_metadata(&chain.metadata, out)?;
 
-    debug_assert!(
-        u16::try_from(chain.moves.len()).is_ok(),
-        "sbinpack chain move count exceeds u16::MAX; extra moves are not encoded"
-    );
-    let count = u16::try_from(chain.moves.len()).unwrap_or(u16::MAX);
+    let count = u16::try_from(chain.moves.len())
+        .map_err(|_| SbinpackError::TooManyMoves(chain.moves.len()))?;
     out.extend_from_slice(&count.to_le_bytes());
 
     let mut pos = Position::empty();
     let _ = pos.set_packed_sfen(&chain.stem.packed_sfen, false, 0);
     let mut prev_norm = i32::from(chain.stem.score);
-    for (ply_index, entry) in chain.moves.iter().take(count as usize).enumerate() {
+    for (ply_index, entry) in chain.moves.iter().enumerate() {
         let move_index =
             encoded_move_index(&pos, entry.mv).ok_or(SbinpackError::UnencodableMove(entry.mv))?;
         encode_uleb128_u32(u32::from(move_index), out);
-        let current_norm = normalize_eval_for_delta(entry.eval, ply_index);
-        encode_score_delta(prev_norm, current_norm, out);
+        let current_norm =
+            normalize_eval_for_delta(entry.eval, ply_index).ok_or(SbinpackError::EvalOverflow)?;
+        encode_score_delta(prev_norm, current_norm, out)?;
         prev_norm = current_norm;
         pos.apply_move32(entry.mv);
     }
@@ -789,8 +807,9 @@ fn deserialize_chain(
         let Some(delta) = decode_score_delta_bounded(input, &mut cursor, chunk_end) else {
             return Err(SbinpackError::Truncated);
         };
-        let current_norm = prev_norm + delta;
-        let eval = denormalize_eval_from_delta(current_norm, ply_index);
+        let current_norm = prev_norm.checked_add(delta).ok_or(SbinpackError::EvalOverflow)?;
+        let eval = denormalize_eval_from_delta(current_norm, ply_index)
+            .ok_or(SbinpackError::EvalOverflow)?;
         moves.push(SbinpackMove { mv, eval });
         prev_norm = current_norm;
         pos.apply_move32(mv);
@@ -1152,6 +1171,25 @@ mod tests {
                 max: SBINPACK_MAX_METADATA_BYTES
             } if len == SBINPACK_MAX_METADATA_BYTES + 1
         ));
+    }
+
+    #[test]
+    fn serialize_rejects_chain_longer_than_u16() {
+        let mut chain = sample_chain(SbinpackMetadata::default());
+        chain
+            .moves
+            .resize(usize::from(u16::MAX) + 1, SbinpackMove { mv: chain.moves[0].mv, eval: 0 });
+        assert!(matches!(
+            serialize_file(&[chain]),
+            Err(SbinpackError::TooManyMoves(len)) if len == usize::from(u16::MAX) + 1
+        ));
+    }
+
+    #[test]
+    fn score_delta_overflow_is_rejected() {
+        let mut chain = sample_chain(SbinpackMetadata::default());
+        chain.moves[0].eval = i32::MIN;
+        assert!(matches!(serialize_file(&[chain]), Err(SbinpackError::EvalOverflow)));
     }
 
     #[test]
