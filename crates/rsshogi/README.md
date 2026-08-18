@@ -31,6 +31,8 @@ SFEN の解析・整形は失敗し得ます。
 
 `solve_mate_in_one` は、合法で王手を与え、相手に合法応手がない場合だけ `Move32` を返し、それ以外では `None` を返します。
 複数の詰みがある場合、任意の有効な手が返され得ます。
+変更可能な探索局面を保持している場合は、`solve_mate_in_one_in_place` で局面の複製を避けられます。
+この API は正常終了時に局面を復元し、呼び出し前に state stack が現局面と同期していることを要求します。
 
 HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は文書化されたワイヤ表現を使用します。
 PACK の指し手は `AperyMove` layout なので、通常の `Move` raw 値との間は明示変換してください。

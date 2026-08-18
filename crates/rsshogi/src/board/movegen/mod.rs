@@ -11,6 +11,7 @@ use crate::board::{Move32List, MoveList, Position};
 use crate::types::{Color, Move, Move32, Piece, PieceType, Square};
 use core::marker::PhantomData;
 
+pub(crate) use checks::generate_checks_all_move32_drop_first_into;
 pub use checks::{
     generate_checks, generate_checks_all_move32, generate_checks_drops_part,
     generate_checks_drops_part_move32, generate_checks_for_color, generate_checks_move32,
@@ -42,6 +43,15 @@ pub trait MoveSink {
     fn retain_unordered<F>(&mut self, f: F)
     where
         F: FnMut(Move) -> bool;
+
+    /// 生成側に協調的な打ち切りを要求する。
+    ///
+    /// 手を集めきる sink は常に `false` を返す。存在判定のように最初の1手で
+    /// 十分な sink だけが `true` を返し、生成器は実装ごとの生成区切りで残りの
+    /// 列挙を省略できる。各出力手の直後に確認することは保証しない。
+    fn stop(&self) -> bool {
+        false
+    }
 
     fn push_normal(&mut self, from: Square, to: Square, _: Piece) {
         self.push_move(Move::normal(from, to));
@@ -100,6 +110,14 @@ pub trait Move32Sink {
     fn retain_unordered<F>(&mut self, f: F)
     where
         F: FnMut(Move32) -> bool;
+
+    /// 生成側に協調的な打ち切りを要求する。
+    ///
+    /// 生成器は実装ごとの生成区切りで `stop()` を確認し、残りの列挙を省略できる。
+    /// 各出力手の直後に確認することは保証しない。既定では最後まで列挙する。
+    fn stop(&self) -> bool {
+        false
+    }
 
     fn push_drop_targets(
         &mut self,
@@ -200,6 +218,10 @@ pub(crate) struct Move32SinkAdapter<'a, S: Move32Sink> {
 impl<S: Move32Sink> MoveSink for Move32SinkAdapter<'_, S> {
     fn push_move(&mut self, mv: Move) {
         self.sink.push_move32(self.pos.move32_from_move(mv));
+    }
+
+    fn stop(&self) -> bool {
+        self.sink.stop()
     }
 
     fn retain_unordered<F>(&mut self, mut f: F)

@@ -832,14 +832,42 @@ impl Position {
     }
 
     /// 現局面で指し手がないかをテストする
+    ///
+    /// 合法手を集めず、最初の1手が見つかった時点で生成を打ち切る。
     #[must_use]
     pub fn is_mated(&self) -> bool {
-        use crate::board::MoveList;
-        use crate::board::movegen::{Legal, generate_moves};
+        use crate::board::Bitboard;
+        use crate::board::movegen::{LegalAll, Move32Sink, generate_moves_move32_into};
+        use crate::types::{Color, Move32, PieceType};
 
-        let mut list = MoveList::new();
-        generate_moves::<Legal>(self, &mut list);
-        list.is_empty()
+        /// 最初の1手を見つけた時点で生成を打ち切る sink。
+        struct ExistsSink {
+            found: bool,
+        }
+
+        impl Move32Sink for ExistsSink {
+            fn push_move32(&mut self, _: Move32) {
+                self.found = true;
+            }
+
+            fn retain_unordered<F>(&mut self, _: F)
+            where
+                F: FnMut(Move32) -> bool,
+            {
+            }
+
+            fn stop(&self) -> bool {
+                self.found
+            }
+
+            fn push_drop_targets(&mut self, _: PieceType, targets: Bitboard, _: Color) {
+                self.found |= !targets.is_empty();
+            }
+        }
+
+        let mut sink = ExistsSink { found: false };
+        generate_moves_move32_into::<LegalAll, _>(self, &mut sink);
+        !sink.found
     }
 
     /// 入玉宣言の条件を構造化して評価する
