@@ -45,7 +45,7 @@ def test_move_to_ki2_dragon_vertical_relative() -> None:
 
 def test_move_to_ki2_dragon_pull_motion() -> None:
     board = Board(sfen="ln1g3+Rl/1ks1g4/1pp3n1p/p5p2/3p5/P1P3P1P/1PSPSPN2/2K6/LN2Sr2L b BG2Pbg3p 1")
-    assert _move_to_ki2(board, "5g6h") == "▲６八銀右"
+    assert _move_to_ki2(board, "5g6h") == "▲６八銀右引"
 
 
 def test_move_to_ki2_horse_left_vertical() -> None:

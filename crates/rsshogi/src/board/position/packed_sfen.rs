@@ -13,6 +13,7 @@ pub enum PackedSfenError {
     InvalidCursor,
     InvalidPieceCode,
     InvalidKingSquare { color: Color, square: u16 },
+    InvalidInventory { piece: PieceType, count: u32, limit: u32 },
 }
 
 impl fmt::Display for PackedSfenError {
@@ -22,6 +23,9 @@ impl fmt::Display for PackedSfenError {
             Self::InvalidPieceCode => f.write_str("invalid PackedSfen piece code"),
             Self::InvalidKingSquare { color, square } => {
                 write!(f, "invalid {color:?} king square: {square}")
+            }
+            Self::InvalidInventory { piece, count, limit } => {
+                write!(f, "invalid {piece} inventory: {count} exceeds {limit}")
             }
         }
     }
@@ -367,17 +371,45 @@ impl PackedSfenSink for PositionSink {
 }
 
 impl Position {
+    /// 局面を PackedSfen に変換する。
+    ///
+    /// # Panics
+    ///
+    /// 玉位置または駒の総数が PackedSfen の表現可能範囲外の場合に panic する。
+    /// 外部入力から構築した未検証局面には [`Self::try_to_packed_sfen`] を使う。
     pub fn to_packed_sfen(&self) -> PackedSfen {
+        self.try_to_packed_sfen().expect("position must be representable as PackedSfen")
+    }
+
+    /// 局面を PackedSfen に変換し、表現不能な局面をエラーにする。
+    pub fn try_to_packed_sfen(&self) -> Result<PackedSfen, PackedSfenError> {
+        let black_king = self.king_square(Color::BLACK);
+        let white_king = self.king_square(Color::WHITE);
+        if !black_king.is_valid() {
+            return Err(PackedSfenError::InvalidKingSquare {
+                color: Color::BLACK,
+                square: black_king.raw() as u16,
+            });
+        }
+        if !white_king.is_valid() {
+            return Err(PackedSfenError::InvalidKingSquare {
+                color: Color::WHITE,
+                square: white_king.raw() as u16,
+            });
+        }
+        if black_king == white_king {
+            return Err(PackedSfenError::InvalidPieceCode);
+        }
+
         let mut packed = PackedSfen::default();
         let mut writer = BitWriter::new(&mut packed.data);
         writer.write_one_bit(self.turn() == Color::WHITE);
-        writer.write_n_bits(self.king_square(Color::BLACK).raw() as u16, 7);
-        writer.write_n_bits(self.king_square(Color::WHITE).raw() as u16, 7);
-        let mut used = [0u8; 7];
+        writer.write_n_bits(black_king.raw() as u16, 7);
+        writer.write_n_bits(white_king.raw() as u16, 7);
+        let mut used = [0u32; 7];
         for raw in 0..Square::COUNT {
             let square = Square::new(raw as i8);
-            if square == self.king_square(Color::BLACK) || square == self.king_square(Color::WHITE)
-            {
+            if square == black_king || square == white_king {
                 continue;
             }
             let piece = self.piece_on(square);
@@ -386,20 +418,46 @@ impl Position {
                 continue;
             }
             let base = piece.piece_type().demote();
+            let Some(index) = inventory_index(base) else {
+                return Err(PackedSfenError::InvalidPieceCode);
+            };
+            used[index] = used[index].checked_add(1).ok_or(PackedSfenError::InvalidInventory {
+                piece: base,
+                count: u32::MAX,
+                limit: u32::from(INVENTORY[index]),
+            })?;
+            if used[index] > u32::from(INVENTORY[index]) {
+                return Err(PackedSfenError::InvalidInventory {
+                    piece: base,
+                    count: used[index],
+                    limit: u32::from(INVENTORY[index]),
+                });
+            }
             let (code, bits) = base_code(base);
             writer.write_n_bits(code, bits);
             if base != PieceType::GOLD {
                 writer.write_one_bit(piece.piece_type().is_promoted());
             }
             writer.write_one_bit(piece.color() == Color::WHITE);
-            used[ORDER.iter().position(|&value| value == base).expect("inventory base")] += 1;
         }
         for color in [Color::BLACK, Color::WHITE] {
             for (index, piece_type) in ORDER.into_iter().enumerate() {
                 let count = self
                     .hand(color)
                     .count(HandPiece::from_piece_type(piece_type).expect("hand type"));
-                used[index] += count as u8;
+                used[index] =
+                    used[index].checked_add(count).ok_or(PackedSfenError::InvalidInventory {
+                        piece: piece_type,
+                        count: u32::MAX,
+                        limit: u32::from(INVENTORY[index]),
+                    })?;
+                if used[index] > u32::from(INVENTORY[index]) {
+                    return Err(PackedSfenError::InvalidInventory {
+                        piece: piece_type,
+                        count: used[index],
+                        limit: u32::from(INVENTORY[index]),
+                    });
+                }
                 let (code, bits) = base_code(piece_type);
                 for _ in 0..count {
                     writer.write_n_bits(code >> 1, bits - 1);
@@ -412,15 +470,17 @@ impl Position {
         }
         for (index, piece_type) in ORDER.into_iter().enumerate() {
             let (code, bits) = box_code(piece_type);
-            for _ in used[index]..INVENTORY[index] {
+            for _ in used[index]..u32::from(INVENTORY[index]) {
                 writer.write_n_bits(code, bits);
                 if piece_type != PieceType::GOLD {
                     writer.write_one_bit(false);
                 }
             }
         }
-        debug_assert_eq!(writer.cursor(), 256);
-        packed
+        if writer.cursor() != 256 {
+            return Err(PackedSfenError::InvalidCursor);
+        }
+        Ok(packed)
     }
 
     pub fn sfen_unpack(packed: &PackedSfen) -> Result<String, PackedSfenError> {

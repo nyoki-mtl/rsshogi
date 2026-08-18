@@ -14,6 +14,9 @@ impl Position {
         generate_all_legal_moves: bool,
     ) -> bool {
         let m = mv.to_move();
+        if !m.is_normal() {
+            return false;
+        }
         let piece_hint = mv.piece_after_hint();
         let us = self.turn();
         let to = m.to_sq();
@@ -32,6 +35,9 @@ impl Position {
                 return false;
             }
             if self.hand(us).count(hand_piece) == 0 {
+                return false;
+            }
+            if is_dead_end_destination(piece_type, to.rank(), us) {
                 return false;
             }
 
@@ -86,10 +92,7 @@ impl Position {
                 return false;
             }
             if generate_all_legal_moves {
-                if (pt == PieceType::PAWN || pt == PieceType::LANCE)
-                    && ((us == Color::BLACK && to.rank() == Rank::RANK_1)
-                        || (us == Color::WHITE && to.rank() == Rank::RANK_9))
-                {
+                if is_dead_end_destination(pt, to.rank(), us) {
                     return false;
                 }
             } else {
@@ -147,5 +150,20 @@ impl Position {
     #[inline]
     pub fn is_pseudo_legal_move(&self, mv: Move, generate_all_legal_moves: bool) -> bool {
         self.is_pseudo_legal_impl(mv, generate_all_legal_moves)
+    }
+}
+
+#[inline]
+fn is_dead_end_destination(piece_type: PieceType, rank: Rank, color: Color) -> bool {
+    match piece_type {
+        PieceType::PAWN | PieceType::LANCE => {
+            (color == Color::BLACK && rank == Rank::RANK_1)
+                || (color == Color::WHITE && rank == Rank::RANK_9)
+        }
+        PieceType::KNIGHT => {
+            (color == Color::BLACK && (rank == Rank::RANK_1 || rank == Rank::RANK_2))
+                || (color == Color::WHITE && (rank == Rank::RANK_8 || rank == Rank::RANK_9))
+        }
+        _ => false,
     }
 }

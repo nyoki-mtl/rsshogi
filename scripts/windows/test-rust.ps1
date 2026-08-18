@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 
+cargo check -p rsshogi --all-targets
 cargo test --doc -p rsshogi --all-features
 
 if (Get-Command cargo-nextest -ErrorAction SilentlyContinue) {

@@ -21,8 +21,11 @@ use crate::board::attack_tables::{
 use crate::board::movegen::{
     Move32Sink, generate_checks_all_move32, generate_checks_all_move32_drop_first_into,
 };
-use crate::board::{Move32List, Position, generate_legal_all_move32};
+use crate::board::{Move32List, Ply, Position, generate_legal_all_move32};
 use crate::types::{Bitboard, Color, Hand, Move32, Piece, PieceType, Rank, Square};
+
+/// 一手詰めは clone 後に 1 手だけ適用し、反復判定を使わないため、複製する履歴を限定する。
+const MATE_WORK_HISTORY_PLY: Ply = 16;
 
 /// 相手玉の周囲を、局面ごとに1回だけ構造化したもの。
 ///
@@ -646,7 +649,7 @@ impl Move32Sink for ImmutableMateSink<'_> {
             return;
         }
         if self.work.is_none() {
-            *self.work = Some(self.position.clone_for_search());
+            *self.work = Some(self.position.clone_for_search_bounded(MATE_WORK_HISTORY_PLY));
         }
         let work = self.work.as_mut().expect("mate work position must be initialized");
         work.apply_move32_with_gives_check(mv, true);

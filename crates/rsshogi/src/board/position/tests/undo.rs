@@ -237,6 +237,40 @@ fn test_undo_stack_underflow_returns_error() {
 }
 
 #[test]
+fn test_undo_rejects_move_other_than_last_move_without_mutation() {
+    let mut pos = crate::board::hirate_position();
+    let applied = move_from_usi(&pos, "7g7f");
+    pos.apply_move32(applied);
+    let before_sfen = pos.to_sfen(None);
+    let before_key = pos.key();
+    let before_last_move = pos.last_move();
+    let wrong = Move32::normal(
+        Square::from_usi("2g").unwrap(),
+        Square::from_usi("2f").unwrap(),
+        Piece::B_PAWN,
+    );
+
+    assert!(matches!(pos.undo_move32(wrong), Err(MoveError::MoveMismatch { .. })));
+    assert_eq!(pos.to_sfen(None), before_sfen);
+    assert_eq!(pos.key(), before_key);
+    assert_eq!(pos.last_move(), before_last_move);
+}
+
+#[test]
+fn test_undo_move_rejects_current_null_move_state() {
+    let mut pos = crate::board::hirate_position();
+    let applied = move_from_usi(&pos, "7g7f");
+    pos.apply_move32(applied);
+    pos.apply_null_move().unwrap();
+    let before_sfen = pos.to_sfen(None);
+    let before_key = pos.key();
+
+    assert!(matches!(pos.undo_move32(applied), Err(MoveError::MoveMismatch { .. })));
+    assert_eq!(pos.to_sfen(None), before_sfen);
+    assert_eq!(pos.key(), before_key);
+}
+
+#[test]
 // undoでplies_from_nullなどの状態が復元されるか検証
 fn test_undo_restores_repetition_state() {
     let mut pos = crate::board::hirate_position();
@@ -251,6 +285,19 @@ fn test_undo_restores_repetition_state() {
     pos.undo_move32(mv2).unwrap();
 
     assert_eq!(pos.state_stack().current().plies_from_null, plies_after_first);
+}
+
+#[test]
+fn test_piece_less_move32_preserves_direct_check_state() {
+    let mut pos = crate::board::position_from_sfen("4k4/9/9/9/9/9/9/4R4/K8 b - 1").unwrap();
+    let mv = Move32::from_usi("5h5b").unwrap();
+    assert!(!mv.has_piece_info());
+    assert!(pos.gives_check_move32(mv));
+
+    pos.apply_move32(mv);
+
+    assert!(pos.is_in_check());
+    assert!(pos.last_move().has_piece_info());
 }
 
 #[test]

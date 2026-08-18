@@ -21,6 +21,10 @@ sbinpack v2 と sazpack は独立した仕様ページとして扱います。
 ## HCP
 
 `HuffmanCodedPos` は Apery / cshogi 互換の 32 バイト局面形式です。
+HCP と PackedSfen は、どちらも 32 バイトですが、ビット配置と駒の符号表が異なる別形式です。
+一方のデータを他方の decoder で読み込むことはできません。
+どちらも盤上に先後の玉が 1 枚ずつ存在する局面を対象にします。
+片玉、玉なし、標準枚数を超える駒を含む局面は表現できません。
 
 ```python
 from rsshogi.core import Board

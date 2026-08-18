@@ -536,6 +536,26 @@ def test_psfen_output_buffer_variants() -> None:
     assert packed[0]["sfen"].tobytes() == board.to_packed_sfen()
 
 
+@pytest.mark.parametrize(
+    ("sfen", "message"),
+    [
+        ("8k/9/9/9/9/9/9/9/9 b - 1", "invalid Black king square: 81"),
+        (
+            "4k4/9/9/9/9/9/9/GGGGG4/4K4 b - 1",
+            "invalid G inventory: 5 exceeds 4",
+        ),
+    ],
+)
+@pytest.mark.parametrize("method_name", ["to_packed_sfen", "to_psv"])
+def test_packed_sfen_encoders_reject_unrepresentable_position(
+    method_name: str, sfen: str, message: str
+) -> None:
+    board = Board(sfen)
+
+    with pytest.raises(ValueError, match=message):
+        getattr(board, method_name)()
+
+
 def test_set_psfen_accepts_packed_sfen_ndarray() -> None:
     np = pytest.importorskip("numpy")
     board = Board()
@@ -581,6 +601,7 @@ def test_is_legal_accepts_move_and_move32() -> None:
     legal32 = board.move32_from_move(legal)
     assert isinstance(legal32, Move32)
     assert board.is_legal_move32(legal32)
+    assert not board.is_legal_move32(Move32((82 << 7) | 1))
 
 
 def test_to_psv_output_variants() -> None:
@@ -660,6 +681,17 @@ def test_to_hcpe_requires_game_result_and_rejects_out_of_range_move() -> None:
 
     with pytest.raises(ValueError, match="uint16"):
         board.to_hcpe(best_move=0x1_0000, score=1, game_result="BLACK_WIN")
+
+
+def test_hcp_encoders_reject_extreme_excess_inventory() -> None:
+    board = Board(
+        "kRRRRRRRR/RRRRRRRRR/RRRRRRRRR/RRRRRRRRR/RRRRRRRR1/9/9/9/K8 b - 1"
+    )
+
+    with pytest.raises(ValueError, match="invalid R inventory: 3 exceeds 2"):
+        board.to_hcp()
+    with pytest.raises(ValueError, match="invalid R inventory: 3 exceeds 2"):
+        board.to_hcpe(best_move=0, score=0, game_result="DRAW")
 
 
 def test_serialize_sbinpack_requires_eval() -> None:

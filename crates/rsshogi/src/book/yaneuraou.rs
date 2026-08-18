@@ -444,7 +444,7 @@ impl YaneuraOuBook {
         file.seek(SeekFrom::Start(offset))?;
         let mut entries = YaneuraOuBookEntries {
             reader: BufReader::new(file),
-            line_number: 1,
+            line_number: usize::from(offset != 0),
             current: None,
             current_error: None,
             queued_error: None,

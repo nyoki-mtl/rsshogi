@@ -14,6 +14,8 @@
 //! | SFEN | ○ | ○ | 局面表記（USI プロトコル） |
 //! | USI position | ○ | ○ | USI position command |
 //! | SBINPACK | ○ | ○ | 訓練データ用バイナリ形式 |
+//! | SAZPACK | ○ | ○ | AlphaZero 系自己対局データ形式 |
+//! | HCPE | ○ | ○ | cshogi / Apery 互換の学習データ形式 |
 //! | PACK | ○ | ○ | 可変長学習バイナリ |
 //!
 //! # 主要な型

@@ -559,6 +559,16 @@ mod tests {
     }
 
     #[test]
+    fn selfplay_roundtrip_preserves_try_rule_results() {
+        for result in [GameResult::BlackWinByTryRule, GameResult::WhiteWinByTryRule] {
+            let mut game = fixture();
+            game.game_result = result;
+            let bytes = serialize_selfplay_chunk(std::slice::from_ref(&game)).unwrap();
+            assert_eq!(deserialize_selfplay_chunk(&bytes).unwrap(), vec![game]);
+        }
+    }
+
+    #[test]
     fn indexed_decode_preserves_exact_game_payload_ranges() {
         let games = [fixture(), fixture()];
         let bytes = serialize_selfplay_chunk(&games).unwrap();

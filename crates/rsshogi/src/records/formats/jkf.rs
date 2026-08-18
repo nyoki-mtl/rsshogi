@@ -185,8 +185,6 @@ fn build_move_entry(
     }
     if let Some(time_ms) = annotation.elapsed_ms() {
         entry.insert("time".to_string(), time_ms_to_jkf_with_total(time_ms, total_ms));
-    } else {
-        entry.insert("time".to_string(), time_ms_to_jkf_with_total(0, total_ms));
     }
 
     Ok(Value::Object(entry))
@@ -703,10 +701,10 @@ fn special_from_jkf_name(name: &str, side_to_move: Color) -> SpecialMoveEntry {
         "TORYO" => (SpecialMove::Resign, GameResult::win_from_color(winner)),
         "MAX_MOVES" => (SpecialMove::MaxMoves, GameResult::DrawByMaxPlies),
         "JISHOGI" => (SpecialMove::Impasse, GameResult::DrawByImpasse),
-        "HIKIWAKE" => (SpecialMove::Draw, GameResult::DrawByRepetition),
+        "HIKIWAKE" => (SpecialMove::Draw, GameResult::DrawByImpasse),
         "SENNICHITE" => (SpecialMove::RepetitionDraw, GameResult::DrawByRepetition),
         "TSUMI" => (SpecialMove::Mate, GameResult::win_from_color(winner)),
-        "FUZUMI" => (SpecialMove::NoMate, GameResult::DrawByMaxPlies),
+        "FUZUMI" => (SpecialMove::NoMate, GameResult::Paused),
         "TIME_UP" => (SpecialMove::Timeout, GameResult::win_by_timeout_from_color(winner)),
         "ILLEGAL_MOVE" => {
             (SpecialMove::WinByIllegalMove, GameResult::win_by_illegal_move_from_color(winner))
@@ -1170,7 +1168,21 @@ mod tests {
         assert_eq!(moves.len(), 3);
         assert_eq!(moves[1]["move"]["to"]["x"], 7);
         assert_eq!(moves[1]["move"]["to"]["y"], 6);
+        assert!(moves[1].get("time").is_none());
         assert_eq!(moves[2]["special"], "TORYO");
+    }
+
+    #[test]
+    fn test_parse_jkf_uses_consistent_draw_and_no_mate_results() {
+        for (special, expected) in
+            [("HIKIWAKE", GameResult::DrawByImpasse), ("FUZUMI", GameResult::Paused)]
+        {
+            let text = format!(
+                r#"{{"initial":{{"preset":"HIRATE"}},"moves":[{{}},{{"special":"{special}"}}]}}"#
+            );
+            let record = parse_jkf_str(&text).unwrap();
+            assert_eq!(record.result(), expected);
+        }
     }
 
     #[test]

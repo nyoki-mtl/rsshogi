@@ -90,7 +90,15 @@ impl Position {
             }
         }
 
-        // 4. 行き所のない駒の配置制限チェック
+        // 4. 駒種ごとの総数チェック
+        for &(piece, limit) in total_piece_limits() {
+            let count = self.total_piece_count(piece);
+            if count > limit {
+                return Err(ValidationError::ExcessivePieceCount { piece, count, limit });
+            }
+        }
+
+        // 5. 行き所のない駒の配置制限チェック
         for sq_idx in 0..81 {
             let sq = Square::new(sq_idx);
             let piece_packed = self.board.get(sq);
@@ -119,6 +127,17 @@ impl Position {
         }
 
         Ok(())
+    }
+
+    fn total_piece_count(&self, piece_type: PieceType) -> u32 {
+        let board_count = (0..81)
+            .map(Square::new)
+            .filter(|&sq| self.board.get(sq).piece_type().demote() == piece_type)
+            .count() as u32;
+        let hand_count = HandPiece::from_piece_type(piece_type).map_or(0, |hand_piece| {
+            self.hand(Color::BLACK).count(hand_piece) + self.hand(Color::WHITE).count(hand_piece)
+        });
+        board_count + hand_count
     }
 
     /// 内部状態の整合性チェック
@@ -166,7 +185,15 @@ impl Position {
             }
         }
 
-        // 2. 二歩チェック
+        // 2. 駒種ごとの総数チェック
+        for &(piece, limit) in total_piece_limits() {
+            let count = self.total_piece_count(piece);
+            if count > limit {
+                issues.push(ValidationIssue::ExcessivePieceCount { piece, count, limit });
+            }
+        }
+
+        // 3. 二歩チェック
         for file_idx in 0..9 {
             let file = File::new(file_idx);
             let file_mask = Bitboard::file_mask(file);
@@ -179,7 +206,7 @@ impl Position {
             }
         }
 
-        // 3. 持ち駒の上限チェック
+        // 4. 持ち駒の上限チェック
         let limits: [(HandPiece, u32); 7] = [
             (HandPiece::PAWN, 18),
             (HandPiece::LANCE, 4),
@@ -200,7 +227,7 @@ impl Position {
             }
         }
 
-        // 4. 行き場のない駒の配置制限チェック
+        // 5. 行き場のない駒の配置制限チェック
         for sq_idx in 0..81 {
             let sq = Square::new(sq_idx);
             let piece_packed = self.board.get(sq);
@@ -230,4 +257,17 @@ impl Position {
 
         ValidationReport::new(issues)
     }
+}
+
+const fn total_piece_limits() -> &'static [(PieceType, u32); 8] {
+    &[
+        (PieceType::KING, 2),
+        (PieceType::ROOK, 2),
+        (PieceType::BISHOP, 2),
+        (PieceType::GOLD, 4),
+        (PieceType::SILVER, 4),
+        (PieceType::KNIGHT, 4),
+        (PieceType::LANCE, 4),
+        (PieceType::PAWN, 18),
+    ]
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::PieceType;
 
 const KINGS_ONLY_HCP: [u8; 32] = [
     0x58, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x24, 0x49, 0x92, 0x24,
@@ -70,4 +71,31 @@ fn test_huffman_coded_pos_rejects_invalid_king_square() {
     let mut pos = Position::empty();
     let result = pos.set_huffman_coded_pos(&packed, 1);
     assert!(matches!(result, Err(crate::board::HuffmanCodedPosError::InvalidKingSquare(81))));
+}
+
+#[test]
+fn test_huffman_coded_pos_encoder_rejects_excess_inventory() {
+    let cases = [
+        (
+            "4k4/9/9/9/9/9/9/GGGGG4/4K4 b - 1",
+            crate::board::HuffmanCodedPosError::InvalidInventory {
+                piece: PieceType::GOLD,
+                count: 5,
+                limit: 4,
+            },
+        ),
+        (
+            "kRRRRRRRR/RRRRRRRRR/RRRRRRRRR/RRRRRRRRR/RRRRRRRR1/9/9/9/K8 b - 1",
+            crate::board::HuffmanCodedPosError::InvalidInventory {
+                piece: PieceType::ROOK,
+                count: 3,
+                limit: 2,
+            },
+        ),
+    ];
+
+    for (sfen, expected) in cases {
+        let pos = crate::board::position_from_sfen(sfen).expect("structurally parseable position");
+        assert_eq!(pos.try_to_huffman_coded_pos(), Err(expected));
+    }
 }

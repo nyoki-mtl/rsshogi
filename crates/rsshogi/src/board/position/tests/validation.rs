@@ -100,12 +100,32 @@ fn test_knight_on_last_two_ranks_is_invalid() {
 #[test]
 // 駒総数超過の異常局面を検出することを確認
 fn test_excessive_total_piece_count_is_invalid() {
-    let sfen = "ppppppppp/ppppppppp/9/9/9/9/9/9/K8 b 2P 1";
+    let sfen = "ppppppppp/9/PPPPPPPPP/9/9/9/9/9/K8 b 2P 1";
 
     if let Ok(pos) = crate::board::position_from_sfen(sfen) {
         let result = pos.validate();
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(ValidationError::ExcessivePieceCount {
+                piece: PieceType::PAWN,
+                count: 20,
+                limit: 18
+            })
+        ));
     }
+}
+
+#[test]
+fn test_excessive_gold_count_is_invalid() {
+    let pos = crate::board::position_from_sfen("4k4/9/9/9/9/9/9/GGGGG4/4K4 b - 1").unwrap();
+    assert!(matches!(
+        pos.validate(),
+        Err(ValidationError::ExcessivePieceCount { piece: PieceType::GOLD, count: 5, limit: 4 })
+    ));
+    assert!(pos.validate_all().issues().iter().any(|issue| matches!(
+        issue,
+        ValidationIssue::ExcessivePieceCount { piece: PieceType::GOLD, count: 5, limit: 4 }
+    )));
 }
 
 // --- validate_all() tests ---

@@ -764,7 +764,7 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
         }
     }
 
-    let mut placed_counts: HashMap<char, HashMap<String, u8>> = HashMap::new();
+    let mut placed_counts: HashMap<char, HashMap<String, u32>> = HashMap::new();
     for (color, initial) in INITIAL_COUNTS {
         let mut map = HashMap::new();
         for (piece_code, _) in initial {
@@ -804,6 +804,7 @@ pub fn parse_csa_str(text: &str) -> Result<Record, CsaError> {
                 .and_then(|counts| counts.get(&base))
                 .copied()
                 .unwrap_or(0);
+            let initial_count = u32::from(initial_count);
             if placed < initial_count {
                 let remaining = initial_count - placed;
                 let entry = hand_counts.entry(color).or_default().entry(base.clone()).or_insert(0);
@@ -1320,6 +1321,13 @@ mod tests {
         let parsed = parse_csa_str(&csa).unwrap();
         assert_eq!(parsed.main_moves().count(), 1);
         assert_eq!(parsed.result(), GameResult::BlackWin);
+    }
+
+    #[test]
+    fn test_parse_csa_rejects_excessive_repeated_hand_pieces_without_overflow() {
+        let hand = "00FU".repeat(300);
+        let text = format!("V2.2\nPI\nP+{hand}\n+\n%CHUDAN\n");
+        assert!(parse_csa_str(&text).is_err());
     }
 
     /// 駒落ちのように後手から始まる棋譜でも、writer は指し手が持つ色から正しい手番記号を出す。

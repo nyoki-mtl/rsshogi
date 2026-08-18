@@ -54,12 +54,12 @@ fn append_move_comment(record: &mut AnnotatedMoveEntry, comment: &str) {
     record.set_comment(combined);
 }
 
-fn kanji_to_int(text: &str) -> u8 {
+fn kanji_to_int(text: &str) -> u32 {
     if text.is_empty() {
         return 1;
     }
-    let mut total = 0u8;
-    let mut current = 0u8;
+    let mut total = 0u32;
+    let mut current = 0u32;
     for ch in text.chars() {
         match ch {
             '十' => {
@@ -84,12 +84,12 @@ fn kanji_to_int(text: &str) -> u8 {
     if total == 0 { 1 } else { total }
 }
 
-fn parse_hand_pieces(text: &str) -> HashMap<String, u8> {
+fn parse_hand_pieces(text: &str) -> HashMap<String, u32> {
     let cleaned = text.replace('　', " ").replace(' ', "");
     if cleaned.is_empty() || cleaned == "なし" {
         return HashMap::new();
     }
-    let mut counts: HashMap<String, u8> = HashMap::new();
+    let mut counts: HashMap<String, u32> = HashMap::new();
     let mut iter = cleaned.chars().peekable();
     while let Some(ch) = iter.next() {
         let piece_code = match ch {
@@ -113,7 +113,8 @@ fn parse_hand_pieces(text: &str) -> HashMap<String, u8> {
             }
         }
         let count = kanji_to_int(&number);
-        *counts.entry(piece_code.to_string()).or_insert(0) += count;
+        let entry = counts.entry(piece_code.to_string()).or_insert(0);
+        *entry = entry.saturating_add(count);
     }
     counts
 }
@@ -209,8 +210,8 @@ fn parse_colon_time_to_ms(text: &str) -> Option<u32> {
 }
 
 fn parse_kif_terminal_elapsed_time_ms(text: &str) -> Option<u32> {
-    let open = text.find('(').or_else(|| text.find('（'))?;
-    let rest = &text[open + 1..];
+    let (open, ch) = text.char_indices().find(|&(_, ch)| ch == '(' || ch == '（')?;
+    let rest = &text[open + ch.len_utf8()..];
     let close = rest.find(')').or_else(|| rest.find('）')).unwrap_or(rest.len());
     let inner = &rest[..close];
     let elapsed = inner.split('/').next().unwrap_or(inner).trim();
@@ -321,7 +322,14 @@ fn parse_kif_terminal_record_from_line(
 }
 
 fn parse_variation_start(line: &str) -> usize {
-    line.chars().filter(|ch| ch.is_ascii_digit()).collect::<String>().parse::<usize>().unwrap_or(0)
+    line.chars()
+        .filter_map(|ch| match ch {
+            '0'..='9' => Some(ch as u32 - '0' as u32),
+            '０'..='９' => Some(ch as u32 - '０' as u32),
+            _ => None,
+        })
+        .try_fold(0usize, |value, digit| value.checked_mul(10)?.checked_add(digit as usize))
+        .unwrap_or(0)
 }
 
 fn is_board_header_line(line: &str) -> bool {
@@ -911,9 +919,11 @@ fn parse_ki2_variation_moves(
             let comment = line.trim_start_matches(&['*', '\''][..]).trim();
             if !comment.is_empty() {
                 if let Some(last) = moves.last_mut() {
-                    last.set_comment(Some(comment.to_string()));
+                    let mut combined = last.comment().map(ToOwned::to_owned);
+                    append_comment_text(&mut combined, comment);
+                    last.set_comment(combined);
                 } else {
-                    pending_comment = Some(comment.to_string());
+                    append_comment_text(&mut pending_comment, comment);
                 }
             }
             continue;
@@ -1023,13 +1033,13 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
         return None;
     }
     if trimmed.contains("時間切れ") {
-        if trimmed.contains("先手") {
+        if trimmed.contains("先手") || trimmed.contains("下手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::Timeout,
                 GameResult::BlackWinByTimeout,
             ));
         }
-        if trimmed.contains("後手") {
+        if trimmed.contains("後手") || trimmed.contains("上手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::Timeout,
                 GameResult::WhiteWinByTimeout,
@@ -1052,13 +1062,13 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
         return Some(SpecialMoveEntry::new(SpecialMove::Interrupt, GameResult::Paused));
     }
     if trimmed.contains("入玉宣言") || trimmed.contains("入玉勝ち") {
-        if trimmed.contains("先手") {
+        if trimmed.contains("先手") || trimmed.contains("下手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::WinByDeclaration,
                 GameResult::BlackWinByDeclaration,
             ));
         }
-        if trimmed.contains("後手") {
+        if trimmed.contains("後手") || trimmed.contains("上手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::WinByDeclaration,
                 GameResult::WhiteWinByDeclaration,
@@ -1067,13 +1077,13 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
         return None;
     }
     if trimmed.contains("反則勝ち") {
-        if trimmed.contains("先手") {
+        if trimmed.contains("先手") || trimmed.contains("下手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::WinByIllegalMove,
                 GameResult::BlackWinByIllegalMove,
             ));
         }
-        if trimmed.contains("後手") {
+        if trimmed.contains("後手") || trimmed.contains("上手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::WinByIllegalMove,
                 GameResult::WhiteWinByIllegalMove,
@@ -1081,13 +1091,13 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
         }
     }
     if trimmed.contains("反則負け") {
-        if trimmed.contains("先手") {
+        if trimmed.contains("先手") || trimmed.contains("下手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::LoseByIllegalMove,
                 GameResult::WhiteWinByIllegalMove,
             ));
         }
-        if trimmed.contains("後手") {
+        if trimmed.contains("後手") || trimmed.contains("上手") {
             return Some(SpecialMoveEntry::new(
                 SpecialMove::LoseByIllegalMove,
                 GameResult::BlackWinByIllegalMove,
@@ -1101,10 +1111,10 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
         return Some(terminal_from_kif_name("詰", side_to_move));
     }
     if trimmed.contains("勝ち") {
-        if trimmed.contains("先手") {
+        if trimmed.contains("先手") || trimmed.contains("下手") {
             return Some(SpecialMoveEntry::new(SpecialMove::Resign, GameResult::BlackWin));
         }
-        if trimmed.contains("後手") {
+        if trimmed.contains("後手") || trimmed.contains("上手") {
             return Some(SpecialMoveEntry::new(SpecialMove::Resign, GameResult::WhiteWin));
         }
     }
@@ -1269,9 +1279,16 @@ fn format_kif_move_line(
     line
 }
 
-fn format_kif_summary(terminal: &SpecialMoveEntry, side_to_move: Color, ply: usize) -> String {
-    let next = if side_to_move == Color::BLACK { "先手" } else { "後手" };
-    let last = if side_to_move == Color::BLACK { "後手" } else { "先手" };
+fn format_kif_summary(
+    terminal: &SpecialMoveEntry,
+    side_to_move: Color,
+    ply: usize,
+    handicap_side_names: bool,
+) -> String {
+    let (black, white) =
+        if handicap_side_names { ("下手", "上手") } else { ("先手", "後手") };
+    let next = if side_to_move == Color::BLACK { black } else { white };
+    let last = if side_to_move == Color::BLACK { white } else { black };
     match terminal.kind() {
         SpecialMove::Resign => format!("まで{ply}手で{last}の勝ち"),
         SpecialMove::Interrupt => format!("まで{ply}手で中断"),
@@ -1444,6 +1461,12 @@ fn append_kif_comments(lines: &mut Vec<String>, comment: &str) {
 
 fn handicap_name_from_sfen(sfen: &str) -> Option<&'static str> {
     InitialPosition::from_sfen(sfen).and_then(InitialPosition::handicap_name_ja)
+}
+
+fn uses_handicap_side_names(sfen: &str) -> bool {
+    InitialPosition::from_sfen(sfen).is_some_and(|position| {
+        !matches!(position, InitialPosition::Standard | InitialPosition::Empty)
+    })
 }
 
 fn handicap_sfen_from_metadata(metadata: &RecordMetadata) -> Option<&'static str> {
@@ -1985,6 +2008,7 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
 pub fn export_kif(record: &Record) -> Result<String, KifError> {
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
+    let handicap_side_names = uses_handicap_side_names(record.init_position_sfen());
 
     let mut lines: Vec<String> = Vec::new();
     append_kif_metadata(&mut lines, record.metadata());
@@ -2029,7 +2053,7 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
             &move_text,
             elapsed,
             total,
-            record.children(*node_id).len() > 1,
+            node.parent().is_some_and(|parent| record.children(parent).len() > 1),
         );
         lines.push(line);
         append_kif_eval_line(&mut lines, node.annotation(), pos.turn());
@@ -2095,7 +2119,10 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
                     &move_text,
                     elapsed,
                     total,
-                    record.children(node_id).len() > 1,
+                    record
+                        .node(node_id)
+                        .parent()
+                        .is_some_and(|parent| record.children(parent).len() > 1),
                 );
                 lines.push(line);
                 append_kif_eval_line(&mut lines, node.annotation(), var_pos.turn());
@@ -2131,7 +2158,12 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
             terminal_total,
             false,
         ));
-        lines.push(format_kif_summary(terminal, pos.turn(), record.move_count()));
+        lines.push(format_kif_summary(
+            terminal,
+            pos.turn(),
+            record.move_count(),
+            handicap_side_names,
+        ));
     }
 
     Ok(format!("{}\n", lines.join("\n")))
@@ -2141,6 +2173,7 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
 pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
+    let handicap_side_names = uses_handicap_side_names(record.init_position_sfen());
 
     let mut lines: Vec<String> = Vec::new();
     append_kif_metadata(&mut lines, record.metadata());
@@ -2289,7 +2322,12 @@ pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
         if record.node_count() > main_ids.len() + 1 {
             lines.push(String::new());
         }
-        lines.push(format_kif_summary(terminal, pos.turn(), record.move_count()));
+        lines.push(format_kif_summary(
+            terminal,
+            pos.turn(),
+            record.move_count(),
+            handicap_side_names,
+        ));
     }
 
     Ok(format!("{}\n", lines.join("\n")))
@@ -2520,6 +2558,12 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_kif_repeated_hand_pieces_do_not_overflow() {
+        let hands = "歩".repeat(300);
+        assert_eq!(parse_hand_pieces(&hands).get("FU"), Some(&300));
+    }
+
+    #[test]
     fn test_parse_kif_summary_max_moves() {
         let kif = "\
 手合割：平手
@@ -2547,6 +2591,18 @@ mod tests {
         assert_eq!(record.result(), GameResult::DrawByImpasse);
         let terminal = record.main_terminal().expect("terminal");
         assert_eq!(terminal.kind(), &SpecialMove::Impasse);
+    }
+
+    #[test]
+    fn test_parse_kif_summary_uses_handicap_side_names() {
+        let kif = "手合割：香落ち\nまで0手で上手の勝ち";
+        let record = parse_kif_str(kif).unwrap();
+        assert_eq!(record.result(), GameResult::WhiteWin);
+    }
+
+    #[test]
+    fn test_parse_variation_start_accepts_fullwidth_digits() {
+        assert_eq!(parse_variation_start("変化：１２手"), 12);
     }
 
     #[test]
@@ -2579,6 +2635,18 @@ mod tests {
         assert_eq!(terminal.kind(), &SpecialMove::Resign);
         assert_eq!(terminal.result(), GameResult::WhiteWin);
         assert_eq!(terminal_node(&record).time_ms(), Some(11_000));
+    }
+
+    #[test]
+    fn test_parse_kif_terminal_line_with_fullwidth_parentheses() {
+        let kif = "\
+手合割：平手
+手数----指手---------消費時間--
+ 1 ７六歩(77)
+ 2 投了（0:03/00:00:04）";
+
+        let record = parse_kif_str(kif).unwrap();
+        assert_eq!(terminal_node(&record).time_ms(), Some(3_000));
     }
 
     #[test]
@@ -2623,6 +2691,14 @@ mod tests {
         let record = parse_kif_str(kif).unwrap();
         assert_eq!(record.initial_comment(), Some("序文1\n序文2"));
         assert_eq!(main_node(&record, 0).comment(), None);
+    }
+
+    #[test]
+    fn test_parse_ki2_variation_preserves_multiline_comments() {
+        let pos = hirate_position();
+        let lines = vec!["▲７六歩".to_string(), "*コメント1".to_string(), "*コメント2".to_string()];
+        let moves = parse_ki2_variation_moves(&lines, &pos, None).unwrap();
+        assert_eq!(moves[0].comment(), Some("コメント1\nコメント2"));
     }
 
     #[test]
@@ -2995,6 +3071,10 @@ mod tests {
             parsed.node(root_children[1]).mv().expect("variation move").mv().to_usi(),
             "2g2f"
         );
+        let first_move = kif.lines().find(|line| line.trim_start().starts_with('1')).unwrap();
+        assert!(first_move.ends_with('+'));
+        let second_move = kif.lines().find(|line| line.trim_start().starts_with('2')).unwrap();
+        assert!(!second_move.ends_with('+'));
     }
 
     #[test]
@@ -3048,6 +3128,19 @@ mod tests {
     }
 
     #[test]
+    fn test_export_kif_time_control_roundtrip_preserves_byoyomi() {
+        let mut record = Record::new(hirate_position().to_sfen(None)).unwrap();
+        let mut metadata = RecordMetadata::builder();
+        metadata.time_control(Some(TimeControl::new(30 * 60, 30, 0)));
+        record.set_metadata(metadata.build());
+
+        let kif = export_kif(&record).unwrap();
+        assert!(kif.contains("持ち時間：30分秒読み30秒"));
+        let reparsed = parse_kif_str(&kif).unwrap();
+        assert_eq!(reparsed.metadata().time_control(), Some(&TimeControl::new(30 * 60, 30, 0)));
+    }
+
+    #[test]
     fn test_export_kif_writes_new_handicap_name() {
         let mut pos = Position::empty();
         pos.set_sfen(InitialPosition::Handicap5Pieces.to_sfen()).expect("valid handicap sfen");
@@ -3061,6 +3154,20 @@ mod tests {
 
         let kif = export_kif(&record).expect("export");
         assert!(kif.contains("手合割：五枚落ち"));
+    }
+
+    #[test]
+    fn test_export_kif_and_ki2_use_handicap_side_names_in_summary() {
+        let mut record = Record::new(InitialPosition::HandicapLance.to_sfen()).unwrap();
+        record
+            .set_main_terminal(SpecialMoveEntry::new(SpecialMove::Resign, GameResult::BlackWin))
+            .unwrap();
+
+        let kif = export_kif(&record).unwrap();
+        let ki2 = export_ki2(&record).unwrap();
+
+        assert!(kif.contains("まで0手で下手の勝ち"));
+        assert!(ki2.contains("まで0手で下手の勝ち"));
     }
 
     #[test]
@@ -3172,6 +3279,22 @@ mod tests {
             assert_eq!(parsed.move_count(), 1);
             assert_eq!(main_node(&parsed, 0).mv().unwrap().mv().to_usi(), usi);
         }
+    }
+
+    #[test]
+    fn test_export_ki2_uses_combined_suffix_for_three_silvers() {
+        let sfen = "4k4/9/9/9/9/1S7/9/1SS6/4K4 b - 1";
+        let record = Record::from_main_line(
+            sfen.to_string(),
+            vec![MoveEntry::new(Move::from_usi("8h7g").unwrap())],
+            None,
+        )
+        .unwrap();
+
+        let ki2 = export_ki2(&record).unwrap();
+        assert!(ki2.contains("▲７七銀左上"));
+        let parsed = parse_ki2_str(&ki2).unwrap();
+        assert_eq!(main_node(&parsed, 0).mv().unwrap().mv().to_usi(), "8h7g");
     }
 
     #[test]

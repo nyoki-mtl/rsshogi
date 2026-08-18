@@ -425,11 +425,7 @@ fn suffix_of(
     }
     let same_horizontal =
         candidates.iter().filter(|&square| horizontal_of(square, to, side) == horizontal).count();
-    if same_horizontal > 1 && candidates.count() != 3 {
-        combine(horizontal, motion)
-    } else {
-        horizontal
-    }
+    if same_horizontal > 1 { combine(horizontal, motion) } else { horizontal }
 }
 
 fn horizontal_of(from: Square, to: Square, side: Color) -> Ki2Suffix {

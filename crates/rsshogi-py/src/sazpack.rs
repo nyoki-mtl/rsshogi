@@ -224,7 +224,7 @@ impl PySazGame {
         let stem_packed_sfen = if let Ok(sfen) = stem.extract::<String>() {
             let mut position = Position::empty();
             position.set_sfen(&sfen).map_err(value_error)?;
-            position.to_packed_sfen()
+            position.try_to_packed_sfen().map_err(value_error)?
         } else {
             let bytes = stem.extract::<Vec<u8>>()?;
             let data: [u8; 32] =

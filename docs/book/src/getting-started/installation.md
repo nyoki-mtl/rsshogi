@@ -35,7 +35,7 @@ print(rsshogi.__version__)
 
 ```toml
 [dependencies]
-rsshogi = "1.2.2"
+rsshogi = "1.2.3"
 ```
 
 ### Git リポジトリから

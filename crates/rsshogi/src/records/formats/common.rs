@@ -3,7 +3,7 @@ use encoding_rs::SHIFT_JIS;
 use std::collections::HashMap;
 
 pub(crate) type BoardMap = HashMap<(u8, u8), (char, String)>;
-pub(crate) type HandCounts = HashMap<char, HashMap<String, u8>>;
+pub(crate) type HandCounts = HashMap<char, HashMap<String, u32>>;
 
 /// テキストエンコーディング。
 ///

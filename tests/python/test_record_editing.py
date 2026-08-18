@@ -118,6 +118,28 @@ def test_game_record_from_usi_main_line_builds_moves_and_terminal() -> None:
     assert record.initial_comment == "initial"
 
 
+def test_record_construction_rejects_illegal_moves() -> None:
+    init_sfen = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
+    illegal_line = [rs.record.MoveEntry("7g7f"), rs.record.MoveEntry("7g7f")]
+
+    with pytest.raises(ValueError, match="illegal move"):
+        rs.record.Record(init_sfen, moves=illegal_line)
+    with pytest.raises(ValueError, match="illegal move"):
+        rs.record.Record.from_main_line(init_sfen, illegal_line)
+
+
+def test_record_extend_is_atomic_on_illegal_move() -> None:
+    init_sfen = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
+    record = rs.record.Record(init_sfen)
+
+    with pytest.raises(ValueError, match="illegal move"):
+        record.extend_main_line(
+            [rs.record.MoveEntry("7g7f"), rs.record.MoveEntry("7g7f")]
+        )
+
+    assert record.move_count == 0
+
+
 def test_game_record_initial_comment_property_roundtrip() -> None:
     record = rs.record.Record(
         "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
@@ -358,6 +380,35 @@ def test_game_record_to_psv_include_flags_on_main_line_record() -> None:
     assert none_selected == []
 
 
+def test_game_record_to_psv_preserves_depth_first_branch_order() -> None:
+    init_sfen = rs.core.Board().to_sfen()
+    record = rs.record.Record.from_main_line(
+        init_sfen,
+        [
+            rs.record.MoveEntry("7g7f", engine_info=rs.record.EngineInfo(eval=10)),
+            rs.record.MoveEntry("3c3d", engine_info=rs.record.EngineInfo(eval=20)),
+        ],
+    )
+    editor = record.into_editor()
+    editor.append_move(rs.record.MoveEntry("2g2f", engine_info=rs.record.EngineInfo(eval=30)))
+    editor.append_move(rs.record.MoveEntry("8c8d", engine_info=rs.record.EngineInfo(eval=40)))
+    record = editor.into_record()
+
+    entries = record.to_psv(include_main=True, include_variations=True)
+    main_board = rs.core.Board()
+    variation_board = rs.core.Board()
+    expected = [
+        main_board.to_psv(rs.core.Move.from_usi("7g7f"), 10),
+    ]
+    main_board.apply_usi("7g7f")
+    expected.append(main_board.to_psv(rs.core.Move.from_usi("3c3d"), 20))
+    expected.append(variation_board.to_psv(rs.core.Move.from_usi("2g2f"), 30))
+    variation_board.apply_usi("2g2f")
+    expected.append(variation_board.to_psv(rs.core.Move.from_usi("8c8d"), 40))
+
+    assert entries == expected
+
+
 def test_game_record_to_psv_rejects_missing_eval() -> None:
     init_sfen = rs.core.Board().to_sfen()
     move1 = rs.record.MoveEntry("7g7f", engine_info=rs.record.EngineInfo(eval=10))
@@ -366,6 +417,19 @@ def test_game_record_to_psv_rejects_missing_eval() -> None:
 
     with pytest.raises(ValueError, match="missing eval"):
         record.to_psv()
+
+
+def test_game_record_to_psv_handles_deep_main_line() -> None:
+    init_sfen = "4k4/9/9/9/9/9/9/9/4K4 b - 1"
+    cycle = ("5i5h", "5a5b", "5h5i", "5b5a")
+    move_count = 10_000
+    moves = [
+        rs.record.MoveEntry(cycle[index % len(cycle)], engine_info=rs.record.EngineInfo(eval=0))
+        for index in range(move_count)
+    ]
+    record = rs.record.Record.from_main_line(init_sfen, moves)
+
+    assert len(record.to_psv()) == move_count
 
 
 def test_game_record_roundtrip_preserves_main_terminal_kind() -> None:

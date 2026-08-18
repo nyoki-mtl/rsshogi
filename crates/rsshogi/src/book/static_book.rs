@@ -108,6 +108,26 @@ impl StaticBook {
         let node_count = read_u32(bytes, &mut cursor)? as usize;
         let move_count = read_u32(bytes, &mut cursor)? as usize;
 
+        let expected_len = node_count
+            .checked_mul(usize::from(key_bytes))
+            .and_then(|len| {
+                node_count
+                    .checked_add(1)
+                    .and_then(|count| count.checked_mul(4))
+                    .and_then(|offset_len| len.checked_add(offset_len))
+            })
+            .and_then(|len| {
+                move_count.checked_mul(6).and_then(|move_len| len.checked_add(move_len))
+            })
+            .ok_or(BookError::InvalidFormat("declared counts overflow"))?;
+        let remaining = bytes.len() - cursor;
+        if expected_len > remaining {
+            return Err(BookError::InvalidFormat("truncated data"));
+        }
+        if expected_len < remaining {
+            return Err(BookError::InvalidFormat("trailing bytes"));
+        }
+
         let mut keys = Vec::with_capacity(node_count);
         for _ in 0..node_count {
             let key = match key_bytes {
@@ -408,6 +428,18 @@ mod tests {
             StaticBook::from_bytes(&bytes),
             Err(BookError::Unsupported(message))
                 if message.contains("key width does not match current hash feature")
+        ));
+    }
+
+    #[test]
+    fn test_static_book_rejects_huge_declared_count_before_allocation() {
+        let book = StaticBook::try_new(vec![], vec![0], vec![]).expect("empty static book");
+        let mut bytes = book.to_bytes();
+        bytes[14..18].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        assert!(matches!(
+            StaticBook::from_bytes(&bytes),
+            Err(BookError::InvalidFormat("truncated data"))
         ));
     }
 }
