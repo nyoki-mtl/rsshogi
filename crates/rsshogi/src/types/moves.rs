@@ -1,4 +1,4 @@
-use super::{Color, Piece, PieceType, Square};
+use super::{Color, Ki2Notation, Piece, PieceType, Square};
 use core::{fmt, str::FromStr};
 
 const MASK_7: u16 = 0x7f;
@@ -172,7 +172,13 @@ impl Move {
     }
     #[must_use]
     pub fn to_ki2(self, position: &crate::board::Position) -> Option<String> {
-        Move32::from_move_with_piece(self, position.moved_piece_after_move(self)).to_ki2(position)
+        self.to_ki2_notation(position).map(|notation| notation.to_string())
+    }
+    /// 局面 `position` でこの着手を指したときの KI2 記法を返す。
+    #[must_use]
+    pub fn to_ki2_notation(self, position: &crate::board::Position) -> Option<Ki2Notation> {
+        Move32::from_move_with_piece(self, position.moved_piece_after_move(self))
+            .to_ki2_notation(position)
     }
 }
 
@@ -324,76 +330,13 @@ impl Move32 {
     }
     #[must_use]
     pub fn to_ki2(self, position: &crate::board::Position) -> Option<String> {
-        if !self.is_normal() {
-            return None;
-        }
-        let piece = if self.has_piece_info() {
-            self.piece_after_move()
-        } else {
-            position.moved_piece_after(self)
-        };
-        if !piece.is_valid() || piece.is_empty() || !self.to_sq().is_valid() {
-            return None;
-        }
-        let side = piece.color();
-        let to = self.to_sq();
-        let marker = if side == Color::BLACK { '▲' } else { '△' };
-        let same_destination =
-            position.last_move().is_normal() && position.last_move().to_sq() == to;
-        let destination = if same_destination {
-            "同".to_string()
-        } else {
-            format!("{}{}", wide_digit(to.file().raw() + 1)?, kanji_rank(to.rank().raw() + 1)?)
-        };
-        let mut text = format!("{marker}{destination}");
-        let displayed =
-            if self.is_promotion() { piece.piece_type().demote() } else { piece.piece_type() };
-        text.push_str(ki2_piece(displayed)?);
-        if self.is_drop() {
-            let needs_drop_marker =
-                !ki2_board_candidates(position, to, side, piece.piece_type()).is_empty();
-            if needs_drop_marker {
-                text.push('打');
-            }
-            pad_ki2_same_destination(&mut text, same_destination);
-            return Some(text);
-        }
-        let from = self.from_sq();
-        if !from.is_valid() {
-            return None;
-        }
-        let same = ki2_board_candidates(position, to, side, displayed);
-        text.push_str(&ki2_suffix(from, to, side, displayed, &same));
-        if self.is_promotion() {
-            text.push('成');
-        } else if position.is_legal_move(Move::promotion(from, to)) {
-            text.push_str("不成");
-        }
-        pad_ki2_same_destination(&mut text, same_destination);
-        Some(text)
+        self.to_ki2_notation(position).map(|notation| notation.to_string())
     }
-}
-
-fn pad_ki2_same_destination(text: &mut String, same_destination: bool) {
-    if same_destination && text.chars().count() == 3 {
-        let byte_index = text.char_indices().nth(2).map_or(text.len(), |(index, _)| index);
-        text.insert(byte_index, '　');
+    /// 局面 `position` でこの着手を指したときの KI2 記法を返す。
+    #[must_use]
+    pub fn to_ki2_notation(self, position: &crate::board::Position) -> Option<Ki2Notation> {
+        Ki2Notation::from_move32(self, position)
     }
-}
-
-fn ki2_board_candidates(
-    position: &crate::board::Position,
-    to: Square,
-    side: Color,
-    piece_type: PieceType,
-) -> Vec<Move> {
-    let mut sources =
-        position.attackers_to_color_current(side, to) & position.pieces_for(piece_type, side);
-    let mut candidates = Vec::new();
-    while let Some(from) = sources.pop_lsb() {
-        candidates.push(Move::normal(from, to));
-    }
-    candidates
 }
 
 impl fmt::Debug for Move32 {
@@ -747,134 +690,6 @@ fn csa_piece(piece_type: PieceType) -> Option<&'static str> {
         _ => return None,
     })
 }
-fn wide_digit(value: i8) -> Option<char> {
-    ['１', '２', '３', '４', '５', '６', '７', '８', '９'].get((value - 1) as usize).copied()
-}
-fn kanji_rank(value: i8) -> Option<char> {
-    ['一', '二', '三', '四', '五', '六', '七', '八', '九'].get((value - 1) as usize).copied()
-}
-fn ki2_piece(piece_type: PieceType) -> Option<&'static str> {
-    Some(match piece_type {
-        PieceType::PAWN => "歩",
-        PieceType::LANCE => "香",
-        PieceType::KNIGHT => "桂",
-        PieceType::SILVER => "銀",
-        PieceType::GOLD => "金",
-        PieceType::BISHOP => "角",
-        PieceType::ROOK => "飛",
-        PieceType::KING => "玉",
-        PieceType::PRO_PAWN => "と",
-        PieceType::PRO_LANCE => "杏",
-        PieceType::PRO_KNIGHT => "圭",
-        PieceType::PRO_SILVER => "全",
-        PieceType::HORSE => "馬",
-        PieceType::DRAGON => "龍",
-        _ => return None,
-    })
-}
-
-fn oriented(square: Square, side: Color) -> (i8, i8) {
-    if side == Color::BLACK {
-        (square.file().raw(), square.rank().raw())
-    } else {
-        (8 - square.file().raw(), 8 - square.rank().raw())
-    }
-}
-fn ki2_suffix(
-    from: Square,
-    to: Square,
-    side: Color,
-    piece_type: PieceType,
-    candidates: &[Move],
-) -> String {
-    let (from_file, from_rank) = oriented(from, side);
-    let (to_file, to_rank) = oriented(to, side);
-    let horizontal = if from_file < to_file {
-        "右"
-    } else if from_file > to_file {
-        "左"
-    } else {
-        "直"
-    };
-    let motion = if from_rank < to_rank {
-        "引"
-    } else if from_rank > to_rank {
-        "上"
-    } else {
-        "寄"
-    };
-    if candidates.len() <= 1 {
-        return String::new();
-    }
-    if motion == "寄" {
-        return motion.to_string();
-    }
-    let same_motion = candidates
-        .iter()
-        .filter(|candidate| ki2_motion(candidate.from_sq(), to, side) == motion)
-        .count();
-    if same_motion == 1 {
-        return motion.to_string();
-    }
-    if horizontal == "直" {
-        if matches!(
-            piece_type,
-            PieceType::LANCE
-                | PieceType::BISHOP
-                | PieceType::ROOK
-                | PieceType::HORSE
-                | PieceType::DRAGON
-        ) {
-            if candidates
-                .iter()
-                .any(|candidate| ki2_horizontal(candidate.from_sq(), to, side) == "右")
-            {
-                return "左".to_string();
-            }
-            if candidates
-                .iter()
-                .any(|candidate| ki2_horizontal(candidate.from_sq(), to, side) == "左")
-            {
-                return "右".to_string();
-            }
-        }
-        return "直".to_string();
-    }
-    let same_horizontal = candidates
-        .iter()
-        .filter(|candidate| ki2_horizontal(candidate.from_sq(), to, side) == horizontal)
-        .count();
-    if same_horizontal > 1 {
-        if candidates.len() == 3 { horizontal.to_string() } else { format!("{horizontal}{motion}") }
-    } else {
-        horizontal.to_string()
-    }
-}
-
-fn ki2_horizontal(from: Square, to: Square, side: Color) -> &'static str {
-    let (from_file, _) = oriented(from, side);
-    let (to_file, _) = oriented(to, side);
-    if from_file < to_file {
-        "右"
-    } else if from_file > to_file {
-        "左"
-    } else {
-        "直"
-    }
-}
-
-fn ki2_motion(from: Square, to: Square, side: Color) -> &'static str {
-    let (_, from_rank) = oriented(from, side);
-    let (_, to_rank) = oriented(to, side);
-    if from_rank < to_rank {
-        "引"
-    } else if from_rank > to_rank {
-        "上"
-    } else {
-        "寄"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

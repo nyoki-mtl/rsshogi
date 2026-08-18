@@ -1,6 +1,6 @@
 [package]
 name = "rsshogi"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -94,6 +94,10 @@ harness = false
 
 [[bench]]
 name = "attack_tables"
+harness = false
+
+[[bench]]
+name = "ki2"
 harness = false
 
 # data 系 API を使う example は records 有効時のみビルドする

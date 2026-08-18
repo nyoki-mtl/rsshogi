@@ -99,6 +99,33 @@ assert_eq!(mv32.to_usi(), "7g7f");
 `Move32::to_ki2(position)` は必要なら局面から駒情報を補う。
 取得駒、捕獲判定、from-to index が必要な処理は `Position::move32_metadata` または `classify_move32` を使う。
 
+## `Ki2Notation`
+
+`Ki2Notation` は、1 手分の正規化された KI2 記法を 4 バイトで保持する。
+`Move::to_ki2_notation(position)` と `Move32::to_ki2_notation(position)` は、文字列を確保せずにこの値を返す。
+`Ki2Notation` は `Copy`、`Eq`、`Hash` を実装しているため、KI2 符号ごとの集計や重複排除にそのまま使える。
+
+```rust,ignore
+use rsshogi::board;
+use rsshogi::types::Ki2Notation;
+
+board::init();
+let position = board::hirate_position();
+let mv = board::move_from_usi_expect(&position, "7g7f");
+let notation = mv.to_ki2_notation(&position).unwrap();
+
+assert_eq!(notation.to_string(), "▲７六歩");
+assert_eq!("▲７六歩".parse::<Ki2Notation>().unwrap(), notation);
+assert_eq!(notation.to_move32(&position).unwrap(), mv);
+```
+
+`Display` は正規化された KI2 文字列を出力し、`FromStr` は 1 手分の KI2 を解析する。
+`to_move32(position)` は現在局面の全合法手から同じ記法を持つ手を探し、一致がない場合と複数ある場合をエラーとして区別する。
+
+`同` は移動先を文字列に含まない。
+そのため `Ki2Notation` も `同` の移動先を保持せず、着手へ戻すには直前手を含む `Position` が必要になる。
+この値は着手の識別子ではなく、表示される KI2 符号の同一性を表す。
+
 ## 16 bit と 32 bit の使い分け
 
 手生成の基本出力は `Move` であり、手リストや定跡のように大量保持する用途に適する。

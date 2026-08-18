@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install nightly with miri
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -52,7 +52,7 @@ jobs:
       ASAN_OPTIONS: detect_leaks=0
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Run Rust tests with ASan

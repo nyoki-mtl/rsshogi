@@ -60,7 +60,8 @@ function Write-TestFile {
     if ($dir) {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
-    Set-Content -LiteralPath $Path -Value $Content -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, "$Content`n", $utf8NoBom)
 }
 
 function Assert-NotTracked {
@@ -124,6 +125,11 @@ try {
     Write-TestFile (Join-Path $publicWork "README.md") "old public readme"
     Write-TestFile (Join-Path $publicWork "obsolete.txt") "removed upstream"
     Write-TestFile (Join-Path $publicWork "AGENTS.md") "must be removed from public base"
+    $unicodeReleaseNote = -join ([char[]]@(
+        0x76F8, 0x5BFE, 0x30D1, 0x30B9, 0x306E, 0x30EA, 0x30EA, 0x30FC,
+        0x30B9, 0x30CE, 0x30FC, 0x30C8, 0x3092, 0x4FDD, 0x6301
+    ))
+    Write-TestFile (Join-Path $publicWork "release-notes/v0.0.0.txt") $unicodeReleaseNote
     Invoke-Git $publicWork add -A
     Invoke-Git $publicWork commit -q -m "old public snapshot"
     Invoke-Git $publicWork remote add public $publicGit
@@ -150,17 +156,26 @@ try {
             if ([System.IO.Path]::GetFileName($powerShellExe) -ieq "powershell.exe") {
                 $powerShellArgs += @("-ExecutionPolicy", "Bypass")
             }
-            $powerShellArgs += @("-File", "scripts/export_public_snapshot.ps1", "-DryRun", "v0.0.0", "develop/main", "public/main")
+            $powerShellArgs += @("-File", "scripts/export_public_snapshot.ps1", "v0.0.0", "develop/main", "public/main", "-NotesFile", "release-notes/v0.0.0.txt")
             & $powerShellExe @powerShellArgs *> $null
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         if ($exitCode -ne 0) {
-            throw "export_public_snapshot.ps1 dry-run failed"
+            throw "export_public_snapshot.ps1 failed"
         }
     } finally {
         Pop-Location
+    }
+
+    $commitMessage = (Git-Output $exportWork log -1 --format=%B) -join "`n"
+    if ($commitMessage -notmatch [regex]::Escape($unicodeReleaseNote)) {
+        throw "relative NotesFile content is missing from the snapshot commit message"
+    }
+    $exportBranch = (Git-Output $exportWork branch --show-current) -join ""
+    if ($exportBranch -ne "export-release-v0.0.0") {
+        throw "unexpected export branch: $exportBranch"
     }
 
     Assert-NotTracked $exportWork "AGENTS.md"

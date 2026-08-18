@@ -340,41 +340,37 @@ fn parse_board_block(lines: &[String], start_index: usize) -> Result<(usize, Boa
         }
         let row_line = &lines[idx];
         idx += 1;
-        let segments: Vec<&str> = row_line.split('|').collect();
-        let mut file_index = 0u8;
-        for seg in segments.iter().skip(1).take(9) {
-            file_index += 1;
-            let token = seg.trim();
-            if token.is_empty() || token == "・" || token == "　" {
+        let body =
+            row_line.split('|').nth(1).ok_or_else(|| KifError::InvalidLine(row_line.clone()))?;
+        let cells = body.chars().collect::<Vec<_>>();
+        if cells.len() != 18 {
+            return Err(KifError::InvalidLine(row_line.clone()));
+        }
+        for (cell_index, cell) in cells.chunks_exact(2).enumerate() {
+            let prefix = cell[0];
+            let piece_symbol = cell[1];
+            if piece_symbol == '・' {
                 continue;
             }
-            let mut chars = token.chars();
-            let mut color = '+';
-            let mut piece_text = token.to_string();
-            if let Some(prefix) = chars.next()
-                && (prefix == 'v' || prefix == '^')
-            {
-                color = '-';
-                piece_text = chars.collect();
-            }
-            let piece_code = match piece_text.as_str() {
-                "歩" => "FU",
-                "香" => "KY",
-                "桂" => "KE",
-                "銀" => "GI",
-                "金" => "KI",
-                "角" => "KA",
-                "飛" => "HI",
-                "玉" | "王" => "OU",
-                "と" => "TO",
-                "杏" => "NY",
-                "圭" => "NK",
-                "全" => "NG",
-                "馬" => "UM",
-                "龍" | "竜" => "RY",
-                _ => continue,
+            let color = if prefix == 'v' || prefix == '^' { '-' } else { '+' };
+            let piece_code = match piece_symbol {
+                '歩' => "FU",
+                '香' => "KY",
+                '桂' => "KE",
+                '銀' => "GI",
+                '金' => "KI",
+                '角' => "KA",
+                '飛' => "HI",
+                '玉' | '王' => "OU",
+                'と' => "TO",
+                '杏' => "NY",
+                '圭' => "NK",
+                '全' => "NG",
+                '馬' => "UM",
+                '龍' | '竜' => "RY",
+                _ => return Err(KifError::InvalidLine(row_line.clone())),
             };
-            let file = 10 - file_index;
+            let file = 9 - cell_index as u8;
             let rank = (row + 1) as u8;
             board_map.insert((file, rank), (color, piece_code.to_string()));
         }
@@ -1760,6 +1756,13 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
             idx += 1;
             continue;
         }
+        if is_board_header_line(&line) {
+            let (next, parsed) = parse_board_block(&lines, idx)
+                .map_err(|err| Ki2Error::InvalidLine(err.to_string()))?;
+            board_map = parsed;
+            idx = next;
+            continue;
+        }
         if stripped.starts_with("変化：")
             || stripped.starts_with("まで")
             || looks_like_ki2_move_line(stripped)
@@ -1798,13 +1801,6 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
                 hand_counts.insert('-', parse_hand_pieces(value));
             }
             idx += 1;
-            continue;
-        }
-        if is_board_header_line(&line) {
-            let (next, parsed) = parse_board_block(&lines, idx)
-                .map_err(|err| Ki2Error::InvalidLine(err.to_string()))?;
-            board_map = parsed;
-            idx = next;
             continue;
         }
         apply_metadata_line(&mut metadata_builder, stripped);
@@ -3155,6 +3151,27 @@ mod tests {
             parsed.node(root_children[1]).mv().expect("variation move").mv().to_usi(),
             "2g2f"
         );
+    }
+
+    #[test]
+    fn test_export_ki2_roundtrip_from_custom_position_with_sideways_gold_moves() {
+        let sfen = "lnsg1gsnl/1r3k1b1/ppppppppp/9/8P/9/PPPPPPPP1/1B5R1/LNSGKGSNL w - 4";
+
+        for (usi, expected_ki2) in [("4a5a", "△５一金左"), ("6a5a", "△５一金右")] {
+            let record = Record::from_main_line(
+                sfen.to_string(),
+                vec![MoveEntry::new(Move::from_usi(usi).unwrap())],
+                None,
+            )
+            .unwrap();
+
+            let ki2 = export_ki2(&record).unwrap();
+            assert!(ki2.contains(expected_ki2));
+
+            let parsed = parse_ki2_str(&ki2).unwrap();
+            assert_eq!(parsed.move_count(), 1);
+            assert_eq!(main_node(&parsed, 0).mv().unwrap().mv().to_usi(), usi);
+        }
     }
 
     #[test]

@@ -72,14 +72,15 @@ function Require-CleanTree {
 function Build-CommitMessage {
     param(
         [string]$ReleaseVersion,
-        [string]$ReleaseNotesFile
+        [string[]]$ReleaseNotesLines,
+        [switch]$IncludeReleaseNotes
     )
 
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add("Release $ReleaseVersion")
-    if ($ReleaseNotesFile) {
+    if ($IncludeReleaseNotes) {
         $lines.Add("")
-        foreach ($line in Get-Content -LiteralPath $ReleaseNotesFile) {
+        foreach ($line in $ReleaseNotesLines) {
             $lines.Add($line)
         }
     }
@@ -126,11 +127,17 @@ function Remove-PathIfExists {
     }
 }
 
-if ($NotesFile -and -not (Test-Path -LiteralPath $NotesFile)) {
-    throw "notes file not found: $NotesFile"
+$releaseNotesLines = @()
+$includeReleaseNotes = [bool]$NotesFile
+if ($NotesFile) {
+    $notesFilePath = [System.IO.Path]::GetFullPath($NotesFile)
+    if (-not (Test-Path -LiteralPath $notesFilePath -PathType Leaf)) {
+        throw "notes file not found: $NotesFile"
+    }
+    $releaseNotesLines = @(Get-Content -LiteralPath $notesFilePath -Encoding UTF8)
 }
 
-$exportBranch = "export-public"
+$exportBranch = "export-release-$Version"
 $publicGitAuthorName = if ($env:PUBLIC_GIT_AUTHOR_NAME) { $env:PUBLIC_GIT_AUTHOR_NAME } else { "nyoki-mtl" }
 $publicGitAuthorEmail = if ($env:PUBLIC_GIT_AUTHOR_EMAIL) { $env:PUBLIC_GIT_AUTHOR_EMAIL } else { "charmer.popopo@gmail.com" }
 
@@ -240,7 +247,7 @@ if ($DryRun) {
 
 $commitMessageFile = [System.IO.Path]::GetTempFileName()
 try {
-    $message = Build-CommitMessage $Version $NotesFile
+    $message = Build-CommitMessage -ReleaseVersion $Version -ReleaseNotesLines $releaseNotesLines -IncludeReleaseNotes:$includeReleaseNotes
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($commitMessageFile, $message, $utf8NoBom)
 
@@ -255,4 +262,7 @@ try {
 
 Write-Host "Snapshot commit created on branch '$exportBranch'."
 Write-Host "Next:"
-Write-Host "  git push public HEAD:main"
+Write-Host "  git push public HEAD:refs/heads/$exportBranch"
+Write-Host "  gh pr create -R nyoki-mtl/rsshogi --base main --head $exportBranch"
+Write-Host "  gh pr checks -R nyoki-mtl/rsshogi --watch $exportBranch"
+Write-Host "  gh pr merge -R nyoki-mtl/rsshogi --squash --delete-branch $exportBranch"

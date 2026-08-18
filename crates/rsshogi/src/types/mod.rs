@@ -20,6 +20,7 @@
 //!
 //! - [`Move32`] - 32bit 指し手（移動元、移動先、成り、駒打ち、取った駒など）
 //! - [`Move`] - 16bit 指し手（コンパクト版、移動元、移動先、成り、駒打ちのみ）
+//! - [`Ki2Notation`] - 1 手分の正規化された KI2 記法
 //!
 //! ## ビットボード
 //!
@@ -55,6 +56,7 @@ pub mod color;
 pub mod bitboard;
 pub mod file;
 pub mod hand;
+pub mod ki2;
 pub mod game_result;
 pub mod eval;
 pub mod moves;
@@ -72,6 +74,7 @@ pub use eval::Eval;
 pub use file::File;
 pub use game_result::GameResult;
 pub use hand::{HAND_BIT_MASK, HAND_BORROW_MASK, Hand, HandPiece};
+pub use ki2::{Ki2Notation, Ki2ResolveError, ParseKi2NotationError};
 pub(crate) use moves::MoveBase;
 pub use moves::{
     AperyMove, AperyMove32, MOVE_END, MOVE_NONE, MOVE_NULL, MOVE_RESIGN, MOVE_WIN, Move, Move32,
