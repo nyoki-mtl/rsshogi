@@ -5,6 +5,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-18
+
+### Added
+
+- `mate::solve_mate_in_one_in_place` takes `&mut Position` and searches without duplicating the
+  position. It applies each candidate to the given position and undoes it, so the position is
+  restored when the function returns normally. The caller must have initialized the state stack.
+  As with the other mutating APIs, the state of the position after a panic is unspecified.
+- `MoveSink::stop` and `Move32Sink::stop` let a sink request early termination. The default
+  implementation returns `false`, so existing sinks continue to collect every generated move.
+  Termination is cooperative: generators poll at implementation-defined checkpoints rather than
+  after every emitted move. The four legal-evasion `*_into` APIs stream checked positions through
+  `Legal` or `LegalAll`, and leave their sinks unchanged on non-check positions.
+
+### Changed
+
+- Mate-in-one detection discards candidates without applying them when a legal reply to the check
+  can be constructed statically: a king escape, a capture of the checking piece, or an
+  interposition. A candidate is discarded only when such a reply is found, so a mate is never
+  missed; mate itself is still confirmed by generating the defender's legal moves. Pawn drops are
+  skipped outright because a mate by dropping a pawn is illegal.
+- On positions where the side to move is not in check, `mate::solve_mate_in_one` streams checking
+  drops before checking board moves and stops after proving the first mate. This may select a
+  different move when more than one legal mate exists; the returned move is still guaranteed to
+  be legal, give check, and leave the defender without a legal reply.
+- `Position::is_mated` stops generating as soon as it finds one legal move instead of collecting
+  the whole legal set.
+- In the final native-build qualification over 1.99 million positions, the immutable mate-in-one
+  API was `45.4%` faster on the mate1 corpus and `5.6%` faster on the mate3 corpus than the
+  list-based pre-streaming implementation from the same release candidate.
+
 ## [1.2.0] - 2026-08-15
 
 ### Changed
@@ -345,7 +376,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/nyoki-mtl/rsshogi/releases/tag/v1.1.0

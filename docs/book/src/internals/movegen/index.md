@@ -125,6 +125,12 @@ assert!(usual.iter().all(|mv| complete.as_slice().contains(mv)));
 
 sink と list は同じ候補集合を受け取り、順序付けは利用側が担当する。
 sink の `retain_unordered` は generator が候補を後段で除外するために必要な操作である。
+必要な手を得た sink は `stop()` で `true` を返し、対応する generator に残りの列挙を協調的に省略させられる。
+generator は実装ごとの生成区切りで `stop()` を確認するため、各出力手の直後に打ち切ることは保証しない。
+全候補を必要とする sink は、常に `false` を返す既定実装をそのまま使う。
+
+`generate_legal_evasions_into`、`generate_legal_evasions_all_into` と対応する `Move32` API は、
+王手局面だけで `Legal` または `LegalAll` のストリーミング生成を使う。非王手局面では sink を変更しない。
 
 ## 次に読む
 

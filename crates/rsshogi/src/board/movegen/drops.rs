@@ -110,6 +110,9 @@ fn generate_common_drops<T: MoveGenType>(
     }
 
     for (piece_type, hand_piece) in DROP_PIECES {
+        if list.stop() {
+            return;
+        }
         if hand.count(hand_piece) == 0 {
             continue;
         }
@@ -150,6 +153,9 @@ pub(super) fn generate_drops<T: MoveGenType>(pos: &Position, list: &mut impl Mov
     }
 
     for (piece_type, hand_piece) in DROP_PIECES {
+        if list.stop() {
+            return;
+        }
         if hand.count(hand_piece) == 0 {
             continue;
         }

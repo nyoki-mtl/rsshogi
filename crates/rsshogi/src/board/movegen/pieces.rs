@@ -210,6 +210,9 @@ fn generate_board_moves_with_facts<T: MoveGenType, const APPLY_EVASION_MASK: boo
 
     macro_rules! generate_piece_type {
         ($piece_type:expr, |$from:ident| $attacks:expr) => {{
+            if list.stop() {
+                return;
+            }
             let piece = Piece::from_parts(us, $piece_type);
             let mut sources = pos.bitboards().pieces_for($piece_type, us);
             while let Some($from) = sources.pop_lsb() {
@@ -218,6 +221,9 @@ fn generate_board_moves_with_facts<T: MoveGenType, const APPLY_EVASION_MASK: boo
                     targets &= facts.non_king_evasion_targets;
                 }
                 generate_destinations::<T>(pos, $from, piece, targets, enemy, facts, list);
+                if list.stop() {
+                    return;
+                }
             }
         }};
     }

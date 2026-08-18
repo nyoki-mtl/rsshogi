@@ -357,7 +357,8 @@ fn make_move_check(
     }
 }
 
-fn generate_checks_internal(
+#[inline(always)]
+fn generate_checks_board_internal(
     pos: &Position,
     list: &mut impl MoveSink,
     all: bool,
@@ -391,9 +392,15 @@ fn generate_checks_internal(
 
     let mut src = y;
     while let Some(from) = src.pop_lsb() {
+        if list.stop() {
+            return;
+        }
         let piece = pos.piece_on(from);
         let pin_line = Bitboard::line(ksq, from);
         make_move_target_general(pos, piece, from, target.and_not(pin_line), list, all, us);
+        if list.stop() {
+            return;
+        }
         if x.test(from) {
             make_move_check(pos, piece, from, ksq, pin_line & target, list, all, us, them);
         }
@@ -401,10 +408,26 @@ fn generate_checks_internal(
 
     let mut src = x.and_not(y);
     while let Some(from) = src.pop_lsb() {
+        if list.stop() {
+            return;
+        }
         let piece = pos.piece_on(from);
         make_move_check(pos, piece, from, ksq, target, list, all, us, them);
     }
+}
 
+fn generate_checks_internal(
+    pos: &Position,
+    list: &mut impl MoveSink,
+    all: bool,
+    quiet_only: bool,
+    us: Color,
+    them: Color,
+) {
+    generate_checks_board_internal(pos, list, all, quiet_only, us, them);
+    if list.stop() {
+        return;
+    }
     match us {
         Color::BLACK => generate_checks_drops_part_color::<Black>(pos, list),
         Color::WHITE => generate_checks_drops_part_color::<White>(pos, list),
@@ -434,6 +457,45 @@ pub fn generate_checks_all_move32(pos: &Position, list: &mut Move32List) {
     match pos.turn() {
         Color::BLACK => generate_checks_for_color::<Black>(pos, &mut adapter, true, false),
         Color::WHITE => generate_checks_for_color::<White>(pos, &mut adapter, true, false),
+    }
+}
+
+/// 一手詰め探索用に、既存の王手生成を打ち手、盤上手の順で sink へ送る。
+///
+/// 通常の公開生成器の順序には影響せず、打ち手で sink が停止した場合は盤上 phase を省略する。
+pub(crate) fn generate_checks_all_move32_drop_first_into(
+    pos: &Position,
+    sink: &mut impl super::Move32Sink,
+) {
+    {
+        let mut adapter = Move32SinkAdapter { pos, sink };
+        match pos.turn() {
+            Color::BLACK => generate_checks_drops_part_color::<Black>(pos, &mut adapter),
+            Color::WHITE => generate_checks_drops_part_color::<White>(pos, &mut adapter),
+        }
+    }
+    if sink.stop() {
+        return;
+    }
+
+    let mut adapter = Move32SinkAdapter { pos, sink };
+    match pos.turn() {
+        Color::BLACK => generate_checks_board_internal(
+            pos,
+            &mut adapter,
+            true,
+            false,
+            Color::BLACK,
+            Color::WHITE,
+        ),
+        Color::WHITE => generate_checks_board_internal(
+            pos,
+            &mut adapter,
+            true,
+            false,
+            Color::WHITE,
+            Color::BLACK,
+        ),
     }
 }
 
@@ -505,6 +567,9 @@ pub fn generate_checks_drops_part_color<C: ColorMarker>(pos: &Position, list: &m
 
         let mut target = empty & pos.check_square(piece_type);
         while let Some(to) = target.pop_lsb() {
+            if list.stop() {
+                return;
+            }
             if piece_type == PieceType::PAWN && !pos.is_legal_pawn_drop(us, to) {
                 continue;
             }

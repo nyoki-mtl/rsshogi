@@ -16,7 +16,7 @@ pub(super) fn generate_into<T: MoveGenType>(
         return;
     }
     generate_board_moves::<T>(pos, only_to, list);
-    if only_to.is_none() {
+    if only_to.is_none() && !list.stop() {
         generate_drops::<T>(pos, list);
     }
 }

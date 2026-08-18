@@ -31,6 +31,10 @@ if moves.is_empty() {
 `LegalAll` は通常省略される不成も含むので、完全性が必要な探索、検証、詰み判定に適する。
 通常の対局手だけでよい経路では `Legal` を使う。
 
+現在ノードで一手詰めを調べる場合、読み取り専用の局面には `mate::solve_mate_in_one` を使う。
+探索が変更可能な `Position` を保持している場合は、`mate::solve_mate_in_one_in_place` を使うと作業局面の複製を省略できる。
+in-place API は正常終了時に局面を復元するが、呼び出し前に state stack が現局面と同期している必要がある。
+
 探索が pseudo-legal mode を使って候補を絞る場合は、玉の安全を確認する段階を別に持つ。
 terminal 判定、PV の確定、外部へ返す手には `Legal` または `LegalAll` の契約を使う。
 
