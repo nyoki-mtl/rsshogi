@@ -15,14 +15,15 @@
 rsshogi = "1.2.3"
 ```
 
-棋譜や定跡を扱う場合は、必要な機能を `features` に追加します。
+Cargo の `features` で、必要な API やデータ形式のサポートを有効化できます。
+利用できる feature と依存関係は、[docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照してください。
+
+たとえば、棋譜を読み込んで定跡を構築するプロジェクトでは、次のように指定します。
 
 ```toml
 [dependencies]
 rsshogi = { version = "1.2.3", features = ["records", "book"] }
 ```
-
-利用できる機能は `records`、`book`、`position-serialization`、`policy-labels`、`svg`、`validation`、`initial-positions`、`hash-128` です。
 
 ### Python
 
@@ -66,8 +67,12 @@ board.apply_move(move)
 print(board.to_sfen())
 ```
 
-[マニュアル](docs/book/src/introduction.md) では API、棋譜と定跡の形式、内部実装を詳しく説明します。
+[マニュアル](https://nyoki-mtl.github.io/rsshogi/) では、API、棋譜と定跡の形式、内部実装を詳しく説明します。
 [CHANGELOG](CHANGELOG.md) にはバージョンごとの変更点を記録しています。
+
+## 利用例
+
+- [rsshogi-nnue-mini](https://github.com/nyoki-mtl/rsshogi-nnue-mini)：`rsshogi` を使った USI 将棋エンジンの例。
 
 ## ライセンス
 
