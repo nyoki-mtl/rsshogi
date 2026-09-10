@@ -84,7 +84,9 @@ let book = YaneuraOuBook::open_with_options(
 )?;
 ```
 
-`SafeBinary` が既定で、全検証の完了後に二分探索を開始します。
+`SafeBinary` が既定です。
+既定では先頭 10,000 局面行だけを検証し、全件検証が終わるまでは `lookup_sfen()` による二分探索を拒否します。
+全件検証後、または `lookup_sfen_by_scan()` を使うと検索できます。
 `ValidateFullBeforeLookup` は open 時にファイル全体を検証します。
 `AssumeSortedAfterPrefix` は先頭部分の検証後、`AssumeSortedByCaller` は呼び出し側の
 ソート保証を使って二分探索を開始します。

@@ -68,8 +68,8 @@ board = Board()
 # 手番（Color.BLACK / Color.WHITE）
 print(board.turn)
 
-# 手数
-print(board.game_ply)
+# SFEN の手数欄（初期局面は1、1手指すごとに1増える）
+print(board.game_ply)  # 1
 
 # 王手されているか
 if board.is_in_check():
@@ -102,9 +102,6 @@ kif_text = """
 """
 record = Record.from_kif_str(kif_text)
 
-# ファイルから
-record = Record.from_kif_file("example.kif")
-
 # 対局情報を参照
 print(record.metadata.black_player)  # 先手
 print(record.metadata.white_player)  # 後手
@@ -116,6 +113,10 @@ for move_rec in record.moves:
 # 結果を参照
 print(record.result.name)  # WHITE_WIN
 ```
+
+ファイルから読む場合は `Record.from_kif_file("example.kif")` を使います。
+既定の文字コードは `.kif` が Shift_JIS、`.kifu` が UTF-8 です。
+UTF-8 の `.kif` ファイルを読む場合は、`encoding="utf-8"` を指定してください。
 
 ## 棋譜を盤面で再生する
 
@@ -130,8 +131,9 @@ board = Board(sfen=record.init_position_sfen)
 
 # 指し手を順に適用
 for move_rec in record.moves:
+    ply = board.game_ply
     board.apply_move(move_rec.move)
-    print(f"{board.game_ply}手目: {move_rec.move.to_usi()}")
+    print(f"{ply}手目: {move_rec.move.to_usi()}")
 
 print(f"最終局面: {board.to_sfen()}")
 ```

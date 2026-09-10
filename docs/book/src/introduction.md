@@ -32,7 +32,7 @@ Rust から使う場合は `Cargo.toml` に追加します。
 
 ```toml
 [dependencies]
-rsshogi = "1.2.3"
+rsshogi = "1.2.4"
 ```
 
 詳しい導入方法は [インストール](getting-started/installation.md)、最初の操作は [クイックスタート](getting-started/quickstart.md) を参照してください。
@@ -43,12 +43,12 @@ rsshogi = "1.2.3"
 
 - [インストール](getting-started/installation.md)：Rust と Python のインストール手順。
 - [クイックスタート](getting-started/quickstart.md)：局面の作成、合法手、指し手の適用。
-- [例とパターン](getting-started/examples.md)：棋譜、定跡、学習データを含むコード例。
+- [例とパターン](getting-started/examples.md)：局面の操作、棋譜変換、エラー処理のコード例。
 
 ### Python API リファレンス
 
 - [概要](python/index.md)：モジュールとクラスの入口。
-- [Rust API](https://docs.rs/rsshogi)：Rust の item-level API。
+- [Rust API](https://docs.rs/rsshogi)：Rust の型と関数の仕様。
 
 ### リファレンス
 

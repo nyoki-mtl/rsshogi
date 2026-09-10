@@ -563,7 +563,8 @@ USI 文字列で手を進め、適用した `Move32`（32bit）を返します�
 board.push_usi_with_delta(usi: str) -> dict
 ```
 
-USI 文字列で手を進め、適用した `Move32` と差分情報（ハッシュ変化・取得駒種など）を辞書で返します。
+USI 文字列で手を進め、適用した `Move32` と盤面更新の差分を辞書で返します。
+通常の盤上移動では移動元・移動先・移動前後の駒・取得駒を、駒打ちでは打った駒種と適用前の持ち駒枚数を取得できます。
 
 **例外:**
 - `ValueError`: USI 文字列のパースに失敗した場合、または違法手の場合
@@ -1189,7 +1190,9 @@ board.can_declare_win() -> bool
 board.evaluate_declaration() -> dict
 ```
 
-入玉宣言の詳細評価を辞書形式で返します。点数計算の内訳（大駒点数・小駒点数・総点数など）が含まれます。
+入玉宣言の詳細評価を辞書形式で返します。
+すべての結果に `rule`、`can_declare`、`detail_type` を含みます。
+点数規定では `points`、`required_points`、敵陣の駒数などを、トライ規定では玉と到達先の条件を追加で含みます。
 
 ---
 
@@ -1231,7 +1234,7 @@ board.move32_from_move(mv: Move) -> Move32
 board.move_from_csa(csa: str) -> Move32
 ```
 
-CSA 文字列から局面依存の `Move32`（32bit）を復元します（線形探索不要）。
+CSA 文字列から現在局面に対応する `Move32` を復元します。
 
 ---
 

@@ -75,6 +75,7 @@ assert!(usual.iter().all(|mv| complete.as_slice().contains(mv)));
 `NonEvasions`、`Evasions`、`Checks`、`Captures` などの mode は用途別の候補を生成する。
 実際に適用する手は legal check を通して確定する。
 特に `Evasions` と `EvasionsAll` は王手回避の pseudo-legal 手であり、ピンによる王手放置や安全でない玉移動を含みうる。
+王手されていない局面でこれらの mode を使うと、生成結果は空になる。
 
 王手局面の合法な回避手だけが必要なら `generate_legal_evasions` または `generate_legal_evasions_all` を使う。
 任意の候補を個別に検査する場合は `Position::is_legal_move` または `is_legal_move32` を使う。

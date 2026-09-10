@@ -26,7 +26,7 @@ use python_types::{
 
 use ::rsshogi::board::movegen::{Evasions, NonEvasions, generate_legal_all, generate_moves};
 use ::rsshogi::board::position::{
-    DeclarationDetail, MoveDelta32, ValidationError as RawValidationError,
+    DeclarationDetail, MoveDelta32, MoveError, ValidationError as RawValidationError,
 };
 use ::rsshogi::board::{
     self, BoardArray, HuffmanCodedPos, InitialPosition, MoveList, PackedSfen, Position,
@@ -1066,11 +1066,12 @@ impl PyEngineInfo {
 
     #[setter]
     fn set_extras(&mut self, extras: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.clear_extras();
         if extras.is_none() {
+            self.inner.clear_extras();
             return Ok(());
         }
         let extras = parse_engine_extras_from_pyany(extras)?;
+        self.inner.clear_extras();
         for (key, value) in extras {
             self.inner.set_extra(key, value);
         }
@@ -3359,9 +3360,12 @@ impl PyBoard {
         Ok(())
     }
 
-    fn set_position_state(&mut self, state: &PyPositionState) {
-        self.position.set_position_state(&state.inner);
+    fn set_position_state(&mut self, state: &PyPositionState) -> PyResult<()> {
+        self.position
+            .try_set_position_state(&state.inner)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         self.position.init_stack();
+        Ok(())
     }
 
     fn set_usi_position(&mut self, position: &str) -> PyResult<()> {
@@ -3460,10 +3464,7 @@ impl PyBoard {
 
     fn apply_move(&mut self, r#move: PyRef<'_, PyMove>) -> PyResult<()> {
         let move_value = self.position.move32_from_move(r#move.inner);
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(())
     }
 
@@ -3472,19 +3473,13 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid move value"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(())
     }
 
     fn push_move(&mut self, r#move: PyRef<'_, PyMove>) -> PyResult<PyMove32> {
         let move_value = self.position.move32_from_move(r#move.inner);
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(PyMove32 { inner: move_value })
     }
 
@@ -3493,10 +3488,7 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid move value"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(PyMove32 { inner: move_value })
     }
 
@@ -3506,10 +3498,7 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid move value"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(())
     }
 
@@ -3519,10 +3508,7 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid move value"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(PyMove32 { inner: move_value })
     }
 
@@ -3536,11 +3522,8 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid move value"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        let gives_check = self.position.gives_check_move32(move_value);
-        let delta = self.position.apply_move32_with_delta(move_value, gives_check);
+        let delta =
+            self.position.try_apply_move32_with_facts(move_value).map_err(move_apply_error)?.delta;
         move_delta_to_pydict(py, move_value, delta)
     }
 
@@ -3553,10 +3536,7 @@ impl PyBoard {
         if !move_value.is_normal() {
             return Err(PyValueError::new_err("invalid CSA move"));
         }
-        if !self.position.is_legal_move32(move_value) {
-            return Err(PyValueError::new_err("illegal move"));
-        }
-        self.position.apply_move32(move_value);
+        self.position.try_apply_move32(move_value).map_err(move_apply_error)?;
         Ok(())
     }
 
@@ -3784,18 +3764,37 @@ impl PyBoard {
         self.position.is_repetition(threshold)
     }
 
-    #[pyo3(signature = (last_move=None, scale=1.0))]
+    /// Render the position; square colors, destination bold, and board fill are independent.
+    /// None or a special last move does not highlight any piece or square.
+    #[pyo3(signature = (last_move=None, scale=1.0, *, highlight_squares=true, bold_destination=false, board_background=None))]
     fn to_svg(
         &self,
         py: Python<'_>,
         last_move: Option<&Bound<'_, PyAny>>,
         scale: f32,
+        highlight_squares: bool,
+        bold_destination: bool,
+        board_background: Option<&str>,
     ) -> PyResult<Py<PySvg>> {
         let last_move = match last_move {
-            Some(value) => Some(parse_move(value, &self.position)?),
+            Some(value) => {
+                if let Ok(mv) = value.extract::<PyRef<'_, PyMove32>>() {
+                    Some(mv.inner)
+                } else if value.extract::<PyRef<'_, PyMove>>().is_ok_and(|mv| !mv.inner.is_normal())
+                {
+                    None
+                } else {
+                    Some(parse_move(value, &self.position)?)
+                }
+            }
             None => None,
         };
-        let svg = self.position.to_svg(last_move, scale);
+        let options = rsshogi::board::position::SvgOptions {
+            highlight_squares,
+            bold_destination,
+            board_background,
+        };
+        let svg = self.position.to_svg_with_options(last_move, scale, &options);
         Py::new(py, PySvg { inner: svg })
     }
 
@@ -4021,7 +4020,17 @@ fn ensure_on_board_square(square: Square) -> PyResult<()> {
 
 fn raw_position_from_position_state(state: &RawPositionState) -> PyResult<Position> {
     board::init();
-    Ok(board::position_from_position_state(state))
+    let mut position = Position::empty();
+    position.try_set_position_state(state).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(position)
+}
+
+fn move_apply_error(err: MoveError) -> PyErr {
+    match err {
+        MoveError::InvalidMove => PyValueError::new_err("illegal move"),
+        MoveError::CounterOverflow => PyValueError::new_err("position counter overflow"),
+        other => PyValueError::new_err(format!("{other:?}")),
+    }
 }
 
 fn validation_error_message(err: &RawValidationError) -> String {

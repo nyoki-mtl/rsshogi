@@ -45,6 +45,26 @@ impl fmt::Display for SfenError {
 
 impl std::error::Error for SfenError {}
 
+/// 構造化局面の内部表現エラー。将棋のルール上の妥当性とは区別する。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PositionStateError {
+    InvalidPiece { square: Square, piece: Piece },
+    InvalidHand(Color),
+}
+
+impl fmt::Display for PositionStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPiece { square, piece } => {
+                write!(f, "invalid board piece {piece:?} at {square:?}")
+            }
+            Self::InvalidHand(color) => write!(f, "invalid hand encoding for {color:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PositionStateError {}
+
 /// 盤面の raw state を保持する構造化 DTO。
 ///
 /// `Position` の mutable state と、外部処理へ渡す plain な board-state の境界として使う。
@@ -283,7 +303,7 @@ fn parse_board(s: &str) -> Result<BoardArray, SfenError> {
     while let Some(ch) = chars.next() {
         match ch {
             '/' => {
-                if file != -1 {
+                if file != -1 || rank >= 8 {
                     return Err(SfenError::InvalidSquare);
                 }
                 rank += 1;
@@ -359,6 +379,9 @@ fn parse_hands(s: &str) -> Result<[Hand; Color::COUNT], SfenError> {
                 } else {
                     break;
                 }
+            }
+            if chars.peek().is_none() {
+                return Err(SfenError::InvalidPiece(ch));
             }
         } else {
             let color = if ch.is_ascii_uppercase() { Color::BLACK } else { Color::WHITE };

@@ -87,7 +87,13 @@ impl Position {
         self.apply_move32(mv32);
     }
 
-    /// 指し手を適用
+    /// 検証済みの合法手を適用する。
+    ///
+    /// 外部入力には [`Self::try_apply_move32`] を使う。
+    ///
+    /// # Panics
+    ///
+    /// 駒情報、持ち駒または手数が適用条件を満たさない場合に panic する。
     #[allow(clippy::too_many_lines, clippy::cast_possible_truncation, clippy::cognitive_complexity)]
     pub fn apply_move32(&mut self, mv: Move32) {
         let mv = self.complete_move32(mv);
@@ -96,19 +102,48 @@ impl Position {
         self.apply_move32_with_gives_check(mv, gives_check);
     }
 
+    /// 合法性を検証して指し手を適用する。
+    ///
+    /// # Errors
+    ///
+    /// 不正な手や適用不能な手数を検出した場合、局面を変更せずエラーを返す。
+    pub fn try_apply_move32(&mut self, mv: Move32) -> Result<(), MoveError> {
+        let mv = self.complete_move32(mv);
+        if !self.is_legal_move32(mv) {
+            return Err(MoveError::InvalidMove);
+        }
+        let gives_check = self.gives_check_move32(mv);
+        self.apply_move32_result::<false>(mv, gives_check).map(|_| ())
+    }
+
+    /// 合法性と王手を判定して指し手を適用し、盤面差分を含む結果を返す。
+    ///
+    /// # Errors
+    ///
+    /// 不正な手や適用不能な手数を検出した場合、局面を変更せずエラーを返す。
+    pub fn try_apply_move32_with_facts(&mut self, mv: Move32) -> Result<MoveApplyFacts, MoveError> {
+        let mv = self.complete_move32(mv);
+        if !self.is_legal_move32(mv) {
+            return Err(MoveError::InvalidMove);
+        }
+        let gives_check = self.gives_check_move32(mv);
+        self.apply_move32_result::<true>(mv, gives_check)
+            .map(|facts| facts.expect("facts must be present when requested"))
+    }
+
     /// 指し手を適用（王手判定を外部で計算済みの場合）
+    ///
+    /// `mv` は合法手、`gives_check` はその手の王手判定結果でなければならない。
+    ///
+    /// # Panics
+    ///
+    /// 駒情報、持ち駒またはカウンターが適用条件を満たさない場合に panic する。
     #[inline]
     pub fn apply_move32_with_gives_check(&mut self, mv: Move32, gives_check: bool) {
         let mv = self.complete_move32(mv);
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
-        match self.turn() {
-            Color::BLACK => {
-                let _ = self.apply_move32_with_gives_check_for::<true, false>(mv, gives_check);
-            }
-            Color::WHITE => {
-                let _ = self.apply_move32_with_gives_check_for::<false, false>(mv, gives_check);
-            }
-        }
+        self.apply_move32_result::<false>(mv, gives_check)
+            .expect("move must satisfy position update invariants");
     }
 
     /// 指し手を適用し、eval 非依存の盤面差分を返す。
@@ -119,18 +154,31 @@ impl Position {
     }
 
     /// 指し手を適用し、探索・評価が共有する適用 facts を返す。
+    ///
+    /// 適用条件と panic 条件は [`Self::apply_move32_with_gives_check`] と同じ。
     #[inline]
     #[must_use]
     pub fn apply_move32_with_facts(&mut self, mv: Move32, gives_check: bool) -> MoveApplyFacts {
         let mv = self.complete_move32(mv);
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
+        self.apply_move32_result::<true>(mv, gives_check)
+            .expect("move must satisfy position update invariants")
+            .expect("delta must be present when requested")
+    }
+
+    #[inline]
+    fn apply_move32_result<const WITH_DELTA: bool>(
+        &mut self,
+        mv: Move32,
+        gives_check: bool,
+    ) -> Result<Option<MoveApplyFacts>, MoveError> {
         match self.turn() {
-            Color::BLACK => self
-                .apply_move32_with_gives_check_for::<true, true>(mv, gives_check)
-                .expect("delta must be present when requested"),
-            Color::WHITE => self
-                .apply_move32_with_gives_check_for::<false, true>(mv, gives_check)
-                .expect("delta must be present when requested"),
+            Color::BLACK => {
+                self.apply_move32_with_gives_check_for::<true, WITH_DELTA>(mv, gives_check)
+            }
+            Color::WHITE => {
+                self.apply_move32_with_gives_check_for::<false, WITH_DELTA>(mv, gives_check)
+            }
         }
     }
 
@@ -149,6 +197,8 @@ impl Position {
     ///
     /// allocation なしで利用できる次の物理 slot がない場合は、盤面を変更せず
     /// [`MoveError::StateCapacityExceeded`] を返す。
+    /// 駒情報や持ち駒の不整合は [`MoveError::InvalidMove`]、
+    /// 手数や履歴カウンターの上限は [`MoveError::CounterOverflow`] を変更前に返す。
     ///
     /// `mv` は合法手、`gives_check` はその手の王手判定結果でなければならない。
     #[inline]
@@ -160,7 +210,9 @@ impl Position {
         if !self.state_stack().has_prepared_next() {
             return Err(MoveError::StateCapacityExceeded);
         }
-        Ok(self.apply_move32_with_facts(mv, gives_check))
+        let mv = self.complete_move32(mv);
+        self.apply_move32_result::<true>(mv, gives_check)
+            .map(|facts| facts.expect("facts must be present when requested"))
     }
 
     #[inline]
@@ -169,7 +221,11 @@ impl Position {
         &mut self,
         mv: Move32,
         gives_check: bool,
-    ) -> Option<MoveApplyFacts> {
+    ) -> Result<Option<MoveApplyFacts>, MoveError> {
+        if !mv.is_normal() {
+            return Err(MoveError::InvalidMove);
+        }
+        let next_ply = self.ply.checked_add(1).ok_or(MoveError::CounterOverflow)?;
         debug_assert!(self.is_legal_move32(mv), "apply_move32 expects a legal move");
         let us = us_color::<BLACK>();
         let them = them_color::<BLACK>();
@@ -200,33 +256,40 @@ impl Position {
             )
         };
 
-        let state_idx = self.state_stack_mut().prepare_next_for_move();
+        let new_plies_from_null =
+            prev_plies_from_null.checked_add(1).ok_or(MoveError::CounterOverflow)?;
+        let mut new_continuous_check = prev_continuous_check;
+        new_continuous_check[us.to_index()] = if gives_check {
+            prev_continuous_check[us.to_index()].checked_add(2).ok_or(MoveError::CounterOverflow)?
+        } else {
+            0
+        };
+        let state_idx;
 
         let mut captured = Piece::NONE;
         let move_delta = if mv.is_drop() {
             // 駒打ち処理
             let to = mv.to_sq();
-            let dropped_piece = mv.dropped_piece();
-            debug_assert!(dropped_piece.is_some(), "drop move must include a dropped piece type");
-            // SAFETY: legal drop では dropped_piece が必ず設定される。
-            let piece_type = unsafe { dropped_piece.unwrap_unchecked() };
+            let piece_type = mv.dropped_piece().ok_or(MoveError::InvalidMove)?;
             let color = us;
 
-            debug_assert!(self.board.get(to).is_empty(), "drop destination must be empty");
-            let hand_piece_opt = HandPiece::from_piece_type(piece_type);
-            debug_assert!(hand_piece_opt.is_some(), "drop move must use a hand piece type");
-            // SAFETY: 打ち駒に使える PieceType のみがここに到達する。
-            let hand_piece = unsafe { hand_piece_opt.unwrap_unchecked() };
+            let hand_piece =
+                HandPiece::from_piece_type(piece_type).ok_or(MoveError::InvalidMove)?;
             let hand_count_before = self.hand(color).count(hand_piece);
-            debug_assert!(hand_count_before > 0, "drop move must have a matching hand piece");
+            let piece = Piece::from_parts(color, piece_type);
+            if !self.board.get(to).is_empty()
+                || hand_count_before == 0
+                || mv.piece_after_move() != piece
+            {
+                return Err(MoveError::InvalidMove);
+            }
+            state_idx = self.state_stack_mut().prepare_next_for_move();
 
             // 駒を配置
-            let piece = Piece::from_parts(color, piece_type);
             self.board.set(to, piece);
 
             // ビットボードを更新
-            // SAFETY: 打ち駒は常に盤上駒（NONE ではない）。
-            unsafe { self.bitboards.set_no_refresh_unchecked(to, piece) };
+            self.bitboards.set_no_refresh(to, piece);
 
             // 持ち駒を減らす
             self.hand_mut(color).sub(hand_piece, 1);
@@ -253,31 +316,42 @@ impl Position {
 
             // 移動元の駒を取得
             let moved_piece = self.board.get(from);
-            debug_assert!(!moved_piece.is_empty(), "move must originate from a piece");
-            debug_assert!(moved_piece.color() == us, "move must be from the side to move");
+            if !moved_piece.is_valid()
+                || moved_piece.is_empty()
+                || moved_piece.piece_type() == PieceType::GOLD_LIKE
+                || moved_piece.color() != us
+                || (mv.is_promotion() && !moved_piece.piece_type().is_promotable())
+            {
+                return Err(MoveError::InvalidMove);
+            }
             let new_piece = if mv.is_promotion() { moved_piece.promote() } else { moved_piece };
+            if mv.piece_after_move() != new_piece {
+                return Err(MoveError::InvalidMove);
+            }
             let mut captured_delta = None;
 
             // 移動先の駒を取得（捕獲判定）
             let captured_piece = self.board.get(to);
-            if !captured_piece.is_empty() {
-                debug_assert!(captured_piece.color() != us, "capture must target opponent piece");
+            let captured_hand = if captured_piece.is_empty() {
+                None
+            } else {
+                if !captured_piece.is_valid() || captured_piece.color() == us {
+                    return Err(MoveError::InvalidMove);
+                }
+                let hp = HandPiece::from_piece_type(captured_piece.piece_type().demote())
+                    .ok_or(MoveError::InvalidMove)?;
+                let hand = self.hand(us);
+                hand.checked_add(hp, 1).ok_or(MoveError::InvalidMove)?;
+                Some((hp, hand.count(hp)))
+            };
+            state_idx = self.state_stack_mut().prepare_next_for_move();
+            if let Some((captured_hand_piece, captured_hand_count_before)) = captured_hand {
                 captured = captured_piece;
 
                 // ビットボードから削除
-                // SAFETY: captured_piece は empty でないことを直前で確認済み。
-                unsafe { self.bitboards.clear_no_refresh_unchecked(to, captured_piece) };
+                self.bitboards.clear_no_refresh(to, captured_piece);
 
                 // 持ち駒に追加
-                let captured_hand_piece_opt =
-                    HandPiece::from_piece_type(captured_piece.piece_type().demote());
-                debug_assert!(
-                    captured_hand_piece_opt.is_some(),
-                    "captured piece must map to hand piece"
-                );
-                // SAFETY: 捕獲駒の成り戻しは必ず持ち駒種に対応する。
-                let captured_hand_piece = unsafe { captured_hand_piece_opt.unwrap_unchecked() };
-                let captured_hand_count_before = self.hand(us).count(captured_hand_piece);
                 if WITH_DELTA {
                     captured_delta = Some(CapturedPieceDelta {
                         piece: captured_piece,
@@ -308,13 +382,11 @@ impl Position {
 
             // 移動元から駒を取り除く
             self.board.set(from, Piece::NONE);
-            // SAFETY: moved_piece は empty でないことを直前で確認済み。
-            unsafe { self.bitboards.clear_no_refresh_unchecked(from, moved_piece) };
+            self.bitboards.clear_no_refresh(from, moved_piece);
 
             // 移動先に駒を配置
             self.board.set(to, new_piece);
-            // SAFETY: 移動後の駒は常に盤上駒（NONE ではない）。
-            unsafe { self.bitboards.set_no_refresh_unchecked(to, new_piece) };
+            self.bitboards.set_no_refresh(to, new_piece);
 
             if moved_piece.piece_type() == PieceType::KING {
                 self.set_king_square(us, to);
@@ -342,18 +414,12 @@ impl Position {
 
         // 手番を反転し、手数を進め、Zobristを更新
         self.flip_side_to_move();
-        self.ply += 1;
+        self.ply = next_ply;
         let side = Zobrist::side();
         board_key ^= side;
         key ^= side;
 
         // continuous_check と plies_from_null の更新
-        let moved_color = us;
-        let mut new_continuous_check = prev_continuous_check;
-        let moved_idx = moved_color.to_index();
-        new_continuous_check[moved_idx] =
-            if gives_check { prev_continuous_check[moved_idx] + 2 } else { 0 };
-        let new_plies_from_null = prev_plies_from_null + 1;
         let hand_them = self.hand(them);
 
         let mut repetition_counter = 0;
@@ -446,7 +512,7 @@ impl Position {
         );
         self.st_index = state_idx;
         self.debug_assert_partial_keys_consistent();
-        facts
+        Ok(facts)
     }
 
     /// 指し手を巻き戻す（`Move` 版）。
@@ -632,10 +698,7 @@ impl Position {
 
             // 打った駒を盤面から取り除く
             self.board.set(to, Piece::NONE);
-            // SAFETY: 駒打ちを戻す駒は常に盤上駒（NONE ではない）。
-            unsafe {
-                self.bitboards.clear_no_refresh_unchecked(to, Piece::from_parts(color, piece_type));
-            };
+            self.bitboards.clear_no_refresh(to, Piece::from_parts(color, piece_type));
 
             // 持ち駒に戻す
             self.hand_mut(color).add(hand_piece, 1);
@@ -656,13 +719,11 @@ impl Position {
 
             // 移動先から駒を取り除く
             self.board.set(to, Piece::NONE);
-            // SAFETY: current_piece は直前に to から取得した盤上駒。
-            unsafe { self.bitboards.clear_no_refresh_unchecked(to, current_piece) };
+            self.bitboards.clear_no_refresh(to, current_piece);
 
             // 移動元に駒を戻す
             self.board.set(from, original_piece);
-            // SAFETY: original_piece は盤上駒（NONE ではない）。
-            unsafe { self.bitboards.set_no_refresh_unchecked(from, original_piece) };
+            self.bitboards.set_no_refresh(from, original_piece);
 
             let color = current_piece.color();
             if original_piece.piece_type() == PieceType::KING {
@@ -672,8 +733,7 @@ impl Position {
             // 捕獲があった場合、捕獲された駒を復元
             if !captured.is_empty() {
                 self.board.set(to, captured);
-                // SAFETY: captured は empty でないことを if 条件で保証。
-                unsafe { self.bitboards.set_no_refresh_unchecked(to, captured) };
+                self.bitboards.set_no_refresh(to, captured);
 
                 // 持ち駒から取り除く
                 let hand_piece = HandPiece::from_piece_type(captured.piece_type().demote())
@@ -690,6 +750,10 @@ impl Position {
     /// Null move（手を指さずに手番だけを反転）を適用する。
     ///
     /// 盤面の駒配置や持ち駒は変化させず、Zobrist手番フラグとキャッシュのみ更新する。
+    ///
+    /// # Errors
+    ///
+    /// 手数の上限では局面を変更せず [`MoveError::CounterOverflow`] を返す。
     #[inline]
     pub fn apply_null_move(&mut self) -> Result<(), MoveError> {
         self.apply_null_move_impl::<true>()
@@ -714,6 +778,11 @@ impl Position {
     #[inline]
     fn apply_null_move_impl<const ADVANCE_GAME_PLY: bool>(&mut self) -> Result<(), MoveError> {
         debug_assert!(self.checkers().is_empty(), "null move must not be in check");
+        let next_ply = if ADVANCE_GAME_PLY {
+            self.ply.checked_add(1).ok_or(MoveError::CounterOverflow)?
+        } else {
+            self.ply
+        };
 
         // `prepare_next_for_null_move` はキーを引き継がないため、
         // StateStack を可変借用する前に現局面の state から読んでおく。
@@ -730,9 +799,7 @@ impl Position {
 
         // 手番を反転し、手数を進める
         self.flip_side_to_move();
-        if ADVANCE_GAME_PLY {
-            self.ply += 1;
-        }
+        self.ply = next_ply;
 
         let prev_continuous_check = self.state_stack().hot(state_idx).continuous_check;
         debug_assert!(

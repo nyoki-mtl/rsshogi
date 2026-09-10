@@ -880,6 +880,21 @@ def test_move_engine_info_typed_extras_accessors() -> None:
     assert info.extras["latency_delta_ms"] == 15
 
 
+def test_move_engine_info_extras_setter_replaces_or_preserves_values() -> None:
+    info = rs.record.EngineInfo(extras={"old": 1})
+
+    info.extras = {"new": "value"}
+    assert info.extras == {"new": "value"}
+
+    info.extras = None
+    assert info.extras == {}
+
+    info.extras = {"old": 1}
+    with pytest.raises(TypeError, match="extras values"):
+        info.extras = {"invalid": object()}
+    assert info.extras == {"old": 1}
+
+
 def test_result_info_typed_access() -> None:
     record = rs.record.Record.from_main_line(
         "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",

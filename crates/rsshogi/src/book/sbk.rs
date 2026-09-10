@@ -179,7 +179,7 @@ impl SbkBook {
             diagnostics: SbkDiagnostics::default(),
         };
         book.state_lookup = vec![None; book.states.len()];
-        book.build_state_id_index();
+        book.build_state_id_index()?;
         book.build_index(&mut file, &mut on_progress)?;
         Ok(book)
     }
@@ -223,7 +223,9 @@ impl SbkBook {
 
     /// 局面オブジェクトで 1 局面を検索する。
     pub fn lookup_position(&self, pos: &Position) -> Result<Option<SbkEntry>, BookError> {
-        let key = pos.to_packed_sfen();
+        let key = pos.try_to_packed_sfen().map_err(|error| {
+            BookError::InvalidData(format!("invalid SBK lookup position: {error}"))
+        })?;
         let Ok(idx) = self.index.binary_search_by(|row| row.key.cmp_sbk_words(&key)) else {
             return Ok(None);
         };
@@ -276,15 +278,20 @@ impl SbkBook {
         SbkEntries { book: self, index: 0 }
     }
 
-    fn build_state_id_index(&mut self) {
+    fn build_state_id_index(&mut self) -> Result<(), BookError> {
         for (state_index, state) in self.states.iter().enumerate() {
             let Some(state_id) = state.state_id else {
                 continue;
             };
-            if state_id >= 0 {
-                self.state_id_to_index.entry(state_id).or_insert(state_index);
+            if state_id >= 0
+                && let Some(previous_index) = self.state_id_to_index.insert(state_id, state_index)
+            {
+                return Err(BookError::InvalidData(format!(
+                    "duplicate SBK state id {state_id} at indices {previous_index} and {state_index}"
+                )));
             }
         }
+        Ok(())
     }
 
     fn build_index(
@@ -406,7 +413,7 @@ impl SbkBook {
             BookError::InvalidData(format!("invalid SBK Packed SFEN index row: {err:?}"))
         })?;
         let sfen = pos.to_sfen(None);
-        Ok(SbkEntry::from_raw(row.state_index, sfen, raw))
+        SbkEntry::from_raw(row.state_index, sfen, raw)
     }
 }
 
@@ -456,16 +463,14 @@ impl SbkDiagnostics {
 }
 
 impl SbkEntry {
-    fn from_raw(state_index: usize, sfen: String, raw: RawSbkState) -> Self {
+    fn from_raw(state_index: usize, sfen: String, raw: RawSbkState) -> Result<Self, BookError> {
         let moves = raw
             .moves
             .into_iter()
             .filter_map(|raw_move| raw_move.raw_move.map(|word| (word, raw_move)))
-            .filter_map(|(word, raw_move)| {
-                let Ok(mv) = sbk_move_word_to_move(word) else {
-                    return None;
-                };
-                Some(SbkMove {
+            .map(|(word, raw_move)| {
+                let mv = sbk_move_word_to_move(word)?;
+                Ok(SbkMove {
                     mv,
                     raw_move: word,
                     evaluation: raw_move.evaluation,
@@ -473,9 +478,9 @@ impl SbkEntry {
                     next_state_id: raw_move.next_state_id,
                 })
             })
-            .collect();
+            .collect::<Result<Vec<_>, BookError>>()?;
 
-        Self {
+        Ok(Self {
             state_id: raw.id,
             state_index,
             sfen,
@@ -485,7 +490,7 @@ impl SbkEntry {
             comment: raw.comment,
             moves,
             evals: raw.evals,
-        }
+        })
     }
 
     #[must_use]
@@ -1586,6 +1591,90 @@ mod tests {
         assert_eq!(entry.evals()[0].nodes(), Some(1234));
         assert_eq!(entry.evals()[0].variation(), Some("7g7f"));
         assert_eq!(entry.evals()[0].engine_name(), Some("engine"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sbk_lookup_position_rejects_unencodable_positions() {
+        let path = temp_path("invalid-lookup-position");
+        let bytes = encode_sbook(vec![encode_state(vec![
+            field_varint(FIELD_STATE_ID, 0),
+            field_string(FIELD_STATE_POSITION, InitialPosition::Standard.to_sfen()),
+            field_message(FIELD_STATE_MOVES, encode_move(0x0100_7677, None, None, None)),
+        ])]);
+        fs::write(&path, bytes).expect("write fixture");
+        let book = SbkBook::open(&path).expect("open sbk");
+
+        let empty = Position::empty();
+        assert!(matches!(book.lookup_position(&empty), Err(BookError::InvalidData(_))));
+        let one_king = Position::from_sfen("4k4/9/9/9/9/9/9/9/9 b - 1").expect("one king");
+        assert!(matches!(book.lookup_position(&one_king), Err(BookError::InvalidData(_))));
+
+        let entry = book
+            .lookup_position(&Position::from_sfen(InitialPosition::Standard.to_sfen()).unwrap())
+            .expect("valid lookup")
+            .expect("entry");
+        assert_eq!(entry.moves()[0].mv().to_usi(), "7g7f");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sbk_lookup_propagates_present_invalid_move_word() {
+        let path = temp_path("invalid-move-word");
+        let bytes = encode_sbook(vec![encode_state(vec![
+            field_varint(FIELD_STATE_ID, 0),
+            field_string(FIELD_STATE_POSITION, InitialPosition::Standard.to_sfen()),
+            field_message(FIELD_STATE_MOVES, encode_move(0, None, None, None)),
+            field_message(FIELD_STATE_MOVES, encode_move(0x0100_7677, None, None, None)),
+        ])]);
+        fs::write(&path, bytes).expect("write fixture");
+        let book = SbkBook::open(&path).expect("open sbk");
+
+        assert!(matches!(
+            book.lookup_sfen(InitialPosition::Standard.to_sfen()),
+            Err(BookError::InvalidData(_))
+        ));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sbk_lookup_omits_moves_without_raw_move_field() {
+        let path = temp_path("missing-move-word");
+        let bytes = encode_sbook(vec![encode_state(vec![
+            field_varint(FIELD_STATE_ID, 0),
+            field_string(FIELD_STATE_POSITION, InitialPosition::Standard.to_sfen()),
+            field_message(FIELD_STATE_MOVES, field_varint(FIELD_MOVE_EVALUATION, 1)),
+        ])]);
+        fs::write(&path, bytes).expect("write fixture");
+        let book = SbkBook::open(&path).expect("open sbk");
+        let entry =
+            book.lookup_sfen(InitialPosition::Standard.to_sfen()).expect("lookup").expect("entry");
+
+        assert!(entry.moves().is_empty());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sbk_open_rejects_duplicate_nonnegative_state_ids() {
+        let path = temp_path("duplicate-state-id");
+        let bytes = encode_sbook(vec![
+            encode_state(vec![
+                field_varint(FIELD_STATE_ID, 0),
+                field_message(FIELD_STATE_MOVES, encode_move(0x0100_7677, None, None, Some(10))),
+            ]),
+            encode_state(vec![field_varint(FIELD_STATE_ID, 10)]),
+            encode_state(vec![field_varint(FIELD_STATE_ID, 10)]),
+        ]);
+        fs::write(&path, bytes).expect("write fixture");
+
+        let result = SbkBook::open(&path);
+        assert!(
+            matches!(result, Err(BookError::InvalidData(message)) if message.contains("duplicate SBK state id 10"))
+        );
 
         let _ = fs::remove_file(path);
     }

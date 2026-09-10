@@ -1,6 +1,7 @@
 # 例とパターン
 
-実践的なコード例を紹介します。基本的な使い方は [クイックスタート](quickstart.md) をご覧ください。
+局面の操作、棋譜の変換、エラー処理の例を示します。
+基本的な使い方は [クイックスタート](quickstart.md) を参照してください。
 
 ## 対局のシミュレーション
 
@@ -21,19 +22,24 @@ for i in range(200):
     move = random.choice(moves)
     board.apply_move(move)
 
-    if board.repetition_state().to_usi() != "rep_none":
+    if board.is_repetition():
         break
 
 # 結果を確認
 if board.is_mated():
     # is_mated() が True のとき board.turn は詰まされた側。勝者はその相手。
     winner = "先手" if board.turn.is_white() else "後手"
-    print(f"{board.game_ply}手で{winner}の勝ち（詰み）")
+    print(f"{board.game_ply - 1}手で{winner}の勝ち（詰み）")
 elif board.is_repetition():
     print(f"千日手: {board.repetition_state().to_usi()}")
 else:
-    print(f"{board.game_ply}手で終了")
+    print(f"{board.game_ply - 1}手で終了")
 ```
+
+`game_ply` は SFEN の手数欄に対応し、平手初期局面では `1` です。
+この例のように初期局面から進めた場合、指し終えた手数は `game_ply - 1` になります。
+`is_repetition()` は同一局面の 4 回目の出現を判定します。
+`repetition_state()` が返す持ち駒の優等局面や劣等局面は、対局の終了条件には使いません。
 
 ### 合法手を探索（1手先読み）
 
@@ -56,6 +62,9 @@ for move in board.legal_moves():
 ## 棋譜処理
 
 ### 複数の棋譜ファイルを処理
+
+この例は Shift_JIS の `.kif` ファイルを読みます。
+UTF-8 のファイルを扱う場合は `Record.from_kif_file()` に `encoding="utf-8"` を指定してください。
 
 ```python
 from pathlib import Path
@@ -80,11 +89,12 @@ from rsshogi.record import Record
 record = Record.from_kif_file("example.kif")
 board = Board(sfen=record.init_position_sfen)
 
-# 10手目の局面を取得
-for i, move_rec in enumerate(record.moves[:10], 1):
+# 本譜の先頭から最大10手を再生
+replayed = record.moves[:10]
+for move_rec in replayed:
     board.apply_move(move_rec.move)
 
-print(f"10手目の局面: {board.to_sfen()}")
+print(f"{len(replayed)}手進めた局面: {board.to_sfen()}")
 ```
 
 ### 棋譜のフォーマット変換
@@ -156,7 +166,7 @@ board = Board()
 # 指し手を適用して駒を取る
 board.apply_usi("7g7f")
 board.apply_usi("3c3d")
-# ... 駒を取る手を適用
+board.apply_usi("8h2b+")  # 角を取り、馬に成る
 
 # 持ち駒を確認
 for color in [Color.BLACK, Color.WHITE]:
@@ -220,21 +230,22 @@ board = Board()
 # Move: legal_moves() が返す型（基本はこちら）
 moves = board.legal_moves()  # list[Move]
 mv = moves[0]
-print(type(mv))  # <class 'rsshogi.core.Move'>
+print(type(mv).__name__)  # Move
 
 # Move32: 32bit 指し手が必要な場合
 moves32 = board.legal_moves_move32()  # list[Move32]
 move32 = moves32[0]
-print(type(move32))  # <class 'rsshogi.core.Move32'>
+print(type(move32).__name__)  # Move32
 
 # 型に対応するメソッドを使う
 board.apply_move(mv)
 board.undo_move(mv)
 board.apply_move32(move32)
 
-# Move はメモリ効率が良い（16bit vs 32bit）
-# 大量の指し手を保存する場合に有利
 ```
+
+Rust 内部では `Move` が 16 ビット、`Move32` が 32 ビットの表現です。
+Python オブジェクトには別途管理用のメモリが必要なため、Python のリストが 1 手あたり 2 バイトまたは 4 バイトになるわけではありません。
 
 ## 実行可能なサンプル
 

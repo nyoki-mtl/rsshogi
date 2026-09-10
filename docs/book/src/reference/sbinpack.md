@@ -7,14 +7,14 @@
 を将棋向けに適応したバイナリフォーマットです。
 
 オリジナルの binpack は Stockfish の NNUE 訓練データ用に設計され、実戦譜から生成された
-連続局面を効率的に圧縮できます。sbinpack は同じ設計思想を将棋に適用し、
-局面単位で扱える将棋版 binpack 形式として設計しました。
+連続局面を効率的に圧縮できます。
+sbinpack は同じ設計を将棋へ適用し、開始局面と連続する指し手列を保存します。
 
 v2 の仕様として、`EncodedMove` のオーダリング、評価値差分、per-chain メタデータ拡張枠を定義します。
 
 ## 方針
 
-- `sbinpack` をバイナリ棋譜の標準形式とします。
+- `sbinpack` は、評価値を伴う連続局面を保存する用途に使います。
 
 ## 参考資料
 
@@ -24,7 +24,7 @@ v2 の仕様として、`EncodedMove` のオーダリング、評価値差分、
 ## 設計目標
 
 - **仕様の安定性**: バージョンで順序が揺れないルールベースのオーダリングを採用する。
-- **圧縮効率**: 頻出する手が小さいインデックスになりやすい順序を目指す。
+- **圧縮効率**: 小さいインデックスを可変長整数で短く保存できる。
 - **説明可能性**: 将棋の自然な分類（打ち/非打ち、成り/非成り、駒種、座標）で決まる。
 - **binpack 互換の構造**: Chunk / Chain / Stem / MoveText の階層構造を踏襲する。
 
@@ -51,9 +51,10 @@ rsshogi.record.decode_sbinpack_file(path) -> list[tuple[Record, bytes]]
 - `from_sbinpack` は `Record` だけを返します。opaque metadata も必要な場合は `from_sbinpack_with_metadata` を使います。
 - `from_sbinpack` は **単一 chain** のみ対応します（複数 chain は `ValueError`）。
 
-## Rust streaming decode
+## Rust の逐次デコード
 
-`SbinpackDecoder`は、file全体を`SbinpackFile`へmaterializeせず、chunk、chain、指し手適用前局面を1件ずつ通知します。入力にはborrowed `&[u8]`またはowned `Vec<u8>`を渡せます。
+`SbinpackDecoder` は、入力全体を `SbinpackFile` に展開せず、chunk、chain、指し手適用前の局面を 1 件ずつ通知します。
+入力には借用した `&[u8]` または所有する `Vec<u8>` を渡せます。
 
 ```rust,ignore
 use rsshogi::records::formats::sbinpack::{
@@ -64,7 +65,7 @@ fn visit(bytes: Vec<u8>) -> Result<(), SbinpackError> {
     let mut decoder = SbinpackDecoder::new(bytes);
     while let Some(result) = decoder.decode_next_with(|event| {
         if let SbinpackDecodeEvent::PositionBeforeMove { position, eval, .. } = event {
-            // positionは指し手適用前の局面。必要なowned値をここで取り出す。
+            // position は指し手適用前の局面。必要な所有値はここで取り出す。
             let _ = (position.turn(), eval);
         }
     }) {
@@ -74,12 +75,14 @@ fn visit(bytes: Vec<u8>) -> Result<(), SbinpackError> {
 }
 ```
 
-`decode_next_controlled_with`で`ChainStart`から`SkipChain`を返すと、`PackedSfen`とmove indexの合法性を検証せず、そのchainの可変長payloadを読み飛ばせます。結果種別やopaque metadataだけでchainを除外できるconsumer向けの高速経路です。通常の`decode_next_with`は全chainをreplayして検証します。
+`decode_next_controlled_with` で `ChainStart` から `SkipChain` を返すと、`PackedSfen` と指し手インデックスの合法性を検証せず、その chain の可変長 payload を読み飛ばせます。
+結果種別や opaque metadata だけで chain を除外する consumer 向けの高速経路です。
+通常の `decode_next_with` は全 chain を replay して検証します。
 
 ## EncodedMove の前提
 
 - `LegalAll` で合法手を列挙し、その並びの **インデックス**を `EncodedMove` とする。
-- インデックスは 0 起点（合法手最大 593 手）。
+- インデックスは 0 起点で、`u16` に収まる合法手列を指します。
 - インデックスの並びは **固定ルール**で決める（統計依存の再学習はしない）。
 
 ## ファイルフォーマット（v2）
@@ -102,7 +105,7 @@ fn visit(bytes: Vec<u8>) -> Result<(), SbinpackError> {
 
 - すべて **リトルエンディアン**。
 - 可変長整数は **ULEB128**。
-- v2 は `SBN2` マジックで識別し、decoder はこの version を検証する。
+- v2 は `SBN2` マジックで識別します。
 
 ### ルート構造
 
@@ -150,7 +153,7 @@ EncodedMove = ULEB128(legal_move_index)
 ```
 
 - `legal_move_index` は **v1.0.0 オーダリング**のインデックス。
-- 0 起点、最大 593。
+- 0 起点です。
 
 v2 でも `EncodedMove` のオーダリングは v1.0.0 と同じです。
 
@@ -174,13 +177,13 @@ delta_n = norm_n - norm_{n-1}     # n >= 1
 EncodedScore = ULEB128(ZigZag(delta))
 ```
 
-- `move_eval` は side-to-move 視点の cp（centipawn）です。
-- 差分を取る前に、stem 側視点へ正規化します。現行の `MoveEntry` では `moves[i].eval` は「その手を指す前の局面」の評価値なので、`moves[0]` は stem と同一視点で反転しません。
-- `stem_score` / 復元後の `move_eval` の意味は side-to-move のままです。正規化は wire 上の差分計算だけに使います。
-- 評価値は ZigZag + ULEB128 で符号化された `i32` として扱います。`-32000..=32000` 外の値も特殊符号化せず、そのまま差分に乗せます。
-- この視点は Stockfish binpack の
-  [score は局面の side-to-move 視点であるという契約](https://github.com/official-stockfish/Stockfish/blob/9a4c7cf4e311f8d9526b79295b80c4d0464c07cf/docs/binpack.md#L38-L41)
-  と一致します。
+- `move_eval` と `stem_score` は、対応する局面の手番側から見た cp 値です。
+  `moves[i].eval` はその手を指す前の局面に対応します。
+- wire 形式に評価値の視点を示すフラグはないため、外部 producer と consumer もこの手番側視点の契約に従う必要があります。
+- 差分を取る前に、各 `move_eval` を stem 側の視点へ正規化します。`moves[0]` は stem と同じ「指す前の局面」に対応するため反転せず、以後は 1 手ごとに符号を反転します。
+- 正規化は wire 上の差分計算だけに使います。decode 後の `move_eval` と `stem_score` は手番側視点のままです。
+- 評価値は ZigZag + ULEB128 で符号化された `i32` として扱います。
+  `-32000..=32000` 外の値も特殊符号化せず、そのまま差分に乗せます。
 
 ### ZigZag 定義
 

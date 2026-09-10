@@ -479,7 +479,10 @@ impl Position {
                 break;
             }
 
-            distance += 2;
+            let Some(next_distance) = distance.checked_add(2) else {
+                break;
+            };
+            distance = next_distance;
         }
 
         *out_counter = repetition_counter;

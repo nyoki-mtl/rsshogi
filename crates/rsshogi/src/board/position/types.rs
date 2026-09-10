@@ -410,6 +410,10 @@ pub struct MoveStackSiteFacts {
 /// エラー型定義
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MoveError {
+    /// 指し手の形式、駒情報または適用先の局面と整合しない。
+    InvalidMove,
+    /// 手数または反復判定用カウンターの上限を超える。
+    CounterOverflow,
     NoStateInfo,
     StackUnderflow,
     /// 指定された手が現在の state に記録された直前手と一致しない。

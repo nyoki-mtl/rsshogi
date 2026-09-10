@@ -211,7 +211,7 @@ impl YbbBook {
     }
 
     pub fn lookup_position(&self, pos: &Position) -> Result<Option<YbbEntry>, BookError> {
-        let packed = pos.to_packed_sfen();
+        let packed = packed_sfen_for_lookup(pos, "position")?;
         if let Some(entry) = self.lookup(packed, pos.game_ply(), false)? {
             return Ok(Some(entry));
         }
@@ -222,7 +222,7 @@ impl YbbBook {
         let flipped = Position::from_sfen(&flipped_sfen).map_err(|error| {
             BookError::InvalidData(format!("cannot flip YBB position: {error}"))
         })?;
-        self.lookup(flipped.to_packed_sfen(), pos.game_ply(), true)
+        self.lookup(packed_sfen_for_lookup(&flipped, "flipped position")?, pos.game_ply(), true)
     }
 
     pub fn lookup_packed_sfen(
@@ -326,6 +326,12 @@ fn is_valid_raw_move(raw: u16) -> bool {
     }
 }
 
+fn packed_sfen_for_lookup(pos: &Position, description: &str) -> Result<PackedSfen, BookError> {
+    pos.try_to_packed_sfen().map_err(|error| {
+        BookError::InvalidData(format!("invalid YBB lookup {description}: {error}"))
+    })
+}
+
 fn flip_move(mv: Move) -> Move {
     if mv.is_drop() {
         Move::drop(mv.dropped_piece().expect("validated YBB drop"), mv.to_sq().flip())
@@ -352,4 +358,56 @@ fn read_u64(bytes: &[u8]) -> Result<u64, BookError> {
     Ok(u64::from_le_bytes(
         bytes.try_into().map_err(|_| BookError::InvalidFormat("truncated YBB u64"))?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::board::hirate_position;
+
+    use super::*;
+
+    fn temp_path(suffix: &str) -> PathBuf {
+        let nonce =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("clock after epoch").as_nanos();
+        std::env::temp_dir().join(format!("rsshogi-ybb-{}-{nonce}-{suffix}", std::process::id()))
+    }
+
+    fn write_single_entry(path: &Path, position: &Position) {
+        let packed = position.try_to_packed_sfen().expect("packed position");
+        let mv = Move::from_usi("7g7f").expect("move");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(packed.as_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&position.game_ply().to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&mv.raw().to_le_bytes());
+        bytes.extend_from_slice(&(-25i16).to_le_bytes());
+        fs::write(path, bytes).expect("write YBB fixture");
+    }
+
+    #[test]
+    fn test_ybb_lookup_position_rejects_unencodable_positions_and_keeps_valid_lookup() {
+        let path = temp_path("invalid-lookup-position");
+        let position = hirate_position();
+        write_single_entry(&path, &position);
+        let book = YbbBook::open_with_options(&path, YbbBookOpenOptions::new().with_flipped(true))
+            .expect("open YBB fixture");
+
+        assert!(matches!(book.lookup_position(&Position::empty()), Err(BookError::InvalidData(_))));
+        let one_king = Position::from_sfen("4k4/9/9/9/9/9/9/9/9 b - 1").expect("one king");
+        assert!(matches!(book.lookup_position(&one_king), Err(BookError::InvalidData(_))));
+
+        let entry = book.lookup_position(&position).expect("valid lookup").expect("entry");
+        assert_eq!(entry.packed_sfen(), position.to_packed_sfen());
+        assert_eq!(entry.moves()[0].mv(), Move::from_usi("7g7f").unwrap());
+
+        let _ = fs::remove_file(path);
+    }
 }
