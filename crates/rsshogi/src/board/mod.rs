@@ -105,7 +105,7 @@ pub mod initial_positions;
 pub mod perft;
 mod parser;
 pub use parser::{
-    PositionState, SfenError, generate_position_state, generate_sfen,
+    PositionState, PositionStateError, SfenError, generate_position_state, generate_sfen,
     generate_sfen_from_position_state, generate_sfen_with_ply, parse_sfen,
 };
 mod lookup;

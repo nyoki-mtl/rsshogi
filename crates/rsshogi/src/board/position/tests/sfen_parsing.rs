@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn test_sfen_rejects_extra_ranks_and_dangling_hand_counts_without_mutation() {
+    let mut pos = crate::board::hirate_position();
+    let mv = pos.move32_from_move(crate::types::Move::from_usi("7g7f").unwrap());
+    pos.apply_move32(mv);
+    let before = pos.to_sfen(None);
+    let key = pos.key();
+    let invalid = [
+        format!("{}{}", "9/".repeat(256), crate::board::STARTPOS_SFEN),
+        format!("{} b - 1", vec!["9"; 129].join("/")),
+        "9/9/9/9/9/9/9/9/9/9 b - 1".to_owned(),
+        "9/9/9/9/9/9/9/9/9 b P2 1".to_owned(),
+        "9/9/9/9/9/9/9/9/9 b 2 1".to_owned(),
+        "9/9/9/9/9/9/9/9/9 b 9999999999999999999999 1".to_owned(),
+    ];
+    for sfen in invalid {
+        assert!(pos.set_sfen(&sfen).is_err(), "accepted malformed SFEN: {sfen}");
+        assert_eq!(pos.to_sfen(None), before);
+        assert_eq!(pos.key(), key);
+        assert_eq!(pos.last_move(), mv);
+        assert_eq!(pos.state_stack_depth(), 1);
+    }
+    pos.undo_move32(mv).unwrap();
+    assert_eq!(pos.to_sfen(None), crate::board::STARTPOS_SFEN);
+}
+
+#[test]
 // 無効SFENの各種パターンでエラーが返るか検証
 fn test_sfen_parse_error_cases() {
     let invalid_sfens = vec![

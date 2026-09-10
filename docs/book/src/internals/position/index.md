@@ -78,7 +78,8 @@ assert!(!position.is_in_check());
 
 `repetition_state()` は千日手、連続王手千日手、優劣局面を `RepetitionState` で返す。
 `evaluate_declaration()` は入玉宣言の現在の規則、可否、条件の詳細を返す。
-`declaration_win_move()` は宣言できるときだけ `MOVE_WIN` を返す。
+`declaration_win_move()` は、ポイント制で宣言できるときは `MOVE_WIN` を返す。
+トライルールで成立するときは、トライ升への玉の移動を表す `Move32` を返す。
 
 ## 更新の入口
 

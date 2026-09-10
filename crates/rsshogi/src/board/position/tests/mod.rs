@@ -14,6 +14,7 @@ mod roundtrip;
 mod search_substrate;
 mod sfen_parsing;
 mod undo;
+mod update_errors;
 #[cfg(feature = "validation")]
 mod validation;
 mod zobrist;

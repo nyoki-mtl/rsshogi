@@ -2,17 +2,18 @@
 
 [![crates.io](https://img.shields.io/crates/v/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://crates.io/crates/rsshogi) [![docs.rs](https://img.shields.io/docsrs/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://docs.rs/rsshogi) [![Documentation](https://img.shields.io/badge/docs-mdBook-1f6feb?style=flat-square&logo=readthedocs&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/) [![PyPI](https://img.shields.io/pypi/v/rsshogi?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/rsshogi/) [![Python](https://img.shields.io/pypi/pyversions/rsshogi?style=flat-square&logo=python&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/nyoki-mtl/rsshogi/blob/main/LICENSE)
 
-`rsshogi` は、将棋局面の表現、合法手生成、棋譜の入出力、定跡・学習データ形式の操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージです。
+`rsshogi` は、将棋局面の表現、合法手生成、棋譜の入出力、定跡や学習データの操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージです。
 
 ## インストール
 
 ### Rust
 
 `Cargo.toml` に追加します。
+Rust 1.95 以降が必要です。
 
 ```toml
 [dependencies]
-rsshogi = "1.2.3"
+rsshogi = "1.2.4"
 ```
 
 Cargo の `features` で、必要な API やデータ形式のサポートを有効化できます。
@@ -22,7 +23,7 @@ Cargo の `features` で、必要な API やデータ形式のサポートを有
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.2.3", features = ["records", "book"] }
+rsshogi = { version = "1.2.4", features = ["records", "book"] }
 ```
 
 ### Python

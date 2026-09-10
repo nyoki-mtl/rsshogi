@@ -694,6 +694,39 @@ def test_hcp_encoders_reject_extreme_excess_inventory() -> None:
         board.to_hcpe(best_move=0, score=0, game_result="DRAW")
 
 
+@pytest.mark.parametrize("method", ["apply_usi", "push_usi", "push_usi_with_delta"])
+def test_ply_overflow_preserves_position(method: str) -> None:
+    initial = Board().to_sfen().rsplit(" ", 1)[0] + " 65535"
+    board = Board(initial)
+    with pytest.raises(ValueError, match="counter overflow"):
+        getattr(board, method)("7g7f")
+    assert board.to_sfen() == initial
+    assert board.last_move() is None
+
+
+def test_position_state_import_rejects_internal_piece_without_mutation() -> None:
+    board = Board()
+    initial = board.to_sfen()
+    state = PositionState(initial)
+    state.set_piece(
+        Square.from_usi("5e"), Piece.from_color_type(Color.BLACK, PieceType.GOLD_LIKE)
+    )
+    with pytest.raises(ValueError, match="invalid board piece"):
+        board.set_position_state(state)
+    assert board.to_sfen() == initial
+    assert board.last_move() is None
+    with pytest.raises(ValueError, match="invalid board piece"):
+        state.validate()
+
+
+@pytest.mark.parametrize("hands", ["P2", "2"])
+def test_sfen_rejects_dangling_hand_counts(hands: str) -> None:
+    initial = Board().to_sfen().split()
+    initial[2] = hands
+    with pytest.raises(ValueError):
+        Board(" ".join(initial))
+
+
 def test_serialize_sbinpack_requires_eval() -> None:
     kif = """
 手合割：平手

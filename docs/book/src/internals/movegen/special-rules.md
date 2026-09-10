@@ -85,7 +85,8 @@
 
 入玉宣言の条件は `evaluate_declaration()` が構造化して返す。
 `DeclarationDetail::PointRule` には敵陣の玉、敵陣の駒数、点数、必要点の各条件が入り、`TryRule` にはトライ先の到達・占有・安全条件が入る。
-実際に宣言できる場合だけ `declaration_win_move()` は `MOVE_WIN` を返す。
+ポイント制では、実際に宣言できる場合だけ `declaration_win_move()` は `MOVE_WIN` を返す。
+トライルールでは同じ API が、トライ升への玉の移動を表す `Move32` を返す。
 
 最大手数による引き分けは `Position` の生成・合法手判定の責務ではない。
 対局規約に依存する打ち切りは、消費者が `game_ply()` を基に適用する。

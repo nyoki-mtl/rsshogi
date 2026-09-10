@@ -100,6 +100,7 @@ GameResult(value: int) -> GameResult
 | `is_win()` | `bool` | 勝敗が付いたか（引き分け・中断以外） |
 | `is_draw()` | `bool` | 引き分けか |
 | `is_win_by_declaration()` | `bool` | 入玉宣言勝ちか |
+| `is_win_by_try_rule()` | `bool` | トライルール勝ちか |
 
 ### 名前解決
 

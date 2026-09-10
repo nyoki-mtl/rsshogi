@@ -13,7 +13,7 @@ from rsshogi.core import Board, Move, Move32, AperyMove, AperyMove32
 from rsshogi.numpy import HuffmanCodedPos, HuffmanCodedPosAndEval
 ```
 
-| 型 | サイズ | 主な用途 |
+| 型 | 内部エンコーディング | 主な用途 |
 |----|--------|----------|
 | `Move` | 16bit | rsshogi 標準の軽量指し手 |
 | `Move32` | 32bit | rsshogi 標準の拡張指し手 |

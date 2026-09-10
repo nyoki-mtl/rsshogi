@@ -90,20 +90,20 @@ Python では `rsshogi.policy`、Rust では `labels::policy` で提供してい
 `MoveLabel` は `class * 81 + to_sq` の 2187 クラスです。
 後手番の手は 180 度回転してからラベル化するため、常に先手視点で比較できます。
 
-`CompactMoveLabel` は「局面で合法」ではありません。
-空盤での移動・成り・駒打ち制約から見て、構造的に現れうる 1496 クラスだけを残した
-gapless なラベルです。
+`CompactMoveLabel` は、移動、成り、駒打ちの構造的な制約から使用可能な 1496 クラスに連番を割り当てたラベルです。
+現在局面の駒配置や王手は参照しないため、そのラベルに対応する手が局面上で合法であることまでは保証しません。
 
 Python では `Move`, `Move32`, `int`, `USI` 文字列をそのまま `move` 引数に渡せます。
 
 ### 指し手エンコーディング
 
 rsshogi と cshogi は異なる指し手エンコーディングを採用しています。
-`rsshogi` では `AperyMove` / `AperyMove32` を追加し、整数値を保ったまま相互変換できます。
+`AperyMove` / `AperyMove32` は、Apery 形式の整数値を受け渡すための型です。
+`Move` / `Move32` との変換は指し手の意味を保ちますが、ビットレイアウトが異なるため整数値は一般に変わります。
 通常の手生成や盤面操作では `Move` / `Move32` を使い、外部データとの境界でのみ
 `AperyMove` 系を使うのを推奨します。
 
-| 項目 | rsshogi (互換) | cshogi (Apery 型) |
+| 項目 | rsshogi の `Move` / `Move32` | Apery 形式 |
 |------|----------------------|-------------------|
 | 駒打ち判定 | bit 14 フラグ | `from >= 81` |
 | 成りフラグ位置 | bit 15 | bit 14 |
@@ -133,9 +133,9 @@ rsshogi と cshogi/参照実装では型名が異なります。
 rsshogi は 16bit 指し手を基本型と位置付け `Move` と命名しています。
 YaneuraOu/cshogi では 32bit が `Move` で、16bit が `Move16` です。
 
-**重要:** rsshogi の `Move` は 参照実装の `Move16` と同一のビットレイアウトですが、
-cshogi (Apery 系) の `Move16` とはビットレイアウトが異なります。
-整数値を保持した変換が必要な場合は `Move.to_apery()` / `AperyMove.to_move()` を使ってください。
+通常手の rsshogi `Move` と Apery 形式の `Move16` は、成りや駒打ちのビット配置が異なります。
+相互変換には `Move.to_apery()` / `AperyMove.to_move()` を使ってください。
+整数をそのまま別の型の raw 値として扱うと、指し手の意味が変わります。
 
 ### rsshogi.usi（USI 文字列パーサ）
 

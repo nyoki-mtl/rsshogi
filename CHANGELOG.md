@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-10
+
+### Added
+
+- SVG 描画に `SvgOptions` と `Position::to_svg_with_options()` を追加。
+  Python の `Board.to_svg()` でも、升の着色、移動先の駒の太字、盤内の背景色を独立して指定できる。
+  既存の呼び出しと既定表示は維持する。
+
+### Fixed
+
+- 不正な指し手、駒情報の不整合、カウンターの上限超過を局面更新前に検出し、
+  エラー時に局面と履歴を保持する。`MoveError` に `InvalidMove` と `CounterOverflow` を追加。
+- SFEN の解析失敗時に局面を保持し、SBK と YBB の不正入力をエラーとして返す。
+  SBK では重複した局面 ID と不正な指し手も検出する。
+- Windows の Rust テスト実行で、子プロセスの失敗を終了コードに反映する。
+- Rust と Python の使用例、feature の説明、棋譜と学習データ形式の文書を現行 API に合わせて修正。
+
 ## [1.2.3] - 2026-08-18
 
 ### Added
@@ -433,7 +450,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.0...v1.2.1

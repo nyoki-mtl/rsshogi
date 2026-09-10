@@ -21,10 +21,10 @@ rsshogi/src/
 ├── board/       局面管理、合法性判定、指し手生成
 │   ├── position/      局面の保持、更新、合法性判定、Zobrist ハッシュ
 │   ├── movegen/       駒種別の指し手生成（盤上移動、駒打ち、王手回避）
-│   ├── attack_tables/ 利きテーブルと飛び利き
-│   ├── state_info/    差分更新で持ち回る局面のメタ情報
+│   ├── attack_tables.rs 利きテーブルと飛び利き
+│   ├── state_info.rs  差分更新で持ち回る局面のメタ情報
 │   └── ...            BitboardSet、MoveList、perft、lookup
-├── records/     KIF、KI2、CSA、JKF、PACK、SBINPACK、SAZ2
+├── records/     KIF、KI2、CSA、JKF、PACK、SBINPACK、SAZPACK
 ├── book/        MemoryBook、StaticBook、DB2016、YBB、SBK
 ├── mate/        合法手に基づく一手詰め判定
 └── simd/        crate 内部の SIMD primitive
@@ -44,7 +44,7 @@ graph TB
         APP --> BOARD
         BOARD --> BASE
     end
-    PY --> APP
+    PY --> CORE
 ```
 
 - **基盤層**：`types`、`labels`、`simd` が基本型、局面に依存しないラベル変換、内部 SIMD primitive を提供します。
@@ -60,7 +60,7 @@ graph TB
 - **形式ごとの feature**：`records`、`book`、`position-serialization`、`policy-labels` などを用途に合わせて追加します。
 - **薄い Python バインディング**：規則と形式の処理は Rust 側に置き、Python から同じ意味論を利用できます。
 - **探索との分離**：評価関数と探索本体は含めず、探索エンジンが使う局面操作と手生成を提供します。
-- **境界の互換性**：公開 raw 値と HCP、PackedSfen、PACK、YBB、SBK などのワイヤ形式をテストで固定します。
+- **境界の互換性**：公開 raw 値と HCP、PackedSfen、PACK、YBB、SBK などのワイヤ形式は、対応する feature を有効にしたテストで固定します。
 
 ## 詳細
 

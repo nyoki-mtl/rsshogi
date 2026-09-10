@@ -50,7 +50,8 @@ USI の `f` は六段を表すため、棋譜の 7 六は `7f` である。
 
 `Square::from_index` と `Square::new` は入力を検証しない。
 外部入力の整数を受け取る場合は、`Square::is_valid()` を確認してから盤面アクセスへ使う。
-`Square::NONE` は `none` として文字列変換できるが、通常の USI 升ではない。
+`Square::from_usi("none")` は番兵の `Square::NONE` を受理する。
+`Square::to_usi` は盤上升にだけ使い、番兵を USI 升として出力しない。
 
 ## 方向と対称変換
 

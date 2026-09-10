@@ -130,6 +130,8 @@ mod parser;
 mod rules;
 #[cfg(feature = "svg")]
 mod svg;
+#[cfg(feature = "svg")]
+pub use svg::SvgOptions;
 
 mod types;
 mod updates;

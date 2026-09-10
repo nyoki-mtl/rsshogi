@@ -14,6 +14,9 @@ SFEN は盤面、手番、持ち駒、手数を人間可読な形で渡すため
 
 `Position::to_huffman_coded_pos` と `set_huffman_coded_pos` は `HuffmanCodedPos` を生成・復元する。
 
+`to_packed_sfen` と `to_huffman_coded_pos` は表現不能な局面で panic する簡便な入口である。
+外部入力から作った未検証局面を符号化する場合は、`try_to_packed_sfen` と `try_to_huffman_coded_pos` で `Result` を確認する。
+
 いずれの復元も `Result` を返し、ビット列の終端超過、不正な駒符号、不正な玉位置をエラーにする。
 
 復元時の `ply` は局面の手数を呼び出し側が与える。

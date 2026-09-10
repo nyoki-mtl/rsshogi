@@ -1,6 +1,8 @@
 use super::Position;
-use crate::board::parser::{PositionState, SfenError, generate_sfen_with_ply, parse_sfen};
-use crate::types::{Color, EnteringKingRule, Piece};
+use crate::board::parser::{
+    PositionState, PositionStateError, SfenError, generate_sfen_with_ply, parse_sfen,
+};
+use crate::types::{Color, EnteringKingRule, Piece, PieceType};
 
 impl Position {
     /// SFEN 文字列から局面を生成する。
@@ -44,8 +46,34 @@ impl Position {
     /// pos.set_position_state(&state);
     /// assert_eq!(pos.game_ply(), 10);
     /// ```
+    /// # Panics
+    ///
+    /// 内部用の駒値や持ち駒の不正なビット表現を含む場合、変更前に panic する。
     pub fn set_position_state(&mut self, state: &PositionState) {
+        self.try_set_position_state(state).expect("invalid position state representation");
+    }
+
+    /// 内部表現を検査して構造化局面を取り込む。ルール妥当性は検証しない。
+    ///
+    /// # Errors
+    ///
+    /// 盤上に置けない駒値や持ち駒の不正なビット表現を含む場合、局面を変更せず返す。
+    pub fn try_set_position_state(
+        &mut self,
+        state: &PositionState,
+    ) -> Result<(), PositionStateError> {
+        for (square, piece) in state.board.iter() {
+            if !piece.is_valid() || piece.piece_type() == PieceType::GOLD_LIKE {
+                return Err(PositionStateError::InvalidPiece { square, piece });
+            }
+        }
+        for color in [Color::BLACK, Color::WHITE] {
+            if state.hands[color.to_index()].has_overflow() {
+                return Err(PositionStateError::InvalidHand(color));
+            }
+        }
         self.apply_position_state(state);
+        Ok(())
     }
 
     /// 平手初期局面に設定する

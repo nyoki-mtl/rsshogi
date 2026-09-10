@@ -48,7 +48,7 @@
 Rust crate では通常の parse/export に加えて、棋譜ツリーを扱う補助 API を提供します。
 
 - `records::formats::traversal::traverse_with_position(&record, visitor)`
-  - DFS で全手順を走査し、各ノードで指し手適用後の `Position` を受け取れます
+  - DFS で全手順を走査し、指し手ノードでは適用後、終局特殊手ノードでは直前の `Position` を受け取れます
 - `records::formats::traversal::position_at(&record, node_id)`
   - 任意ノード時点の局面を復元します
 - `kif::export_kif_bytes()` / `kif::export_ki2_bytes()` / `csa::export_csa_bytes()`

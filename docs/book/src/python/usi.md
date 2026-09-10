@@ -71,7 +71,7 @@ assert best.bestmove.to_usi() == "7g7f"
 ```
 
 `move_from_usi()` は `resign`, `win`, `0000`, `none` も `Move` 定数へ変換します。
-通常手だけを受け付ける `Move.from_usi()` と使い分けてください。
+`Move.from_usi()` は通常手と `0000`（null move）を受け付けますが、`resign`、`win`、`none` は受け付けません。
 
 ## go コマンドの組み立て
 

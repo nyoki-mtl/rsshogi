@@ -54,6 +54,23 @@ const HAND_PIECE_ORDER: [PieceType; 7] = [
 
 const HAND_PIECE_SYMBOLS: [&str; 7] = ["歩", "香", "桂", "銀", "金", "角", "飛"];
 
+/// 盤面 SVG の表示オプション。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SvgOptions<'a> {
+    /// 最終着手の移動元と移動先を着色する。既定値は `true`。
+    pub highlight_squares: bool,
+    /// 最終着手の移動先にある一枚だけを太字にする。既定値は `false`。
+    pub bold_destination: bool,
+    /// 盤内の SVG fill 値。`None` は透明で、属性値は XML エスケープする。
+    pub board_background: Option<&'a str>,
+}
+
+impl Default for SvgOptions<'_> {
+    fn default() -> Self {
+        Self { highlight_squares: true, bold_destination: false, board_background: None }
+    }
+}
+
 impl Position {
     /// 局面を SVG 文字列として描画する。
     ///
@@ -77,6 +94,25 @@ impl Position {
     /// ```
     #[must_use]
     pub fn to_svg(&self, last_move: Option<Move32>, scale: f32) -> String {
+        self.to_svg_with_options(last_move, scale, &SvgOptions::default())
+    }
+
+    /// 表示オプションを指定して局面を SVG 文字列として描画する。
+    ///
+    /// 着手後の局面と、その局面に対応する `last_move` を渡す。
+    /// `None` と特殊手では着色も太字化も行わず、移動先が空なら太字化しない。
+    /// 通常のウェイトは SVG の既定値、強調する一枚は `bold` を使う。
+    /// 背景、升の着色、罫線、座標、駒、持ち駒の順に描画する。
+    /// 盤内は `(20.5, 10.5, 180, 180)`、全体の viewBox は `(0, 0, 230, 192)`。
+    /// これらの座標と駒の中心はオプションや持ち駒の量によって変わらない。
+    /// `scale` の扱いは [`Self::to_svg`] と同じ。
+    #[must_use]
+    pub fn to_svg_with_options(
+        &self,
+        last_move: Option<Move32>,
+        scale: f32,
+        options: &SvgOptions<'_>,
+    ) -> String {
         let scale = if scale <= 0.0 { 1.0 } else { scale };
         let width = 230.0;
         let height = 192.0;
@@ -96,7 +132,21 @@ impl Position {
         }
         out.push_str("</defs>");
 
-        if let Some(mv) = last_move.filter(|mv| mv.is_normal()) {
+        if let Some(background) = options.board_background {
+            let background = background
+                .replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\'', "&apos;");
+            let _ = write!(
+                out,
+                "<rect x=\"20.5\" y=\"10.5\" width=\"180\" height=\"180\" fill=\"{background}\" />"
+            );
+        }
+
+        let last_move = last_move.filter(|mv| mv.is_normal());
+        if let Some(mv) = last_move.filter(|_| options.highlight_squares) {
             let to = mv.to_sq();
             if let Some((x, y)) = svg_square_coords(to) {
                 let _ = write!(
@@ -132,7 +182,13 @@ impl Position {
             let Some((x, y)) = svg_square_coords(sq) else {
                 continue;
             };
-            let _ = write!(out, "<use xlink:href=\"#{id}\" x=\"{x}\" y=\"{y}\" />");
+            let weight = if options.bold_destination && last_move.is_some_and(|mv| mv.to_sq() == sq)
+            {
+                " font-weight=\"bold\""
+            } else {
+                ""
+            };
+            let _ = write!(out, "<use xlink:href=\"#{id}\" x=\"{x}\" y=\"{y}\"{weight} />");
         }
 
         for color in [Color::BLACK, Color::WHITE] {
@@ -263,6 +319,62 @@ fn svg_hand_texts(hand: Hand, color: Color) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::board;
+
+    #[test]
+    fn svg_options_preserve_default_and_piece_positions() {
+        board::init();
+        let mut pos = board::hirate_position();
+        for usi in ["7g7f", "3c3d", "8h2b+", "3a2b", "B*4e", "B*5e"] {
+            let mv = pos.move32_from_move(crate::types::Move::from_usi(usi).unwrap());
+            assert!(pos.is_legal_move32(mv), "{usi}");
+            pos.apply_move32(mv);
+            let original = pos.to_svg(Some(mv), 1.0);
+            assert_eq!(original, pos.to_svg_with_options(Some(mv), 1.0, &SvgOptions::default()));
+            let bold = pos.to_svg_with_options(
+                Some(mv),
+                1.0,
+                &SvgOptions { bold_destination: true, ..Default::default() },
+            );
+            assert_eq!(bold.matches("font-weight=\"bold\"").count(), 1);
+            assert_eq!(bold.replace(" font-weight=\"bold\"", ""), original);
+            let (x, y) = svg_square_coords(mv.to_sq()).unwrap();
+            let id = svg_piece_id(pos.piece_on(mv.to_sq())).unwrap();
+            assert!(bold.contains(&format!(
+                "<use xlink:href=\"#{id}\" x=\"{x}\" y=\"{y}\" font-weight=\"bold\" />"
+            )));
+            let book = pos.to_svg_with_options(
+                Some(mv),
+                1.0,
+                &SvgOptions {
+                    highlight_squares: false,
+                    bold_destination: true,
+                    board_background: Some("#efefef"),
+                },
+            );
+            assert!(!book.contains("#f6b94d"));
+            assert!(!book.contains("#fdf0e3"));
+            assert!(book.find("#efefef").unwrap() < book.find(SVG_SQUARES).unwrap());
+        }
+    }
+
+    #[test]
+    fn svg_without_destination_does_not_emphasize() {
+        board::init();
+        let pos = board::hirate_position();
+        let options = SvgOptions { bold_destination: true, ..Default::default() };
+        for mv in [
+            None,
+            Some(Move32::MOVE_NONE),
+            Some(Move32::MOVE_NULL),
+            Some(Move32::MOVE_RESIGN),
+            Some(Move32::MOVE_WIN),
+            Some(Move32::MOVE_END),
+        ] {
+            assert_eq!(pos.to_svg_with_options(mv, 1.0, &options), pos.to_svg(None, 1.0));
+        }
+        let mv = Move32::from_usi("7g7f").unwrap();
+        assert!(!pos.to_svg_with_options(Some(mv), 1.0, &options).contains("font-weight"));
+    }
 
     #[test]
     fn svg_output_contains_pieces() {

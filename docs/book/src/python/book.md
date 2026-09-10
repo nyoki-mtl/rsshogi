@@ -20,14 +20,15 @@ rsshogi の定跡には次の 2 系統があります。
 ### BookKey
 
 定跡検索に使用する局面のハッシュキー。
-default build では 64bit、`hash-128` feature build では 128bit です。
+配布版と既定のビルドでは 64bit の検索キーを使います。
+`hash-128` feature を有効にしたカスタムビルドでは、128bit の検索キーになります。
 
 #### プロパティ
 
 | 名前 | 型 | 説明 |
 |------|-----|------|
 | `low` | `int` | キーの下位64ビット |
-| `high` | `int` | キーの上位64ビット（128ビットハッシュの場合のみ非ゼロ） |
+| `high` | `int` | キーの上位64ビット（配布版と既定のビルドでは `0`） |
 
 #### メソッド
 
@@ -121,9 +122,8 @@ static_book.write_file("my_book.bin")
 
 ### StaticBook
 
-読み取り専用のバイナリ定跡ファイル。
-`from_bytes()` / `from_file()` は現在の build の `BookKey` 幅と一致するファイルだけを読み込みます。
-default build では 64bit、`hash-128` feature build では 128bit の static book が対象です。
+読み取り専用のバイナリ定跡ファイルです。
+`from_bytes()` / `from_file()` は、version 2 で現在の `BookKey` 幅と一致する定跡ファイルを読み込みます。
 
 #### クラスメソッド
 
