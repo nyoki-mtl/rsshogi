@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-09-25
+
+### Fixed
+
+- KI2 の成香・成桂・成銀の指し手表記を二文字に戻す。従来の杏・圭・全も読み込める。
+
 ## [1.2.4] - 2026-09-10
 
 ### Added
@@ -450,7 +456,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.1...v1.2.2

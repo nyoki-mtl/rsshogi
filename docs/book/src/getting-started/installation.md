@@ -43,7 +43,7 @@ Rust 1.95 以降が必要です。
 
 ```toml
 [dependencies]
-rsshogi = "1.2.4"
+rsshogi = "1.2.5"
 ```
 
 ### Git リポジトリから

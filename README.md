@@ -13,7 +13,7 @@ Rust 1.95 以降が必要です。
 
 ```toml
 [dependencies]
-rsshogi = "1.2.4"
+rsshogi = "1.2.5"
 ```
 
 Cargo の `features` で、必要な API やデータ形式のサポートを有効化できます。
@@ -23,7 +23,7 @@ Cargo の `features` で、必要な API やデータ形式のサポートを有
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.2.4", features = ["records", "book"] }
+rsshogi = { version = "1.2.5", features = ["records", "book"] }
 ```
 
 ### Python
