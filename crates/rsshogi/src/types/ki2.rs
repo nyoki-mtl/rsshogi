@@ -357,9 +357,19 @@ impl FromStr for Ki2Notation {
                 .ok_or(ParseKi2NotationError)?;
             (false, Square::from_file_rank(file, rank))
         };
-        let piece = piece_from_text(chars.next().ok_or(ParseKi2NotationError)?)
-            .ok_or(ParseKi2NotationError)?;
-        let tail = chars.as_str();
+        let (piece, tail) = if let Some(tail) = chars.as_str().strip_prefix("成香") {
+            (PieceType::PRO_LANCE, tail)
+        } else if let Some(tail) = chars.as_str().strip_prefix("成桂") {
+            (PieceType::PRO_KNIGHT, tail)
+        } else if let Some(tail) = chars.as_str().strip_prefix("成銀") {
+            (PieceType::PRO_SILVER, tail)
+        } else {
+            (
+                piece_from_text(chars.next().ok_or(ParseKi2NotationError)?)
+                    .ok_or(ParseKi2NotationError)?,
+                chars.as_str(),
+            )
+        };
         let (suffix_text, promotion) = if let Some(value) = tail.strip_suffix("不成") {
             (value, Ki2Promotion::Decline)
         } else if let Some(value) = tail.strip_suffix('成') {
@@ -503,9 +513,9 @@ fn piece_text(piece_type: PieceType) -> Option<&'static str> {
         PieceType::ROOK => "飛",
         PieceType::KING => "玉",
         PieceType::PRO_PAWN => "と",
-        PieceType::PRO_LANCE => "杏",
-        PieceType::PRO_KNIGHT => "圭",
-        PieceType::PRO_SILVER => "全",
+        PieceType::PRO_LANCE => "成香",
+        PieceType::PRO_KNIGHT => "成桂",
+        PieceType::PRO_SILVER => "成銀",
         PieceType::HORSE => "馬",
         PieceType::DRAGON => "龍",
         _ => return None,
@@ -560,6 +570,26 @@ mod tests {
 
         assert_eq!(padded, unpadded);
         assert_eq!(padded.to_string(), "△同　角");
+    }
+
+    #[test]
+    fn promoted_minor_piece_names_are_canonicalized() {
+        board::init();
+        let position = board::position_from_sfen("8k/9/9/9/4+L+N+S2/9/9/9/K8 b - 1")
+            .expect("valid promoted-piece position");
+        for (usi, expected) in [("5e5d", "▲５四成香"), ("4e4d", "▲４四成桂"), ("3e3d", "▲３四成銀")]
+        {
+            let mv = board::move_from_usi_expect(&position, usi);
+            assert_eq!(mv.to_ki2(&position).as_deref(), Some(expected));
+        }
+
+        for (standard, alternate) in
+            [("▲７六成香", "▲７六杏"), ("▲７六成桂", "▲７六圭"), ("▲７六成銀", "▲７六全")]
+        {
+            let notation: Ki2Notation = standard.parse().expect("standard piece name");
+            assert_eq!(alternate.parse::<Ki2Notation>(), Ok(notation));
+            assert_eq!(notation.to_string(), standard);
+        }
     }
 
     #[test]
