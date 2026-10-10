@@ -12,16 +12,16 @@ use crate::{
 use std::ops::Range;
 
 pub const SAZPACK_SELFPLAY_MAGIC: [u8; 4] = *b"SAZ2";
-pub const SAZPACK_SELFPLAY_VERSION: u8 = 2;
+pub const SAZPACK_SELFPLAY_VERSION: u8 = 3;
 const HEADER_LEN: usize = 10;
 const MAX_PREALLOC: usize = 1024;
 /// played(2) + root_wdl(6) + outcome_wdl(6) + raw_wdl(6) + raw_mate(2)
 /// + raw_moves_left(2) + plies_left(2) + requested_visits(4)
 /// + target_weight_milli(2) + exploration_flags(1) + mate tag(1)
 const POSITION_FIXED_LEN: usize = 34;
-/// mv(2) + prior(2) + raw_prior(2) + visits_before(>=1) + visits_after(>=1)
+/// mv(2) + prior(2) + raw_prior(2) + visits(>=1)
 /// + lower(1) + upper(1)
-const POLICY_ENTRY_MIN_LEN: usize = 10;
+const POLICY_ENTRY_MIN_LEN: usize = 9;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SazSelfplayError {
@@ -47,8 +47,6 @@ pub enum SazSelfplayError {
     InvalidMateTag(u8),
     #[error("count exceeds u32")]
     CountOverflow,
-    #[error("policy visits decreased")]
-    DecreasingVisits,
     #[error("quantized distribution must sum to 65535")]
     InvalidDistributionSum,
     #[error("packed sfen decode failed: {0:?}")]
@@ -162,8 +160,10 @@ pub struct SazSelfplayPolicyEntry {
     /// `prior` と同じ量子化で、合法手全体の合計が [`SazWdl::TOTAL`] にちょうど一致する。
     /// 探索定数の校正と target 変換の評価を分離するために保存する。
     pub raw_prior: u16,
-    pub visits_before: u32,
-    pub visits_after: u32,
+    /// 探索終了時に root がこの手へ保持していた累積訪問数。
+    ///
+    /// 木の再利用で引き継いだ訪問を含むため、今回の探索で増えた分だけを表す値ではない。
+    pub visits: u32,
     pub lower: SazOutcomeBound,
     pub upper: SazOutcomeBound,
 }
@@ -243,9 +243,6 @@ fn serialize_position(
     position.root_wdl.validate()?;
     position.outcome_wdl.validate()?;
     position.raw_wdl.validate()?;
-    if position.policy.iter().any(|entry| entry.visits_after < entry.visits_before) {
-        return Err(SazSelfplayError::DecreasingVisits);
-    }
     let mut prior_budget = PriorBudget::new();
     let mut raw_prior_budget = PriorBudget::new();
     for entry in &position.policy {
@@ -281,8 +278,7 @@ fn serialize_position(
         out.extend_from_slice(&entry.mv.raw().to_le_bytes());
         out.extend_from_slice(&entry.prior.to_le_bytes());
         out.extend_from_slice(&entry.raw_prior.to_le_bytes());
-        encode_uleb128_u32(entry.visits_before, out);
-        encode_uleb128_u32(entry.visits_after, out);
+        encode_uleb128_u32(entry.visits, out);
         out.push(entry.lower as u8);
         out.push(entry.upper as u8);
     }
@@ -406,11 +402,7 @@ fn deserialize_position(
         prior_budget.take(prior)?;
         let raw_prior = read_u16(input, cursor);
         raw_prior_budget.take(raw_prior)?;
-        let visits_before = read_uleb(input, cursor, end)?;
-        let visits_after = read_uleb(input, cursor, end)?;
-        if visits_after < visits_before {
-            return Err(SazSelfplayError::DecreasingVisits);
-        }
+        let visits = read_uleb(input, cursor, end)?;
         if *cursor + 2 > end {
             return Err(SazSelfplayError::Truncated);
         }
@@ -418,15 +410,7 @@ fn deserialize_position(
         *cursor += 1;
         let upper = SazOutcomeBound::try_from(input[*cursor])?;
         *cursor += 1;
-        policy.push(SazSelfplayPolicyEntry {
-            mv,
-            prior,
-            raw_prior,
-            visits_before,
-            visits_after,
-            lower,
-            upper,
-        });
+        policy.push(SazSelfplayPolicyEntry { mv, prior, raw_prior, visits, lower, upper });
     }
     prior_budget.finish()?;
     raw_prior_budget.finish()?;
@@ -531,8 +515,7 @@ mod tests {
                         mv: Move::from_usi("7g7f").unwrap(),
                         prior: 50_000,
                         raw_prior: 50_000,
-                        visits_before: 2,
-                        visits_after: 500,
+                        visits: 500,
                         lower: SazOutcomeBound::Loss,
                         upper: SazOutcomeBound::Win,
                     },
@@ -540,8 +523,7 @@ mod tests {
                         mv: Move::from_usi("2g2f").unwrap(),
                         prior: 15_535,
                         raw_prior: 15_535,
-                        visits_before: 0,
-                        visits_after: 300,
+                        visits: 300,
                         lower: SazOutcomeBound::Draw,
                         upper: SazOutcomeBound::Win,
                     },
@@ -630,22 +612,24 @@ mod tests {
     }
 
     #[test]
-    fn a_version_one_chunk_is_refused_rather_than_misread() {
-        // v1 は raw block を持たない。黙って読み違えると raw 由来の指標が
-        // 隣接フィールドのゴミを測ることになる。
-        let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
-        bytes[4] = 1;
-        assert_eq!(
-            deserialize_selfplay_chunk(&bytes),
-            Err(SazSelfplayError::UnsupportedVersion(1))
-        );
+    fn selfplay_roundtrip_preserves_zero_and_max_cumulative_visits() {
+        let mut game = fixture();
+        game.positions[0].policy[0].visits = 0;
+        game.positions[0].policy[1].visits = u32::MAX;
+        let bytes = serialize_selfplay_chunk(std::slice::from_ref(&game)).unwrap();
+        assert_eq!(bytes[4], 3);
+        assert_eq!(deserialize_selfplay_chunk(&bytes).unwrap(), vec![game]);
     }
 
     #[test]
-    fn selfplay_rejects_decreasing_visits() {
-        let mut game = fixture();
-        game.positions[0].policy[0].visits_after = 1;
-        assert_eq!(serialize_selfplay_chunk(&[game]), Err(SazSelfplayError::DecreasingVisits));
+    fn a_version_two_chunk_is_refused_rather_than_misread() {
+        // version 2 は policy entry に訪問数を 2 つ持つ。version 3 として読み違えない。
+        let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
+        bytes[4] = 2;
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::UnsupportedVersion(2))
+        );
     }
 
     #[test]
@@ -702,7 +686,7 @@ mod tests {
         encode_uleb128_u32(1, &mut payload);
 
         payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
-        // version 2 は root / outcome / raw の 3 本の WDL を持つ。
+        // version 3 は root / outcome / raw の 3 本の WDL を持つ。
         for _ in 0..3 {
             payload.extend_from_slice(&0u16.to_le_bytes());
             payload.extend_from_slice(&u16::MAX.to_le_bytes());
@@ -724,7 +708,6 @@ mod tests {
             // raw 側は常に合計ちょうど 65535 の正当な分布にしておく。
             let raw_prior = if index == 0 { u16::MAX } else { 0 };
             payload.extend_from_slice(&raw_prior.to_le_bytes());
-            encode_uleb128_u32(0, &mut payload);
             encode_uleb128_u32(0, &mut payload);
             payload.push(SazOutcomeBound::Loss as u8);
             payload.push(SazOutcomeBound::Win as u8);
@@ -767,8 +750,7 @@ mod tests {
                 mv: Move::from_usi("7g7f").unwrap(),
                 prior,
                 raw_prior: prior,
-                visits_before: 0,
-                visits_after: 0,
+                visits: 0,
                 lower: SazOutcomeBound::Loss,
                 upper: SazOutcomeBound::Win,
             })

@@ -23,8 +23,7 @@ class SazPolicyEntry:
         mv: MoveLike,
         prior: int,
         raw_prior: int,
-        visits_before: int,
-        visits_after: int,
+        visits: int,
         lower: int,
         upper: int,
     ) -> None: ...
@@ -35,9 +34,7 @@ class SazPolicyEntry:
     @property
     def raw_prior(self) -> int: ...
     @property
-    def visits_before(self) -> int: ...
-    @property
-    def visits_after(self) -> int: ...
+    def visits(self) -> int: ...
     @property
     def lower(self) -> int: ...
     @property

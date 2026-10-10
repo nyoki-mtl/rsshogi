@@ -510,23 +510,36 @@ impl Position {
     ///
     /// 指定 ply 以内の千日手状態を判定する。
     /// 同一局面の繰り返しを検出し、連続王手の千日手や優等/劣等局面も判定する。
+    /// 4 回目の同一局面は対局の規則で千日手が成立しているため、`ply` に関わらず返す。
+    /// 走査そのものは [`Position::repetition_state_with_distance`] と共有する。
     #[must_use]
     pub fn repetition_state_with_ply(&self, ply: usize) -> RepetitionState {
-        let stack = self.state_stack();
-        // 千日手判定の前提条件：repetition_counter >= 3（4回目の出現）
-        // 4回目の同一局面の場合は強制的に千日手となるため、ply に関わらず検出
-        if stack.hot(self.st_index).repetition_counter >= 3 {
+        if self.state_stack().hot(self.st_index).repetition_counter >= 3 {
             return self.repetition_state();
         }
 
-        // 遡り可能な手数を計算
+        self.repetition_state_with_distance(ply).map_or(RepetitionState::None, |(state, _)| state)
+    }
+
+    /// `depth` 手以内で最も近い同一盤面の反復分類と、その局面までの手数を返す。
+    ///
+    /// 4 手以上の偶数手だけを遡り、`depth`、null move 以降の手数、保持している履歴の
+    /// 短い方を上限とする。分類は [`Position::repetition_state_with_ply`] と同じで、
+    /// 連続王手の千日手と優等/劣等局面を含む。過去の出現と分類が食い違う場合は
+    /// `Draw` を返す。
+    ///
+    /// 4 回目の同一局面でも `depth` の外側にある一致は返さない。探索木の根からの深さを
+    /// `depth` に渡すと、根以降に閉じた反復だけを、その周期とともに得られる。
+    #[must_use]
+    pub fn repetition_state_with_distance(&self, depth: usize) -> Option<(RepetitionState, usize)> {
+        let stack = self.state_stack();
         // null move より前と保持範囲の外側は走査しない。
         let plies_from_null = stack.hot(self.st_index).plies_from_null;
-        let ply_limit = ply.min(plies_from_null as usize).min(self.st_index);
+        let ply_limit = depth.min(plies_from_null as usize).min(self.st_index);
 
         // 少なくとも4手かけないと千日手にはならない
         if ply_limit < 4 {
-            return RepetitionState::None;
+            return None;
         }
 
         let current_state = stack.hot(self.st_index);
@@ -558,18 +571,18 @@ impl Position {
                             };
 
                         if state.repetition_times > 0 && repetition_type != state.repetition_type {
-                            return RepetitionState::Draw;
+                            return Some((RepetitionState::Draw, distance));
                         }
 
-                        return repetition_type;
+                        return Some((repetition_type, distance));
                     }
 
                     if Hand::is_equal_or_superior(current_hand, state.hand) {
-                        return RepetitionState::Superior;
+                        return Some((RepetitionState::Superior, distance));
                     }
 
                     if Hand::is_equal_or_superior(state.hand, current_hand) {
-                        return RepetitionState::Inferior;
+                        return Some((RepetitionState::Inferior, distance));
                     }
                 }
 
@@ -582,7 +595,7 @@ impl Position {
             distance += 1;
         }
 
-        RepetitionState::None
+        None
     }
 
     /// 千日手の詳細な状態を判定（探索用、ply 制約付き、cached/current-state ベース）

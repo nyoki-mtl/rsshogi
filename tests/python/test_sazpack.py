@@ -17,8 +17,7 @@ def _entry(
     move: str,
     *,
     prior: int,
-    visits_before: int,
-    visits_after: int,
+    visits: int,
     lower: int = 0,
     upper: int = 2,
     raw_prior: int | None = None,
@@ -27,8 +26,7 @@ def _entry(
         move,
         prior,
         prior if raw_prior is None else raw_prior,
-        visits_before,
-        visits_after,
+        visits,
         lower,
         upper,
     )
@@ -55,9 +53,9 @@ def _fixture_game() -> object:
                 750,
                 1,
                 [
-                    _entry("7g7f", prior=40_000, visits_before=10, visits_after=810),
-                    _entry("2g2f", prior=15_000, visits_before=5, visits_after=155),
-                    _entry("6g6f", prior=10_535, visits_before=0, visits_after=50),
+                    _entry("7g7f", prior=40_000, visits=810),
+                    _entry("2g2f", prior=15_000, visits=155),
+                    _entry("6g6f", prior=10_535, visits=50),
                 ],
                 mate=5,
             ),
@@ -72,7 +70,7 @@ def _fixture_game() -> object:
                 1_000,
                 1_000,
                 0,
-                [_entry("3c3d", prior=65_535, visits_before=0, visits_after=1_000)],
+                [_entry("3c3d", prior=65_535, visits=1_000)],
             ),
         ],
     )
@@ -137,7 +135,7 @@ def test_sazpack_roundtrip_preserves_fields() -> None:
     assert first.mate == 5
 
 
-def test_sazpack_policy_preserves_prior_and_visit_snapshots() -> None:
+def test_sazpack_policy_preserves_prior_and_cumulative_visits() -> None:
     game = rsshogi.sazpack.decode_sazpack(rsshogi.sazpack.write_sazpack([_fixture_game()]))[0]
     entries = game.positions[0].policy
 
@@ -146,11 +144,7 @@ def test_sazpack_policy_preserves_prior_and_visit_snapshots() -> None:
         ("2g2f", 15_000),
         ("6g6f", 10_535),
     ]
-    assert [(entry.visits_before, entry.visits_after) for entry in entries] == [
-        (10, 810),
-        (5, 155),
-        (0, 50),
-    ]
+    assert [entry.visits for entry in entries] == [810, 155, 50]
     assert [(entry.lower, entry.upper) for entry in entries] == [(0, 2), (0, 2), (0, 2)]
 
 
@@ -160,9 +154,9 @@ def test_sazpack_raw_network_outputs_survive_a_roundtrip() -> None:
     # priorとraw_priorをそれぞれ独立に合計65535の別分布にする。
     game = _game_with_policy(
         [
-            _entry("7g7f", prior=40_000, visits_before=10, visits_after=810, raw_prior=20_000),
-            _entry("2g2f", prior=15_000, visits_before=5, visits_after=155, raw_prior=45_535),
-            _entry("6g6f", prior=10_535, visits_before=0, visits_after=50, raw_prior=0),
+            _entry("7g7f", prior=40_000, visits=810, raw_prior=20_000),
+            _entry("2g2f", prior=15_000, visits=155, raw_prior=45_535),
+            _entry("6g6f", prior=10_535, visits=50, raw_prior=0),
         ]
     )
 
@@ -191,9 +185,9 @@ def test_sazpack_rejects_raw_prior_distribution_that_does_not_sum_to_total() -> 
     # priorだけ正しくraw_priorが不正な payload を通さない。
     game = _game_with_policy(
         [
-            _entry("7g7f", prior=40_000, visits_before=10, visits_after=810, raw_prior=1),
-            _entry("2g2f", prior=15_000, visits_before=5, visits_after=155, raw_prior=1),
-            _entry("6g6f", prior=10_535, visits_before=0, visits_after=50, raw_prior=1),
+            _entry("7g7f", prior=40_000, visits=810, raw_prior=1),
+            _entry("2g2f", prior=15_000, visits=155, raw_prior=1),
+            _entry("6g6f", prior=10_535, visits=50, raw_prior=1),
         ]
     )
 
@@ -247,7 +241,7 @@ def test_sazpack_rejects_invalid_distribution_sum() -> None:
                 1,
                 1_000,
                 0,
-                [_entry("7g7f", prior=65_535, visits_before=0, visits_after=1)],
+                [_entry("7g7f", prior=65_535, visits=1)],
             )
         ],
     )
@@ -263,28 +257,11 @@ def test_sazpack_rejects_invalid_magic() -> None:
         saz.decode_sazpack(bytes(data))
 
 
-def test_sazpack_rejects_decreasing_visits() -> None:
+def test_sazpack_rejects_a_version_two_chunk() -> None:
+    """Version 2 stores two visit counters per entry, so it must not be read as version 3."""
     saz = rsshogi.sazpack
-    game = saz.SazGame(
-        HIRATE_SFEN,
-        rsshogi.record.GameResult.BLACK_WIN,
-        7,
-        0,
-        [
-            saz.SazPosition(
-                "7g7f",
-                _wdl(65_535, 0, 0),
-                _wdl(65_535, 0, 0),
-                _wdl(30_000, 5_535, 30_000),
-                12_345,
-                640,
-                1,
-                1,
-                1_000,
-                0,
-                [_entry("7g7f", prior=65_535, visits_before=2, visits_after=1)],
-            )
-        ],
-    )
-    with pytest.raises(ValueError, match="visits decreased"):
-        saz.write_sazpack([game])
+    data = bytearray(saz.write_sazpack([_fixture_game()]))
+    assert data[4] == 3
+    data[4] = 2
+    with pytest.raises(ValueError, match="version"):
+        saz.decode_sazpack(bytes(data))

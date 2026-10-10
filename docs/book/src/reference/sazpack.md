@@ -3,8 +3,8 @@
 ## 用途
 
 **sazpack** は、AlphaZero 系の自己対局から得た教師データを局単位で保存するバイナリ形式です。
-magic は `SAZ2`、version は `2` です。
-decoder は version `2` の chunk を読み込み、別の version には `UnsupportedVersion` を返します。
+magic は `SAZ2`、version は `3` です。
+decoder は version `3` の chunk を読み込み、別の version には `UnsupportedVersion` を返します。
 
 SAZ2 は開始局面の `PackedSfen` と各局面で指した手を保存します。
 利用側で対局を再生して履歴特徴量を復元し、必要に応じて各 `Move` を学習用のラベルへ変換します。
@@ -29,7 +29,7 @@ SAZ2 は開始局面の `PackedSfen` と各局面で指した手を保存しま�
 - 教師データの重み
 - 探索設定を表すフラグ
 - 詰み手数の教師値（探索で証明した場合）
-- 手ごとの事前確率、探索前後の訪問回数、勝敗の上下限
+- 手ごとの事前確率、探索終了時の累積訪問回数、勝敗の上下限
 - ネットワークが出力した raw policy、raw WDL、raw mate、raw moves-left
 
 root WDL と outcome WDL は別の教師です。
@@ -61,11 +61,10 @@ let decoded: Vec<SazGame> = deserialize_chunk(&bytes)?;
 - データの切り詰めと末尾の余分なバイト
 - 未知の対局結果、終局理由、入玉宣言ルール、勝敗の上下限値
 - mate の有無を表すタグが `0` / `1` 以外（`InvalidMateTag`）
-- `visits_after < visits_before`
 - prior、raw prior、または WDL（root、outcome、raw）の量子化値の総和が `65535` でないレコード
 - `u32` として復号できない件数
 
-`serialize_chunk` も分布の総和と訪問回数の条件を検査し、件数や payload 長が `u32` に収まらなければエラーにします。
+`serialize_chunk` も分布の総和を検査し、件数や payload 長が `u32` に収まらなければエラーにします。
 これらの API は対局を再生しないため、開始局面の復元と各指し手の合法性検証は利用側で行います。
 
 `deserialize_chunk_indexed` は、各対局と、その対局データが入力 chunk 内で占めるバイト範囲を返します。
@@ -87,12 +86,10 @@ decoded = sazpack.decode_sazpack(data)
 
 ## Policy 教師の組み立て
 
-各 policy entry は `prior`、`raw_prior`、`visits_before`、`visits_after` を持ちます。
-探索木を再利用する場合、`visits_after` は今回の探索以前に蓄積された訪問回数を含みます。
-今回の探索で増えた回数は `visits_after - visits_before` で得られます。
-
-学習処理では、累積回数と差分回数のどちらを policy 教師にするかを選びます。
-選択した方式は、実験設定とチェックポイントの生成記録に残します。
+各 policy entry は `prior`、`raw_prior`、`visits` を持ちます。
+`visits` は探索終了時に root がその手へ保持していた累積訪問回数です。
+探索木を再利用する場合は、今回の探索より前に蓄積された訪問回数も含みます。
+policy 教師は、合法手全体の `visits` を正規化して作ります。
 
 ## 値の量子化
 
