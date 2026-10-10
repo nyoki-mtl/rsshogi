@@ -5,6 +5,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-11
+
+このリリースは minor 更新ですが、SAZ2 の公開 API と保存形式に破壊的変更を含みます。
+SAZ2 を使う場合は、下記の変更点と互換性を確認してから更新してください。
+
+### Added
+
+- `Position::repetition_state_with_distance(depth)` を追加。`depth` 手以内で最も近い同一盤面の
+  反復分類と、その局面までの手数を返す。探索木の根からの深さを渡すと、根以降に閉じた反復だけを
+  周期とともに得られる。4 回目の同一局面でも `depth` の外側の一致は返さない。
+  `repetition_state_with_ply` は同じ走査を共有し、結果は変わらない。
+
+### Changed
+
+- **Breaking: SAZ2 自己対局形式を version 3 にする。** policy entry は探索終了時に root が
+  その手へ保持していた累積訪問数 `visits` を 1 つ持つ。`visits_before` / `visits_after` と、
+  その単調性を検査する `SazSelfplayError::DecreasingVisits` を削除した。木の再利用で引き継いだ
+  訪問を探索中に取り消す探索では、2 つの訪問数の差が今回の探索の寄与を表さないためである。
+- `SazSelfplayPolicyEntry` の field が変わったため、struct literal は修正が必要になる。
+  Python の `SazPolicyEntry(...)` は `visits` を受け取り、`visits_before` / `visits_after`
+  property を持たない。
+
+### Compatibility
+
+- version 2 の chunk は `UnsupportedVersion` で拒否し、変換経路はない。version 2 のデータを
+  読むには 1.2.x を使う。version 3 の `visits` は version 2 の `visits_after` と同じ量であり、
+  累積訪問数から policy 教師を作っていた場合は教師の値が変わらない。
+
 ## [1.2.5] - 2026-09-25
 
 ### Fixed

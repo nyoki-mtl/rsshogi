@@ -63,8 +63,7 @@ impl PySazPolicyEntry {
         mv: &Bound<'_, PyAny>,
         prior: u16,
         raw_prior: u16,
-        visits_before: u32,
-        visits_after: u32,
+        visits: u32,
         lower: u8,
         upper: u8,
     ) -> PyResult<Self> {
@@ -73,8 +72,7 @@ impl PySazPolicyEntry {
                 mv: parse_move_arg(mv)?,
                 prior,
                 raw_prior,
-                visits_before,
-                visits_after,
+                visits,
                 lower: SazOutcomeBound::try_from(lower).map_err(value_error)?,
                 upper: SazOutcomeBound::try_from(upper).map_err(value_error)?,
             },
@@ -94,12 +92,8 @@ impl PySazPolicyEntry {
         self.inner.raw_prior
     }
     #[getter]
-    fn visits_before(&self) -> u32 {
-        self.inner.visits_before
-    }
-    #[getter]
-    fn visits_after(&self) -> u32 {
-        self.inner.visits_after
+    fn visits(&self) -> u32 {
+        self.inner.visits
     }
     #[getter]
     fn lower(&self) -> u8 {

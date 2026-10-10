@@ -535,3 +535,72 @@ fn test_repetition_state_handles_broken_perpetual_check() {
 
     assert_eq!(pos.repetition_state(), RepetitionState::Draw);
 }
+
+#[test]
+// 深さの窓に入る最も近い反復だけを返し、4 回目の同一局面でも窓の外は返さないことを確認
+fn test_repetition_state_with_distance_returns_nearest_match_within_depth() {
+    let mut pos = crate::board::hirate_position();
+
+    for _ in 0..3 {
+        for usi in ["5i4h", "5a4b", "4h5i", "4b5a"] {
+            apply_usi_move(&mut pos, usi);
+        }
+        assert_eq!(pos.repetition_state_with_distance(0), None);
+        assert_eq!(pos.repetition_state_with_distance(3), None);
+        assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Draw, 4)));
+        assert_eq!(pos.repetition_state_with_distance(100), Some((RepetitionState::Draw, 4)));
+    }
+
+    // 4 回目の同一局面では、ply 制約付きの判定だけが窓に関わらず千日手を返す。
+    assert_eq!(pos.repetition_state(), RepetitionState::Draw);
+    assert_eq!(pos.repetition_state_with_ply(0), RepetitionState::Draw);
+}
+
+#[test]
+// 連続王手の勝敗を手番側から分類し、null move 以前は走査しないことを確認
+fn test_repetition_state_with_distance_classifies_perpetual_check_and_null_boundary() {
+    let mut pos =
+        crate::board::position_from_sfen("g3k4/9/4S4/9/9/9/9/9/8K b - 1").expect("valid sfen");
+
+    for usi in ["5c4b", "5a5b", "4b5c", "5b5a"] {
+        apply_usi_move(&mut pos, usi);
+    }
+    assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Lose, 4)));
+
+    apply_usi_move(&mut pos, "5c4b");
+    assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Win, 4)));
+
+    pos.state_stack_mut().current_mut().plies_from_null = 3;
+    assert_eq!(pos.repetition_state_with_distance(100), None);
+}
+
+#[test]
+// 過去の出現と分類が食い違う連続王手の反復は千日手として返すことを確認
+fn test_repetition_state_with_distance_returns_draw_for_mixed_classification() {
+    let mut pos =
+        crate::board::position_from_sfen("g3k4/9/4S4/9/9/9/9/9/8K b - 1").expect("valid sfen");
+
+    for usi in ["5c4b", "5a5b", "4b5c", "5b5a"] {
+        apply_usi_move(&mut pos, usi);
+    }
+    let matched_index = pos.st_index - 4;
+    let past = pos.state_stack_mut().get_mut(matched_index);
+    past.repetition_times = 1;
+    past.repetition_type = RepetitionState::Win;
+
+    assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Draw, 4)));
+}
+
+#[test]
+// 優等/劣等局面も同じ窓と距離で返すことを確認
+fn test_repetition_state_with_distance_reports_inferior_with_distance() {
+    let sfen = "lr6l/4g1pkp/2ns1s3/4pp1SP/PPBP2Pp1/2gpPP3/2B2S3/2K6/L6RL b 4P2g3np 1";
+    let mut pos = crate::board::position_from_sfen(sfen).expect("valid sfen");
+
+    for usi in ["P*2c", "2b2a", "2c2b+", "2a2b"] {
+        apply_usi_move(&mut pos, usi);
+    }
+
+    assert_eq!(pos.repetition_state_with_distance(3), None);
+    assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Inferior, 4)));
+}

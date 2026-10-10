@@ -36,7 +36,7 @@ SazWdl(win: int, draw: int, loss: int)
 ## `SazPolicyEntry`
 
 ```python
-SazPolicyEntry(mv, prior, raw_prior, visits_before, visits_after, lower, upper)
+SazPolicyEntry(mv, prior, raw_prior, visits, lower, upper)
 ```
 
 `mv` は `Move`、`Move32`、`int`、または USI 文字列を受け付けます。
@@ -44,12 +44,12 @@ SazPolicyEntry(mv, prior, raw_prior, visits_before, visits_after, lower, upper)
 | プロパティ | 型 | 説明 |
 |------|------|------|
 | `mv` | `str` | USI 形式の候補手 |
-| `prior` | `int` | 掃索後の policy 重み |
+| `prior` | `int` | 探索で使った policy 重み |
 | `raw_prior` | `int` | ネットワーク出力の policy 重み |
-| `visits_before` / `visits_after` | `int` | 対応するスナップショットの訪問数 |
+| `visits` | `int` | 探索終了時の累積訪問数 |
 | `lower` / `upper` | `int` | 結果区間の下限と上限 |
 
-`write_sazpack()` は各局面の `prior` と `raw_prior` を別々に検証し、`visits_after >= visits_before` を要求します。
+`write_sazpack()` は各局面の `prior` と `raw_prior` を別々に検証します。
 
 ## `SazPosition`
 
