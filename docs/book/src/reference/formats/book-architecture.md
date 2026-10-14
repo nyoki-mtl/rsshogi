@@ -1,104 +1,128 @@
-# 定跡アーキテクチャ（3 層モデル）
+# 定跡 3 層アーキテクチャ
 
-rsshogi の定跡サポートは、参照、保存、編集という用途に合わせて 3 層に分かれています。
-`StaticBook` と `MemoryBook` は高速な参照を担い、`YaneuraOuBook`、`SbkBook`、
-`YbbBook` は各ファイル形式の情報を保持します。
-`BookDatabase` は形式間の編集と変換を受け持ちます。
+`rsshogi` の定跡（Opening Book）サブシステムは、探索中の高速な候補手参照、外部フォーマットの無損失（lossless）読み取り、および形式間の編集と相互変換という異なる要件を両立するため、3 層アーキテクチャを採用している。
 
-## 用途ごとの3層
+## 1. 3 層構造の全体像
 
-定跡の扱い方は、次の三つに分けられます。
+```mermaid
+flowchart TD
+    subgraph ExternalLayer["外部リーダ層 (フォーマット忠実 / 読み取り専用)"]
+        YaneuraOuBook["YaneuraOuBook (DB2016 .db)"]
+        YbbBook["YbbBook (YANE-BINBOOK-V1 .ybb)"]
+        SbkBook["SbkBook (ShogiHome .sbk)"]
+    end
 
-- **参照**：局面を `BookKey`（既定は 64 bit、`hash-128` feature では 128 bit）へ正規化し、
-  探索で使う候補手をメモリ上の表から取得します。`MemoryBook` と `StaticBook` が担当します。
-- **保存**：評価、出現回数、コメント、ponder など、形式固有の情報を保持します。
-  `YaneuraOuBook`、`SbkBook`、`YbbBook` が担当します。
-- **編集**：SFEN、Packed SFEN、元の手数、ファイル上の同一性を保ちながら形式を変換します。
-  `BookDatabase` が担当します。
+    subgraph IRLayer["編集 IR 層 (SFEN 主キー / リッチメタデータ保持)"]
+        BookDatabase["BookDatabase / BookDatabaseEntry / BookCandidate"]
+    end
 
-各型の役割を分けることで、参照速度と形式固有情報の両方を扱えます。
+    subgraph LookupLayer["ルックアップ層 (Book トレイト / Zobrist キー高速参照)"]
+        MemoryBook["MemoryBook (HashMap<BookKey, Vec<BookMove>>)"]
+        StaticBook["StaticBook v2 (ソート済みバイナリ .book)"]
+        BookBuilder["BookBuilder (Record からの構築)"]
+    end
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ 外部リーダ層   YaneuraOuBook / SbkBook / YbbBook              │
-│   読み取り専用・フォーマット忠実(lossless)                      │
-│   キー = SFEN / Packed SFEN（フォーマット固有の同一性）        │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ from_yaneuraou() / from_sbk()
-                            │ write_yaneuraou_db2016() / write_sbk()
-                            ▼
-┌──────────────────────────────────────────────────────────────┐
-│ 編集 IR 層     BookDatabase                                   │
-│   SFEN / Packed SFEN / 元 ply / 由来を保持し往復変換のハブ      │
-│   BookKey は派生ヘルパ扱い（IR の主キーではない）              │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ to_memory_book() / to_static_book()
-                            ▼
-┌──────────────────────────────────────────────────────────────┐
-│ ルックアップ層 MemoryBook / StaticBook（Book トレイト）       │
-│   Zobrist キー・正規化済み・lossy・高速参照                    │
-│   キー = BookKey（盤面 + 持駒 + 手番の Zobrist key）           │
-└──────────────────────────────────────────────────────────────┘
+    YaneuraOuBook -->|"entry_from_yaneuraou"| BookDatabase
+    SbkBook -->|"entry_from_sbk"| BookDatabase
+    BookDatabase -->|"write_yaneuraou_db2016"| YaneuraOuBook
+    BookDatabase -->|"write_sbk / to_sbk_bytes"| SbkBook
+    BookDatabase -->|"to_memory_book"| MemoryBook
+    BookDatabase -->|"to_static_book"| StaticBook
+    BookBuilder -->|"into_memory"| MemoryBook
+    BookBuilder -->|"build_static"| StaticBook
+    MemoryBook -->|"from_memory_book / from_memory_book_sorted"| StaticBook
 ```
 
-## 各層の役割
+### ルックアップ層（`MemoryBook` / `StaticBook` / `BookBuilder`）
 
-### ルックアップ層（`MemoryBook` / `StaticBook`）
+`Book` トレイトを実装し、探索エンジンが対局中に最小のオーバーヘッドで候補手を引くための正規化済み参照層である。
 
-`Book` トレイトを実装する、**正規化済みの参照表現**です。
+- **局面キー**：`book_key_from_position(&pos)` が返す `BookKey`（盤面、持ち駒、手番から計算される Zobrist ハッシュ。通常は 64-bit、`hash-128` feature 有効時は 128-bit）を主キーとする。手数（ply）はキーに含めない。
+- **候補手データ**：1 手あたり `BookMove { mv: Move, score: i16, depth: u16 }`（6 バイト相当）のみを保持する不可逆（lossy）な軽量表現である。
+- **`MemoryBook`**：`HashMap<BookKey, Vec<BookMove>>` によるインメモリ辞書であり、動的な候補手追加に対応する。
+- **`StaticBook`**：ソート済み `BookKey` 配列とオフセット配列を持つ不変構造であり、`.book` バイナリファイルとの高速な直列化と二分探索を提供する。
+- **`BookBuilder`**：`Record`（本手順および変化手順）を DFS 走査して各局面の指し手、評価値、深さを収集し、`MemoryBook` またはソート済み `StaticBook` を構築する。
 
-- キーは [`book_key_from_position()`](book.md) が返す `BookKey`
-  （盤面 + 持駒 + 手番の Zobrist key）。定跡における「同じ局面」の定義に忠実です。
-- 1 手分のデータは `BookMove { mv, score: i16, depth: u16 }` のみ。
-  参照に必要な候補手、評価値、深さに絞った lossy な表現です。
-- `MemoryBook` は `HashMap<BookKey, Vec<BookMove>>` のメモリ常駐表。
-  `StaticBook` はそれをソート済みバイナリへ焼き込み、実行時コストゼロで参照します。
-- `Book::get()` は既にメモリ上にある `&[BookMove]` を借用して返す契約です。
+### 外部リーダ層（`YaneuraOuBook` / `YbbBook` / `SbkBook`）
 
-「探索エンジンが現局面の候補手を引く」用途では、この層がほぼ理想形です。
+YaneuraOu や ShogiHome（ShogiGUI）で使われる定跡ファイルを、フォーマット固有のメタデータを落とさずに直接読み取る読み取り専用リーダ群である。
 
-### 外部リーダ層（`YaneuraOuBook` / `SbkBook` / `YbbBook`）
-
-外部フォーマットを形式固有の型で参照するリーダです。
-
-- キーが Zobrist ではなく SFEN 文字列（DB2016）/ Packed SFEN（SBK / YBB）。
-  ファイルに記録された局面の同一性を保ったまま検索できます。
-- フォーマット固有のメタ情報を **lossless** で公開します。これを `MemoryBook` に
-  直接変換すると `ponder` / `move_count` などが無音で捨てられるため、固有型のまま
-  提供します。
-- 読み込み方法は形式ごとに異なります。DB2016 は必要なエントリを順次読み取り、
-  YBB は `open()` 時にファイル全体をメモリへ読み込んで固定長レコードを検証します。
-
-詳細は [外部定跡（DB2016 / YBB / SBK）](external-books.md) と
-[SBK 形式](sbk.md) を参照してください。
+- **`YaneuraOuBook`**：`#YANEURAOU-DB2016 1.00` 形式のテキスト定跡（`.db`）をストリーミングまたは二分探索で参照し、`YaneuraOuBookEntry` / `YaneuraOuBookMove`（`mv`, `ponder`, `score`, `depth`, `count`, `comment`, `min_ply`）を返す。
+- **`YbbBook`**：`YANE-BINBOOK-V1` 形式の固定長バイナリ定跡（`.ybb`）を検証してメモリ上に保持し、32 バイトの `PackedSfen` 二分探索によって `YbbEntry` / `YbbMove`（`mv`, `raw_move`, `eval`, `depth`, `ply`, `flipped`）を返す。
+- **`SbkBook`**：ShogiHome / ShogiGUI の Protobuf 形式定跡（`.sbk`）を開いて `PackedSfen` と `state_id` のインデックスを構築し、一致した局面の `SbkEntry` / `SbkMove` / `SbkEval` をオンデマンドでデコードする。
 
 ### 編集 IR 層（`BookDatabase`）
 
-外部フォーマットとルックアップ層を **橋渡しする中間表現**です。
+外部フォーマット間の相互変換や定跡編集を担う所有権付き中間表現（IR）である。
 
-- `BookDatabase` は SFEN、Packed SFEN、元 row の手数、ファイル由来の同一性を
-  position data として保持します。`BookKey` は参照表を作るときに導出します。
-- `BookDatabaseEntry::from_yaneuraou()` / `from_sbk()` で外部エントリを取り込み、
-  `to_memory_book()` / `to_static_book()` で lossy なルックアップ表へ射影します。
-- `write_yaneuraou_db2016()` / `write_sbk()` で編集済みデータベースを外部形式へ
-  書き戻せます。`write_sbk()` は `BookDatabase` が保持する局面と候補手を出力します。
+- **局面表現（`BookPosition`）**：手数を `1` に揃えた正規化 SFEN を主キーとし、派生した `BookKey`、32 バイト `PackedSfen`、および元の手数 `original_ply` を併せて保持する。
+- **候補手表現（`BookCandidate`）**：`mv: Move`、`ponder: Option<Move>`、`score: Option<i32>`、`depth: Option<u32>`、`weight: Option<i32>`、`count: Option<u64>`、および DB2016 / SBK 由来の詳細メタデータ（`BookMoveMetadata`）を保持する。
+- **出力機能**：`to_memory_book` / `to_static_book` によるルックアップ層への射影に加え、`write_yaneuraou_db2016`（DB2016 書き出し）および `write_sbk` / `to_sbk_bytes`（SBK 全体書き出し）を提供する。
 
-## 参照層と保存層の選び方
+## 2. 定跡 4 フォーマットの比較
 
-探索中の参照には `MemoryBook` と `StaticBook` が適しています。
-形式固有の情報を扱う処理には外部リーダか `BookDatabase` を選びます。
+| 項目 | [StaticBook v2](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
+| :--- | :--- | :--- | :--- | :--- |
+| ファイル形式 | 固定長バイナリ（`.book`） | UTF-8 テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
+| ヘッダ / マジック | `RSHOGIBK` + `version = 2` (22B) | `#YANEURAOU-DB2016 1.00` | `YANE-BINBOOK-V1\0` (32B) | `SBook` Protobuf メッセージ |
+| 局面キー | `BookKey`（64/128-bit Zobrist） | 正規化 SFEN（手数 `1`） | 32B `PackedSfen` + `ply: u16` | SFEN + `PackedSfen` 索引 + `state_id` |
+| 候補手の型 | `BookMove` (6B) | `YaneuraOuBookMove` | `YbbMove` (4B または 6B) | `SbkMove` + `SbkEval` |
+| 予想応手（ponder） | ✕ | `ponder: Move`（`none` 可） | ✕ | ✕（`SbkEval.variation` に読み筋） |
+| 評価値 | `score: i16` | `score: Option<i32>` | `eval: i16` | `SbkEval.evaluation_value: Option<i32>` |
+| 探索深さ | `depth: u16` | `depth: Option<u32>` | `depth: Option<u16>` | `SbkEval.depth: Option<i32>` |
+| 採択回数 / 重み | ✕（`score` へ射影可） | `count: Option<u64>` | ✕ | `weight: Option<i32>` / `games: Option<i32>` |
+| コメント保持 | ✕ | ○（局面および指し手） | ✕ | ○（author, description, 局面） |
+| 書き出し対応 | `StaticBook::write_file` | `BookDatabase::write_yaneuraou_db2016` | ✕（読み取り専用） | `BookDatabase::write_sbk` |
 
-- `StaticBook` は配布用のソート済みバイナリ、`MemoryBook` は実行中に構築する参照表に向きます。
-- 両者は `BookKey` と候補手に情報を絞るため、元の SFEN や形式固有のメタデータが必要な処理には
-  `BookDatabase` を使います。
-- 大規模なファイルは、DB2016 や SBK の外部リーダを使うと必要なエントリを順次参照できます。
+## 3. スコア、深さ、重みのマッピングと丸め規則
 
-参照層は `Book` トレイトを共通の入口とし、保存層と編集層は形式固有の情報を明示的に扱います。
+外部フォーマット（DB2016 / SBK）と `BookDatabase`、および `StaticBook` / `MemoryBook` の間で変換を行う際のフィールド対応と数値丸め（narrowing）規則は以下の通りである。
+
+### 外部リーダから `BookDatabase` への取り込み
+
+| フィールド | DB2016 (`entry_from_yaneuraou`) | SBK (`entry_from_sbk`) |
+| :--- | :--- | :--- |
+| `BookCandidate.mv` | `YaneuraOuBookMove.mv`（通常手のみ受理。`resign` 等はエラー） | `SbkMove.mv` |
+| `BookCandidate.ponder` | `ponder` が通常手なら `Some(ponder)`、`Move::NONE` 等は `None` | `None` |
+| `BookCandidate.score` | `YaneuraOuBookMove.score` (`Option<i32>`) | `None`（状態単位の評価値は `SbkEntryMetadata.evals` に保持） |
+| `BookCandidate.depth` | `YaneuraOuBookMove.depth` (`Option<u32>`) | `None`（状態単位の深さは `SbkEntryMetadata.evals` に保持） |
+| `BookCandidate.weight` | `None` | `SbkMove.weight` (`Option<i32>`) |
+| `BookCandidate.count` | `YaneuraOuBookMove.count` (`Option<u64>`) | `None` |
+
+### `BookDatabase` から `MemoryBook` / `StaticBook` への射影
+
+`BookDatabase::to_memory_book(&options)` および `to_static_book(&options)` では、`NativeBookConvertOptions` に従って各 `BookCandidate` を `BookMove { mv: Move, score: i16, depth: u16 }` へ変換する。
+
+| `BookMove` フィールド | 変換規則 |
+| :--- | :--- |
+| `mv: Move` | `BookCandidate.mv` をそのままコピーする。 |
+| `score: i16` | `NativeScorePolicy::Score`（既定）のときは `candidate.score` を参照し、`NativeScorePolicy::Weight` のときは `candidate.weight` を参照する。値 `Some(v)`（`i32`）が存在する場合は `[i16::MIN, i16::MAX]`（`-32768..=32767`）にクランプし、`None` の場合は `options.missing_score`（既定値 `0`）を使用する。 |
+| `depth: u16` | `candidate.depth`（`Option<u32>`）が `Some(d)` の場合は `[0, u16::MAX]`（`0..=65535`）にクランプし、`None` の場合は `options.missing_depth`（既定値 `0`）を使用する。 |
+
+この変換では、`BookDatabase` 内のエントリ順および候補手順がそのまま保持される。
+異なる SFEN エントリが同一の `BookKey` に解決された場合は、データベース順で候補手が追記される。
+
+## 4. Rust と Python の API 対応表
+
+| 型 / 関数 | Rust (`rsshogi::book`) | Python (`rsshogi`) | 説明 |
+| :--- | :--- | :--- | :--- |
+| `BookKey`, `BookMove`, `BookEntry` | ○ | ○ | ルックアップ層のキー、候補手、局面エントリ。 |
+| `book_key_from_position`, `book_key_after` | ○ | ○ | `Board` / `Position` からの `BookKey` 計算関数。 |
+| `MemoryBook` | ○ | ○ | インメモリ定跡辞書。 |
+| `StaticBook` | ○ | ○ | `.book` バイナリの読み書きと二分探索。 |
+| `BookBuilder` | ○ | ○ | `Record` や候補手挿入からの定跡構築ビルダー。 |
+| `YaneuraOuBook`, `YaneuraOuBookEntry`, `YaneuraOuBookMove`, `YaneuraOuBookDiagnostics` | ○ | ○ | DB2016（`.db`）テキスト定跡のオンデマンドリーダと診断結果。 |
+| `SbkBook`, `SbkEntry`, `SbkMove`, `SbkEval`, `SbkDiagnostics`, `SbkOpenProgress` | ○ | ○ | ShogiHome（`.sbk`）Protobuf 定跡のリーダと状態グラフ遷移。 |
+| `YbbBook`, `YbbBookOpenOptions`, `YbbEntry`, `YbbMove` | ○ | ✕（Rust のみ） | YaneuraOu `YANE-BINBOOK-V1`（`.ybb`）バイナリ定跡リーダ。 |
+| `BookDatabase`, `BookDatabaseEntry`, `BookPosition`, `BookCandidate` | ○ | ✕（Rust のみ） | 定跡編集およびフォーマット間相互変換用の中間表現（IR）。 |
+| `NativeBookConvertOptions`, `NativeScorePolicy` | ○ | ✕（Rust のみ） | `BookDatabase` から `MemoryBook` / `StaticBook` への変換オプション。 |
+| `YaneuraOuBookOpenOptions`, `YaneuraOuAccessMode` | ○ | ✕（Rust のみ） | DB2016 オープン時のソート検証とアクセスモード指定。 |
+| `YaneuraOuDb2016WriteOptions` | ○ | ✕（Rust のみ） | `BookDatabase` からの DB2016 書き出しオプション。 |
+| `SbkWriteOptions` | ○ | ✕（Rust のみ） | `BookDatabase` からの SBK 書き出しオプション。 |
 
 ## 関連項目
 
-- [定跡バイナリ](book.md)：`StaticBook` のバイナリ形式仕様
-- [外部定跡（DB2016 / YBB / SBK）](external-books.md)：外部リーダと writer の Rust API
-- [DB2016 形式](yaneuraou.md)：DB2016 フォーマットの詳細
-- [SBK 形式](sbk.md)：SBK フォーマットの詳細
-- [定跡 (Book)（Python）](../../python/book.md)：Python からの利用
+- [StaticBook バイナリフォーマット仕様](book.md)
+- [YaneuraOu 定跡フォーマット仕様（DB2016 / YBB）](yaneuraou.md)
+- [ShogiHome SBK フォーマット仕様](sbk.md)
+- [フォーマット仕様一覧](index.md)

@@ -1,6 +1,6 @@
 # rsshogi
 
-`rsshogi` は、将棋局面の操作、合法手生成、一手詰め判定、棋譜や定跡の入出力に使う Rust ライブラリです。
+`rsshogi` は、将棋局面の操作、合法手生成、1 手詰め判定、棋譜や定跡の入出力を提供する Rust ライブラリである。
 
 ```rust
 use rsshogi::board;
@@ -12,39 +12,32 @@ println!("{}", position.to_sfen(None));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## API と機能
+## モジュール構成と Cargo Features
 
-常時利用できるモジュールは `board`、`mate`、`types` と、クレートルートに再エクスポートされた `movegen` です。
-棋譜、定跡、policy ラベル、局面の直列化、SVG、検証、駒落ちなどの初期局面は、対応する Cargo feature で有効化します。
+常時有効なモジュールは [`board`]、[`mate`]、[`types`]、およびクレートルートに再エクスポートされた [`movegen`] である。
+外部依存を伴う棋譜処理や補助機能は、用途に応じて Cargo feature で有効化する。
 
-`Position` は局面状態を表します。
-SFEN の解析は失敗し得るため、戻り値の `Result` を処理してください。
-`to_sfen` は現在の局面を SFEN へ整形します。
+| Feature | 有効化されるモジュール / 機能 |
+|---|---|
+| `records` | [`records`]（KIF、KI2、CSA、JKF、PACK、SBINPACK、SAZPACK、HCPE の入出力）。 |
+| `book` | [`book`]（`MemoryBook`、`StaticBook`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`）。 |
+| `policy-labels` | [`labels`]（2187 ラベルと 1496 コンパクトラベルの算術変換）。 |
+| `position-serialization` | `PackedSfen`、`HuffmanCodedPos`（HCP）、`PackedSfenValue`（PSV）による局面圧縮。 |
+| `svg` | `Position::to_svg` による盤面の SVG 出力。 |
+| `validation` | `Position::validate`、`validate_all`、`is_valid` による局面の整合性検証。 |
+| `initial-positions` | `board::InitialPosition`（平手および駒落ち 14 種の初期局面 SFEN）。 |
+| `hash-128` | `ZobristKey` を 64-bit から 128-bit へ拡張する（下位 64 bit は 64-bit ビルドと同一）。 |
+| `python-data` | `book`、`records`、`position-serialization`、`svg`、`validation` を一括で有効化する。 |
 
-不成を含むすべての合法手を生成するには `LegalAll` を使います。
-`Legal` は探索向けに一部の不成を省きます。
-王手回避や駒取りなど、用途別の生成モードもあり、各モードの合法性検査の範囲は異なります。
-生成順は API の保証に含まれません。
-`MoveList` と `Move32List` は、手生成に使う固定容量のコンテナで、ヒープ領域を確保しません。
+## 主要な型と契約
 
-`Move` は 16 ビットの指し手、`Move32` は移動後の駒情報を加えた 32 ビットの指し手です。
-`Ki2Notation` は 1 手分の KI2 記法をヒープ確保なしで生成し、比較、ハッシュ、文字列変換、局面上の合法手への解決に使えます。
+- **局面と履歴（[`board::Position`]）**：SFEN の解析は入力エラーを伴い得るため `Result` を返す。指し手の適用（`apply_move32`）や千日手判定を行う前に `init_stack()` で状態スタックを初期化する。
+- **合法手生成（[`movegen`]）**：不成を含む全合法手には `LegalAll`（または `generate_legal_all`）、探索向けに一部の不成を省く生成には `Legal` を使う。王手回避（`Evasions`）、駒取り（`Captures`）、静かな手（`Quiets`）、王手生成（`Checks`）も同様に型パラメータで指定する。`MoveList` と `Move32List` は固定容量のスタック配列であり、ヒープ領域を確保しない。
+- **指し手と記法（[`types::Move`] / [`types::Move32`] / [`board::Ki2Notation`]）**：`Move` は移動元、移動先、成り、駒打ちを表す 16-bit 型（やねうら王の `Move16` と同一レイアウト）であり、`Move32` は移動後の駒と捕獲駒を加えた 32-bit 型である。cshogi / Apery 互換の 16-bit / 32-bit 表現には [`types::AperyMove`] と [`types::AperyMove32`] を使う。`Ki2Notation` は 1 手分の KI2 表記を `u32` にパックし、ヒープ確保なしでフォーマットと合法手解決を行う。
+- **座標と基本型（[`types::Square`] / [`types::Hand`]）**：`Square` の raw 値は `file_index * 9 + rank_index`（`0..=80`、`SQ_NONE = 81`）で定義される。外部入力から基本型を作る際は検証付きコンストラクタ（`from_raw` / `from_usi` など）を使用する。
+- **1 手詰め判定（[`mate::solve_mate_in_one`]）**：手番側が合法な王手で相手玉を 1 手で詰ませられる場合にその `Move32` を返し、詰まない場合は `None` を返す。探索中に可変な `Position` を保持している場合は、局面の複製を行わない [`mate::solve_mate_in_one_in_place`] を利用できる。
 
-基本型の文書化された raw 値は、外部データとの互換性を保つための契約です。
-外部入力には入力検証を行うコンストラクタを使い、検証なしで作った値をそのまま盤面アクセスに渡さないでください。
-`Square` の添字は `file_index * 9 + rank_index` で、筋と段の index はともに 0 起点です。
-USI 表記では筋を `1` から `9`、段を `a` から `i` で表します。
-
-`solve_mate_in_one` は、合法で王手を与え、相手に合法応手がない場合だけ `Move32` を返し、それ以外では `None` を返します。
-複数の詰みがある場合、任意の有効な手が返され得ます。
-変更可能な探索局面を保持している場合は、`solve_mate_in_one_in_place` で局面の複製を避けられます。
-この API は正常終了時に局面を復元します。
-呼び出し前には、状態スタックを現局面と同期させておく必要があります。
-
-HCP、PackedSfen、PACK、HCPE、YBB、SBK、Zobrist key は文書化されたワイヤ表現を使用します。
-PACK の指し手は `AperyMove` のビット配置を使うため、通常の `Move` の raw 値と受け渡す際は明示的に変換してください。
-
-各 API とデータ形式の詳細は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照してください。
+データフォーマット仕様と内部設計の詳細は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照。
 
 ## ライセンス
 

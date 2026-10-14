@@ -1,11 +1,11 @@
-# 例とパターン
+# 実践レシピ集
 
-局面の操作、棋譜の変換、エラー処理の例を示します。
-基本的な使い方は [クイックスタート](quickstart.md) を参照してください。
+局面の操作、簡易探索、棋譜の一括処理、ビットボードを用いた局面分析、およびエラー処理の実践的なコードパターンを示す。
+基本的な API の使い方は [クイックスタート](quickstart.md) を参照。
 
-## 対局のシミュレーション
+## 対局のシミュレーションと終局判定
 
-### ランダム対局
+ランダムに合法手を選びながら対局を進め、詰みまたは千日手で終了する例を示す。
 
 ```python
 import random
@@ -13,256 +13,152 @@ from rsshogi.core import Board
 
 board = Board()
 
-# 最大200手までランダムに対局
-for i in range(200):
+for _ in range(200):
     moves = board.legal_moves()
     if not moves:
         break
-
-    move = random.choice(moves)
-    board.apply_move(move)
-
+    board.apply_move(random.choice(moves))
     if board.is_repetition():
         break
 
-# 結果を確認
 if board.is_mated():
-    # is_mated() が True のとき board.turn は詰まされた側。勝者はその相手。
+    # is_mated() が True の時点では、詰まされた側が手番（board.turn）を持っている
     winner = "先手" if board.turn.is_white() else "後手"
-    print(f"{board.game_ply - 1}手で{winner}の勝ち（詰み）")
+    print(f"{board.game_ply - 1} 手で{winner}の勝ち（詰み）")
 elif board.is_repetition():
-    print(f"千日手: {board.repetition_state().to_usi()}")
+    print(f"千日手成立: {board.repetition_state().to_usi()}")
 else:
-    print(f"{board.game_ply - 1}手で終了")
+    print(f"{board.game_ply - 1} 手で打ち切り")
 ```
 
-`game_ply` は SFEN の手数欄に対応し、平手初期局面では `1` です。
-この例のように初期局面から進めた場合、指し終えた手数は `game_ply - 1` になります。
-`is_repetition()` は同一局面の 4 回目の出現を判定します。
-`repetition_state()` が返す持ち駒の優等局面や劣等局面は、対局の終了条件には使いません。
+- **`game_ply` と経過手数の関係**：`board.game_ply` は SFEN 末尾の手数番号を表し、平手初期局面では `1` から始まる。そのため、初期局面から実際に指された手数は `board.game_ply - 1` となる。
+- **`is_repetition()` と `repetition_state()` の違い**：`is_repetition()` は同一局面（盤面、手番、双方の持ち駒がすべて一致）が 4 回出現した千日手成立時のみ `True` を返す。一方、`repetition_state()` は同一盤面で片方の持ち駒だけが増減した優等局面（`SUPERIOR`）や劣等局面（`INFERIOR`）も区別して返すため、探索木の枝刈りには `repetition_state()`、対局の終局判定には `is_repetition()` を使う。
 
-### 合法手を探索（1手先読み）
+## 1 手先読み探索（apply と undo の対称操作）
+
+探索では `apply_move`（または `apply_move32`）で局面を進め、評価後に `undo_move`（または `undo_move32`）で元の局面へ戻す。
+新しい `Board` インスタンスを毎手コピーするよりも、単一の `Board` に対して `apply` と `undo` を繰り返す方が高速に動作する。
 
 ```python
 from rsshogi.core import Board
 
 board = Board()
 
-# 各合法手を試して評価
 for move in board.legal_moves():
     board.apply_move(move)
-
-    # 相手の合法手数を評価値として使用
-    score = len(board.legal_moves())
-    print(f"{move.to_usi()}: 相手の合法手 {score} 手")
-
+    reply_count = len(board.legal_moves())
+    print(f"{move.to_usi()}: 相手の応手 {reply_count} 通り")
     board.undo_move(move)
 ```
 
-## 棋譜処理
+## `Move`（16-bit）と `Move32`（32-bit）の使い分け
 
-### 複数の棋譜ファイルを処理
+`rsshogi` には 2 種類の主要な指し手型がある。
 
-この例は Shift_JIS の `.kif` ファイルを読みます。
-UTF-8 のファイルを扱う場合は `Record.from_kif_file()` に `encoding="utf-8"` を指定してください。
+| 型 | 保持する情報 | 主な用途 |
+|---|---|---|
+| `Move` | 移動元、移動先、成りフラグ、駒打ちフラグ（16 bit）。 | 合法手リスト（`legal_moves()`）、定跡、棋譜の指し手、Policy ラベル変換。 |
+| `Move32` | `Move` の全情報 + 移動後の駒と捕獲した駒（32 bit）。 | `to_csa()` のように駒名を必要とする出力、`last_move()` の履歴参照、高速な `apply_move32` / `undo_move32`。 |
+
+```python
+from rsshogi.core import Board
+
+board = Board()
+
+# Move（16 bit）から Move32（32 bit）への昇格には現在の盤面情報を利用する
+mv16 = board.legal_moves()[0]
+mv32 = board.move32_from_move(mv16)
+
+print(mv16.to_usi())  # "7g7f" など
+print(mv32.to_csa())  # "+7776FU" など（Move32 は駒種を持つため盤面なしで CSA 出力可能）
+
+# Move32 から Move への変換は上位ビットを落とすだけで盤面を必要としない
+assert mv32.to_move() == mv16
+```
+
+## 棋譜の一括変換と局面抽出
+
+ディレクトリ内の KIF ファイルを走査し、CSA 形式への一括変換や特定手数目の局面抽出を行う例を示す。
 
 ```python
 from pathlib import Path
+from rsshogi.core import Board
 from rsshogi.record import Record
 
 kif_dir = Path("kifu")
 
-for kif_file in kif_dir.glob("*.kif"):
+for kif_path in kif_dir.glob("*.kif"):
     try:
-        record = Record.from_kif_file(str(kif_file))
-        print(f"{kif_file.name}: {record.move_count}手 - {record.result.name}")
-    except Exception as e:
-        print(f"{kif_file.name}: エラー - {e}")
+        # UTF-8 の .kif を読む場合は encoding="utf-8" を指定する
+        record = Record.from_kif_file(str(kif_path))
+    except ValueError as err:
+        print(f"{kif_path.name}: 解析失敗 ({err})")
+        continue
+
+    # CSA ファイルへ書き出し
+    csa_path = kif_path.with_suffix(".csa")
+    record.write_csa(str(csa_path))
+
+    # 本譜の 20 手目終了時点の SFEN を抽出
+    board = Board(sfen=record.init_position_sfen)
+    for entry in record.moves[:20]:
+        board.apply_move(entry.move)
+    print(f"{kif_path.name} (20 手目): {board.to_sfen()}")
 ```
 
-### 棋譜から特定の局面を抽出
+なお、単純に棋譜全体の各局面 SFEN リストだけが必要な場合は、`record.replay_positions()` メソッドで初期局面から終局までの SFEN リストを一括取得できる。
 
-```python
-from rsshogi.core import Board
-from rsshogi.record import Record
+## ビットボードと持ち駒による局面分析
 
-record = Record.from_kif_file("example.kif")
-board = Board(sfen=record.init_position_sfen)
-
-# 本譜の先頭から最大10手を再生
-replayed = record.moves[:10]
-for move_rec in replayed:
-    board.apply_move(move_rec.move)
-
-print(f"{len(replayed)}手進めた局面: {board.to_sfen()}")
-```
-
-### 棋譜のフォーマット変換
-
-```python
-from rsshogi.record import Record
-
-# KIF → CSA
-record = Record.from_kif_file("input.kif")
-record.write_csa("output.csa")
-
-# CSA → KIF
-record = Record.from_csa_file("input.csa")
-record.write_kif("output.kif")
-
-# 一括変換
-from pathlib import Path
-
-for kif_file in Path("kifu").glob("*.kif"):
-    record = Record.from_kif_file(str(kif_file))
-    csa_file = kif_file.with_suffix(".csa")
-    record.write_csa(str(csa_file))
-```
-
-## 局面の分析
-
-### 駒の配置を確認
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color, PieceType, Square
-
-board = Board()
-
-# 全てのマスを走査
-for file in range(9, 0, -1):  # 9〜1筋
-    for rank in range(1, 10):  # 1〜9段
-        sq = Square.from_usi(f"{file}{chr(ord('a') + rank - 1)}")
-        piece = board.piece_on(sq)
-        if piece.piece_type != PieceType.NO_PIECE_TYPE:
-            print(f"{file}{rank}: {piece.piece_type.to_usi()}")
-```
-
-### 特定の駒の位置を取得
+盤上の全マスをループで調べる代わりに、`Bitboard` や `iter_pieces()`、`hand_counts()` を使うと簡潔に局面を集計できる。
 
 ```python
 from rsshogi.core import Board
 from rsshogi.types import Color, PieceType
 
 board = Board()
-
-# 先手の歩の位置をビットボードで取得
-pawns = board.pieces_for(PieceType.PAWN, Color.BLACK)
-print(f"先手の歩: {pawns.count()}枚")
-
-# 全ての飛車・角の位置
-rooks = board.pieces_by_type(PieceType.ROOK)
-bishops = board.pieces_by_type(PieceType.BISHOP)
-```
-
-### 持ち駒の確認
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color, PieceType
-
-board = Board()
-
-# 指し手を適用して駒を取る
 board.apply_usi("7g7f")
 board.apply_usi("3c3d")
-board.apply_usi("8h2b+")  # 角を取り、馬に成る
+board.apply_usi("8h2b+")
 
-# 持ち駒を確認
-for color in [Color.BLACK, Color.WHITE]:
-    hand = board.hand(color)
-    name = "先手" if color == Color.BLACK else "後手"
-    pieces = []
-    for pt in [PieceType.ROOK, PieceType.BISHOP, PieceType.GOLD,
-               PieceType.SILVER, PieceType.KNIGHT, PieceType.LANCE, PieceType.PAWN]:
-        count = hand.count(pt)
-        if count > 0:
-            pieces.append(f"{pt.to_usi()}:{count}")
-    if pieces:
-        print(f"{name}の持ち駒: {', '.join(pieces)}")
+# 盤上のすべての駒を (Square, Piece) のリストとして取得
+for sq, piece in board.iter_pieces():
+    if piece.piece_type == PieceType.HORSE:
+        print(f"馬の位置: {sq.to_usi()}")  # "2b"
+
+# ビットボードで先手の歩の枚数と位置を取得
+black_pawns = board.pieces_for(PieceType.PAWN, Color.BLACK)
+print(f"先手の盤上の歩: {black_pawns.count()} 枚")
+
+# 持ち駒を 7 駒種すべての辞書 {"P": ..., "L": ..., "N": ..., "S": ..., "B": ..., "R": ..., "G": ...} で取得
+counts = board.hand_counts(Color.BLACK)
+print(f"先手の持ち駒の角: {counts['B']} 枚")  # 1 枚
 ```
 
-## エラーハンドリング
+## 違法手の事前検査と例外処理
 
-### 違法手の検出
+外部入力の指し手を適用する際は、`is_legal_move()` で事前判定するか、`apply_usi()` が送出する `ValueError` を捕捉する。
 
 ```python
 from rsshogi.core import Board, Move
 
 board = Board()
 
-# 方法1: 例外をキャッチ
+# 方法 1：Move オブジェクトに変換して合法性を事前検査する
+candidate = Move.from_usi("7g7f")
+if board.is_legal_move(candidate):
+    board.apply_move(candidate)
+
+# 方法 2：apply_usi で構文エラーや非合法手をまとめて ValueError として捕捉する
 try:
-    board.apply_usi("9a9b")  # 違法手
-except ValueError as e:
-    print(f"違法手です: {e}")
-
-# 方法2: 事前にチェック
-move = Move.from_usi("7g7f")
-if board.is_legal_move(move):
-    board.apply_move(move)
-else:
-    print("この手は指せません")
+    board.apply_usi("9a9b")
+except ValueError as err:
+    print(f"適用できない指し手: {err}")
 ```
 
-### 最後の手を取り消す
+## リポジトリ同梱のサンプルスクリプト
 
-```python
-from rsshogi.core import Board
+リポジトリの `examples/` ディレクトリには、そのまま実行できるサンプルコードが含まれている。
 
-board = Board()
-
-# 方法1: last_move を確認してから undo_move32
-last_move = board.last_move()
-if last_move:
-    board.undo_move32(last_move)
-else:
-    print("戻せる手がありません")
-```
-
-## Move32 と Move の使い分け
-
-```python
-from rsshogi.core import Board, Move32, Move
-
-board = Board()
-
-# Move: legal_moves() が返す型（基本はこちら）
-moves = board.legal_moves()  # list[Move]
-mv = moves[0]
-print(type(mv).__name__)  # Move
-
-# Move32: 32bit 指し手が必要な場合
-moves32 = board.legal_moves_move32()  # list[Move32]
-move32 = moves32[0]
-print(type(move32).__name__)  # Move32
-
-# 型に対応するメソッドを使う
-board.apply_move(mv)
-board.undo_move(mv)
-board.apply_move32(move32)
-
-```
-
-Rust 内部では `Move` が 16 ビット、`Move32` が 32 ビットの表現です。
-Python オブジェクトには別途管理用のメモリが必要なため、Python のリストが 1 手あたり 2 バイトまたは 4 バイトになるわけではありません。
-
-## 実行可能なサンプル
-
-リポジトリの `examples/python/` に実行可能なサンプルがあります。
-
-```bash
-# 基本的な盤面操作
-python examples/python/basic.py
-
-# apply_move と undo_move
-python examples/python/push_pop.py
-
-# 合法手と擬似合法手
-python examples/python/board_moves.py
-```
-
-## 次のステップ
-
-- [Python API リファレンス](../python/index.md)：詳細な API 仕様
-- [FAQ](../reference/faq.md)：よくある質問
+- **Rust サンプル**：`cargo run --example sfen_roundtrip`、`cargo run --example sbinpack_size_breakdown --features records`、`cargo run --example sazpack_measure --features records`。
+- **Python サンプル**：`examples/python/basic.py`、`examples/python/push_pop.py`、`examples/python/board_moves.py`、`examples/python/move_roundtrip.py`、`examples/python/sequence.py`。

@@ -144,7 +144,7 @@ class MoveEntry:
     engine_info: EngineInfo | None
     def __init__(
         self,
-        move: MoveEntry | Move32 | Move | int | str,
+        move: Move32 | Move | int | str,
         *,
         time_ms: int | None = ...,
         comment: str | None = ...,
@@ -334,7 +334,6 @@ class Record:
     def to_pack(self) -> bytes: ...
     def to_sbinpack(
         self,
-        *,
         stem_score: int = ...,
         include_main: bool = ...,
         include_variations: bool = ...,

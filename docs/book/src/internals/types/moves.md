@@ -1,137 +1,131 @@
-# 指し手の表現
+# 指し手表現（Move / Move32 / AperyMove / Ki2Notation）
 
-> **前提知識**: [駒の表現](./pieces.md)
+`rsshogi` は、用途に応じて 16 ビット指し手（`Move`）、移動後の駒情報を含む 32 ビット指し手（`Move32`）、Apery 互換の指し手（`AperyMove` / `AperyMove32`）、および KI2 棋譜表記用の 32 ビット構造体（`Ki2Notation`）を使い分ける。
 
-`Move` は局面から独立して保存できる 16 bit の指し手である。
-`Move32` は同じ下位 16 bit に移動後の駒を加えた 32 bit の指し手である。
+---
 
-## `Move` のビット配置
+## `Move(u16)` と `AperyMove(u16)` のビットレイアウト比較
 
-`Move` の bit 0 から 6 は移動先である。
-bit 7 から 13 は通常手の移動元、または駒打ちの駒種である。
-bit 14 は駒打ち、bit 15 は成りを表す。
+16 ビット指し手には、YaneuraOu 系で標準的な `Move(u16)` と、Apery（WCSC26）互換の教師データや外部フォーマット入出力で用いられる `AperyMove(u16)` の 2 種類がある。
 
-```text
-bits  0..=6   to square
-bits  7..=13  from square or dropped piece type
-bit       14  drop
-bit       15  promotion
+```
+Move (u16) - YaneuraOu 互換フォーマット:
+Bit:  15      14     13..7 (7 bits)            6..0 (7 bits)
+     +-------+------+-------------------------+--------------------+
+     |Promote| Drop | From (0..80) /          | To (0..80)         |
+     | Flag  | Flag | Dropped PieceType(1..7) |                    |
+     +-------+------+-------------------------+--------------------+
+
+AperyMove (u16) - Apery (WCSC26) 互換フォーマット:
+Bit:  15      14     13..7 (7 bits)            6..0 (7 bits)
+     +-------+------+-------------------------+--------------------+
+     |   0   |Promot| From (0..80) /          | To (0..80)         |
+     |Unused | Flag | Drop Source (81..87)    |                    |
+     +-------+------+-------------------------+--------------------+
 ```
 
-`Move::normal`、`Move::promotion`、`Move::drop` は有効な通常手の構築に使う。
-`from_sq()` は駒打ちでは升ではなく符号化された駒種を返すため、駒打ちでは `dropped_piece()` を使う。
+両者のビット割り当ての違いは以下の通りである。
 
-```rust,ignore
-use rsshogi::types::{Move, PieceType, Square};
+| 項目 | `Move(u16)` | `AperyMove(u16)` |
+| :--- | :--- | :--- |
+| **ビット `0..=6`（7 bits）** | 移動先マス `to`（`0..=80`） | 移動先マス `to`（`0..=80`） |
+| **ビット `7..=13`（7 bits）** | 盤上移動時は移動元マス `from`（`0..=80`）、駒打ち時は打つ `PieceType`（`1..=7`） | 盤上移動時は移動元マス `from`（`0..=80`）、駒打ち時は `81 + PieceType - 1`（`81..=87`） |
+| **ビット `14`（1 bit）** | 駒打ちフラグ `MOVE_DROP`（`1 << 14`） | 成りフラグ `PROMOTE_FLAG`（`1 << 14`） |
+| **ビット `15`（1 bit）** | 成りフラグ `MOVE_PROMOTE`（`1 << 15`） | 未使用（常に `0`） |
 
-let normal = Move::from_usi("7g7f").expect("valid USI move");
-let drop = Move::drop(PieceType::PAWN, Square::from_usi("5e").unwrap());
-assert!(!normal.is_drop());
-assert_eq!(drop.dropped_piece(), Some(PieceType::PAWN));
+`Move` は駒打ち判定をビット 14 の単一ビットテスト（`self.0 & MOVE_DROP != 0`）で行い、ビット `7..=13` から `PieceType`（`1..=7`）をオフセット計算なしで直接取り出せるため、内部の局面更新や合法手生成で最速となる。
+一方、`AperyMove` はビット `7..=13` の数値が `81` 以上かどうかで駒打ちを判定する設計であり、既存の Apery 形式バイナリ資産との相互変換のために提供されている。
+
+---
+
+## 特殊指し手定数の衝突回避設計
+
+探索エンジンやプロトコル処理では、「指し手なし」「パス（Null Move）」「投了」「入玉宣言勝ち」などの特殊状態を `Move(u16)` の同じ 16 ビット空間内で表現できると都合がよい。
+`rsshogi` では、これらの特殊定数を `(k << 7) + k`（すなわち **`from == to` かつ打フラグ 0、成フラグ 0**）のビットパターンとして定義している。
+
+| 定数名 | 計算式 | 内部値（10 進） | `from` / `to` フィールド | 用途 |
+| :--- | :--- | :--- | :--- | :--- |
+| `Move::NONE` | `(0 << 7) + 0` | `0` | `from = 0, to = 0` | 未初期化または該当手なし。 |
+| `Move::NULL` | `(1 << 7) + 1` | `129` | `from = 1, to = 1` | Null Move Pruning 等のパス手。 |
+| `Move::RESIGN` | `(2 << 7) + 2` | `258` | `from = 2, to = 2` | 投了。 |
+| `Move::WIN` | `(3 << 7) + 3` | `387` | `from = 3, to = 3` | 入玉宣言勝ち。 |
+| `Move::END` | `(4 << 7) + 4` | `516` | `from = 4, to = 4` | 終端マーカー。 |
+
+将棋の通常の盤上移動では移動元と移動先が必ず異なる（`from != to`）ため、ビット 14（駒打ちフラグ）が `0` でかつ `from == to` となる指し手は合法手および擬似合法手として絶対に生成されない。
+したがって、これらの特殊定数は通常の有効な指し手と一切衝突せず、`Move::is_normal(self)` は `from != to` または駒打ちフラグが立っているかを検査することで安全に有効手を識別できる。
+
+---
+
+## `Move32(u32)` と `AperyMove32(u32)` の拡張ビットレイアウト
+
+32 ビット指し手は、下位 16 ビットに 16 ビット指し手をそのまま保持し、上位 16 ビットに駒情報を付加した形式である。
+
+```
+Move32 (u32):
+Bit:  31..21 (11 bits)   20..16 (5 bits)          15..0 (16 bits)
+     +------------------+------------------------+------------------------+
+     | 0 (Unused)       | Piece After Move (Piece| Move (u16)             |
+     |                  | 1..=30, or 0 if unset) |                        |
+     +------------------+------------------------+------------------------+
+
+AperyMove32 (u32):
+Bit:  31..24 (8 bits)    23..20 (4 bits)          19..16 (4 bits)          15..0 (16 bits)
+     +------------------+------------------------+------------------------+------------------------+
+     | 0 (Unused)       | Captured PieceType     | PieceType Before Move  | AperyMove (u16)        |
+     |                  | (0..=14)               | (0=Drop, 1..=14=Board) |                        |
+     +------------------+------------------------+------------------------+------------------------+
 ```
 
-`Move::is_normal()` は bit 配置が通常手または駒打ちとして成立するかを判定する。
-これは局面の合法性を保証しないため、二歩、王手放置、持ち駒の不足は `Position` で判定する。
+| 項目 | `Move32(u32)` | `AperyMove32(u32)` |
+| :--- | :--- | :--- |
+| **ビット `0..=15`** | `Move::raw()` | `AperyMove::raw()` |
+| **ビット `16..=20`** | 移動後の盤上駒 `Piece`（`1..=30`、未設定時は `0`） | ビット `16..=19`：移動前の `PieceType`（駒打ち時は `0`）、ビット `20..=23`：捕獲した `PieceType`（`0..=14`） |
+| **上位未使用ビット** | ビット `21..=31`（常に `0`） | ビット `24..=31`（常に `0`） |
 
-## USI と特殊手
+`Move32` はビット `16..=20` に移動後の `Piece`（先後と成り状態を含む `1..=30`）を保持する。
+これにより、History Heuristic などの指し手オーダリングにおいて `盤面配列[from]` を引き直すことなく `(piece_after_move, to_sq)` のバケットインデックスを即座に算出できる。
 
-`from_usi` と `to_usi` は通常手、成り、駒打ちを USI 文字列へ変換する。
-特殊値は `none`、`null`、`resign`、`win`、`end` として相互変換する。
-特殊値を盤面更新へ渡さず、用途に応じて通常手かを `is_normal()` で確認する。
+---
 
-`MOVE_NONE`、`MOVE_NULL`、`MOVE_RESIGN`、`MOVE_WIN`、`MOVE_END` は `Move` と `Move32` の両方で対応する定数を持つ。
+## `complete_move32` と `apply_move32` における上位ビットの補完と検証
 
-## raw 値と wire format
+`Move32` は、`Move32::from_move(mv)` によって上位ビットが `0`（`!mv.has_piece_info()`）のまま構築される場合と、`Move32::from_move_and_piece(mv, piece)` や `Move32List` 生成器によって上位ビットが設定済み（`mv.has_piece_info()`）で渡される場合の両方がある。
+`Position` の指し手適用メソッド（`apply_move32`、`try_apply_move32`、`complete_move32`）は、この上位ビットの有無に応じて以下のように動作する。
 
-`Move::raw()` は上記の 16 bit 表現をそのまま返す。
-`Move32::raw()` の下位 16 bit は必ず対応する `Move::raw()` であり、bit 16 から 20 は移動後の `Piece` である。
-この配置は public raw-value contract なので、raw 値を保存または wire format に使う消費者は `Move` と `Move32` を混在させない。
+1. **上位ビットが未設定（`!mv.has_piece_info()`）の場合**：
+   `Position::complete_move32` が `self.move32_from_move(mv.to_move())` を呼び出し、現在の盤面（`self.piece_on(from)`）と手番から移動後の `Piece` を算出して上位ビットを埋める。
+2. **上位ビットが設定済み（`mv.has_piece_info()`）の場合**：
+   `complete_move32` は与えられた `Move32` をそのまま維持し、続いて `apply_move32_with_gives_check_for` の内部で盤上の実際の駒および手番と上位ビットの整合性が厳密に検査される。
+   - **駒打ちのとき**：打つ駒種と現在の手番から決まる `Piece` が `mv.piece_after_move()` と一致するか、持ち駒を所持しているか、移動先が空マスかを検証する。
+   - **盤上移動のとき**：移動元マスに自分の駒が存在するか、移動先に自分の駒や玉がないか、成フラグと成り可能駒種の整合性、および成や不成を適用した結果の `new_piece` が `mv.piece_after_move()` と完全に一致するかを検証する。
 
-```rust,ignore
-use rsshogi::types::{Move, Move32, Piece, SQ_76, SQ_77};
+不整合が検出された場合、`try_apply_move32`（および `try_apply_move32_with_facts`）は盤面を変更せずに `Err(MoveError::InvalidMove)` を返し、`apply_move32` は `.expect(...)` によりパニックする。
+これにより、別の局面で作られた不正な `Move32` が誤って適用されて内部のビットボードや Zobrist ハッシュが破損することを防いでいる。
 
-let mv = Move::normal(SQ_77, SQ_76);
-let completed = Move32::normal(SQ_77, SQ_76, Piece::B_PAWN);
-assert_eq!(mv.raw(), 0x1e3b);
-assert_eq!(completed.raw(), 0x0001_1e3b);
-assert_eq!(completed.to_move(), mv);
+---
+
+## `Ki2Notation(u32)` のビットレイアウト
+
+KI2 形式（「▲７六歩」「△同銀右不成」など）の指し手は、盤面上の他駒との位置関係に依存する相対表記を含む。
+`rsshogi` では、文字列アロケーションを伴わずに KI2 表記情報を保持および比較できるよう、`Ki2Notation(u32)` に全フィールドをパックしている。
+
+```
+Ki2Notation (u32):
+Bit:  31..19 (13b)  18..17 (2b)   16..13 (4b)   12..9 (4b)    8..2 (7b)       1      0
+     +-------------+-------------+-------------+-------------+---------------+------+------+
+     | 0 (Unused)  |Ki2Promotion | Ki2Suffix   | PieceType   | Destination   | Same | Side |
+     |             | (0..=2)     | (0..=11)    | (1..=14)    | (0 or 1..=81) | Flag | (0/1)|
+     +-------------+-------------+-------------+-------------+---------------+------+------+
 ```
 
-`AperyMove` と `AperyMove32` は別の wire 表現である。
-相互変換には `Move::to_apery`、`Move32::to_apery(position)`、`Position::move32_from_apery_move32` を使う。
-生の整数を別形式の指し手として再解釈しない。
+各ビットフィールドの定義は以下の通りである。
 
-## 部分 `Move32` と完全な `Move32`
-
-`Move32::from_usi` は USI が持たない移動後の駒情報を埋めないため、部分 `Move32` を返す。
-`Position::move32_from_move` は現在局面の移動元または駒打ちから駒を補い、完全な `Move32` を返す。
-`has_piece_info()` で両者を区別できる。
-
-| 作り方 | `has_piece_info()` | 主な用途 |
-|---|---|---|
-| `Move32::from_usi` | 偽。 | USI の構文解析。 |
-| `Move32::normal`、`promotion`、`drop` | 真。 | 局面が分かる単発構築。 |
-| `Position::move32_from_move` | 真。 | `Move` の局面依存拡張。 |
-
-`apply_move32` は下位 16 bit の指し手として局面を更新する。
-CSA のように移動後の駒を出力する API では、完全な `Move32` を渡す。
-
-## `Move32` と局面依存情報
-
-`Move32::normal`、`Move32::promotion`、`Move32::drop` は移動後の `Piece` を埋め込む。
-一方で `Move32::from_usi` と `Move` からの単純変換は、移動後の駒を含まない。
-局面に適用する完全な `Move32` が必要なら `Position::move32_from_move` を使う。
-
-```rust,ignore
-use rsshogi::board::Position;
-use rsshogi::types::Move;
-
-let position = Position::from_sfen(
-    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
-)?;
-let mv32 = position.move32_from_move(Move::from_usi("7g7f").unwrap());
-assert!(mv32.has_piece_info());
-assert_eq!(mv32.to_usi(), "7g7f");
-# Ok::<(), rsshogi::board::parser::SfenError>(())
-```
-
-`Move32::to_csa()` は移動後の駒情報を必要とし、不完全な `Move32` では `None` を返す。
-`Move32::to_ki2(position)` は必要なら局面から駒情報を補う。
-取得駒、捕獲判定、from-to index が必要な処理は `Position::move32_metadata` または `classify_move32` を使う。
-
-## `Ki2Notation`
-
-`Ki2Notation` は、1 手分の正規化された KI2 記法を 4 バイトで保持する。
-`Move::to_ki2_notation(position)` と `Move32::to_ki2_notation(position)` は、文字列を確保せずにこの値を返す。
-`Ki2Notation` は `Copy`、`Eq`、`Hash` を実装しているため、KI2 符号ごとの集計や重複排除にそのまま使える。
-
-```rust,ignore
-use rsshogi::board;
-use rsshogi::types::Ki2Notation;
-
-board::init();
-let position = board::hirate_position();
-let mv = board::move_from_usi_expect(&position, "7g7f");
-let notation = mv.to_ki2_notation(&position).unwrap();
-
-assert_eq!(notation.to_string(), "▲７六歩");
-assert_eq!("▲７六歩".parse::<Ki2Notation>().unwrap(), notation);
-assert_eq!(notation.to_move32(&position).unwrap(), mv);
-```
-
-`Display` は正規化された KI2 文字列を出力し、`FromStr` は 1 手分の KI2 を解析する。
-`to_move32(position)` は現在局面の全合法手から同じ記法を持つ手を探し、一致がない場合と複数ある場合をエラーとして区別する。
-
-`同` は移動先を文字列に含まない。
-そのため `Ki2Notation` も `同` の移動先を保持せず、着手へ戻すには直前手を含む `Position` が必要になる。
-この値は着手の識別子ではなく、表示される KI2 符号の同一性を表す。
-
-## 16 bit と 32 bit の使い分け
-
-手生成の基本出力は `Move` であり、手リストや定跡のように大量保持する用途に適する。
-`Move32` は手の適用、棋譜出力、駒種が必要な検索処理に適する。
-両型を受け取る対称 API では `*_move` が `Move`、`*_move32` が `Move32` を受け取る。
-
-## 次に読む
-
-→ [Policy ラベル](./policy-labels.md) で、`Move` を学習用の固定クラスへ変換する。
+| ビット範囲 | フィールド名 | 内容 |
+| :--- | :--- | :--- |
+| **Bit `0`** | `side` | 手番（`0 = BLACK` 先手 `▲`、`1 = WHITE` 後手 `△`）。 |
+| **Bit `1`** | `same` | `同` 表記フラグ（直前の応手と同一マスのとき `1`）。 |
+| **Bits `2..=8`（7 bits）** | `destination` | `same == 1` のときは `0`、`same == 0` のときは `to.to_index() + 1`（`1..=81`）。 |
+| **Bits `9..=12`（4 bits）** | `piece_type` | 表記対象の移動前 `PieceType`（`1..=14`）。 |
+| **Bits `13..=16`（4 bits）** | `suffix` | `Ki2Suffix`（`0`: なし、`1`: 上、`2`: 引、`3`: 寄、`4`: 直、`5`: 右、`6`: 左、`7`: 右上、`8`: 右引、`9`: 左上、`10`: 左引、`11`: 打）。 |
+| **Bits `17..=18`（2 bits）** | `promotion` | `Ki2Promotion`（`0`: なし、`1`: 成、`2`: 不成）。 |
+| **Bits `19..=31`（13 bits）** | 未使用 | 常に `0`。 |

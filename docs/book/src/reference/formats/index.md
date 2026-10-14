@@ -1,326 +1,140 @@
-# 棋譜フォーマット一覧
+# フォーマット仕様一覧
 
-rsshogiは、将棋の棋譜を表現する主要なフォーマットに対応しています。各フォーマットには特徴と用途があり、状況に応じて使い分けることができます。
+`rsshogi` は、棋譜（1 局の手順とメタデータ）、定跡（局面から候補手集合への辞書）、および機械学習用の局面と自己対局バイナリまで、用途に応じた複数のデータフォーマットをサポートしている。
+本ページでは、各フォーマットの特性比較と相互変換の全体像を示す。
 
-## サポートしているフォーマット
+## フォーマット変換ハブ
 
-| フォーマット | 説明 | パース | 出力 | 主な用途 |
-|--------------|------|--------|------|----------|
-| [KIF](kif.md) | 人間が読みやすい標準形式 | ✅ | ✅ | 棋譜の保存・閲覧 |
-| [KI2](ki2.md) | KIFの簡略版 | ✅ | ✅ | 棋譜入力・閲覧 |
-| [CSA](csa.md) | コンピュータ将棋協会の標準形式 | ✅ | ✅ | データ交換・大会 |
-| [JKF](jkf.md) | JSON形式の棋譜 | ✅ | ✅ | Webアプリ・プログラム処理 |
+`rsshogi` におけるデータ構造と外部フォーマットの対応関係を以下の図に示す。
 
-## 学習バイナリ形式
+```mermaid
+flowchart LR
+    subgraph TextRecords["テキスト棋譜フォーマット"]
+        KIF["KIF (.kif)"]
+        KI2["KI2 (.ki2)"]
+        CSA["CSA (.csa)"]
+        JKF["JKF (.jkf)"]
+        USI["USI / SFEN"]
+    end
 
-| フォーマット | 説明 | 主な用途 |
-|--------------|------|----------|
-| [HCP / HCPE / PackedSfen / pack](training-binaries.md) | 固定長/可変長の局面・学習データ | NN 学習データ、主要な参照実装との互換 |
-| [sbinpack](../sbinpack.md) | バイナリ棋譜（Stockfish binpack の将棋版） | NN 学習・バイナリ棋譜アーカイブ |
-| [sazpack](../sazpack.md) | AlphaZero 系 sparse policy 教師データ | AZ/self-play shard・policy/value 学習 |
+    subgraph CoreIR["rsshogi メモリ表現"]
+        Record["Record (棋譜ツリー)"]
+        Position["Board / Position (局面)"]
+        BookIR["MemoryBook / BookDatabase"]
+    end
 
-## 定跡フォーマット
+    subgraph TrainingBin["学習用圧縮バイナリ"]
+        SBIN["SBINPACK (.sbinpack)"]
+        PACK["PACK (.pack)"]
+        HCP["HCP / HCPE (32B / 38B)"]
+        PSV["PackedSfen / PSV (32B / 40B)"]
+        SAZ["SAZPACK (.sazpack)"]
+    end
 
-| フォーマット | 説明 | 主な用途 |
-|--------------|------|----------|
-| [定跡アーキテクチャ（3 層モデル）](book-architecture.md) | ルックアップ層 / 外部リーダ層 / 編集 IR 層の設計 | 定跡 API の全体像把握 |
-| [Book](book.md) | rsshogi 独自の定跡バイナリ | 大規模定跡の高速参照 |
-| [外部定跡（DB2016 / YBB / SBK）](external-books.md) | DB2016・YBB・SBK 形式の外部定跡 | 既存ツールと互換性のある定跡の参照 |
-| [DB2016 形式](yaneuraou.md) | やねうら王のテキスト定跡フォーマット詳細 | DB2016 の構造・書式の理解 |
-| [SBK 形式](sbk.md) | ShogiGUI 由来の protobuf 定跡フォーマット詳細 | SBK の構造・スキーマの理解 |
+    subgraph BookFormats["定跡フォーマット"]
+        StaticBook["StaticBook v2 (.book)"]
+        DB2016["YaneuraOu DB2016 (.db)"]
+        YBB["YaneuraOu YBB (.ybb)"]
+        SBK["ShogiHome SBK (.sbk)"]
+    end
 
-## フォーマット比較
-
-### 可読性
-
-**最も読みやすい：** KI2 > KIF > CSA > JKF
-
-- **KI2**：自然な日本語表記で最も読みやすい
-- **KIF**：日本語表記で読みやすく、詳細な情報も含む
-- **CSA**：機械処理優先だが、慣れれば読める
-- **JKF**：JSON形式で人間が直接読むには不向き
-
-### ファイルサイズ
-
-**最も小さい：** CSA ≈ KI2 < KIF < JKF
-
-- **CSA**：簡潔な表記で最小
-- **KI2**：移動元座標を省略するため小さい
-- **KIF**：詳細な情報を含むためやや大きい
-- **JKF**：JSON形式のオーバーヘッドで最大
-
-### プログラムでの扱いやすさ
-
-**最も扱いやすい：** JKF > CSA > KIF > KI2
-
-- **JKF**：構造化されたJSON形式で解析が容易
-- **CSA**：シンプルな文法で実装しやすい
-- **KIF**：日本語表記だが、構造は明確
-- **KI2**：局面を進めながら解析する必要があり複雑
-
-### 情報の保持
-
-**最も豊富：** JKF ≈ KIF ≈ CSA V3.0 > CSA V2.x > KI2
-
-- **JKF**：分岐、コメント、時間など全てサポート
-- **KIF**：分岐、コメント、しおりなど豊富
-- **CSA V3.0**：評価値・読み筋など新機能を追加
-- **CSA V2.x**：基本的な情報を保持
-- **KI2**：基本的な指し手情報のみ
-
-## フォーマット選択のガイド
-
-### 用途別の推奨フォーマット
-
-#### 棋譜を人間が読む・編集する
-
-→ **KI2** または **KIF** を推奨
-
-- **KI2**：より簡潔で読みやすい
-- **KIF**：詳細な情報も確認したい場合
-
-#### プログラムで棋譜を処理する
-
-→ **JKF** または **CSA** を推奨
-
-- **JKF**：Webアプリケーション、JavaScript/TypeScript
-- **CSA**：コンピュータ将棋、データ交換
-
-#### 将棋ソフト間でデータ交換
-
-→ **CSA** を推奨
-
-- コンピュータ将棋協会の標準形式
-- 多くのソフトがサポート
-
-#### 棋譜データベース・アーカイブ
-
-→ **KIF** または **CSA** を推奨
-
-- **KIF**：情報が豊富で可読性も高い
-- **CSA**：ファイルサイズが小さく、処理も高速
-
-#### Webアプリケーション
-
-→ **JKF** を推奨
-
-- JSON形式でJavaScriptとの親和性が高い
-- 構造化されたデータで扱いやすい
-
-## rsshogi の互換方針
-
-rsshogi は仕様書どおりの文法だけでなく、実際に流通している棋譜との実務互換も重視します。
-
-- parser は ShogiHome/tsshogi 系が読み書きする入力を広く受ける方向を優先します。
-- exporter は `shogi-validator` に近い標準的な見た目を意識しつつ、
-  `Record` が保持している終局情報やコメントをできるだけ落としません。
-- KIF/KI2 では、変化手順と `まで...` 要約が同居する場合、変化ブロックを先に、
-  要約行を最後に出力します。
-- CSA では、CSA 3.0 のプログラムコメントである `'*...` をコメントとして受理し、出力も `'*...` に寄せます。plain な `'...` は通常コメントとして読み飛ばします。
-
-## フォーマット詳細
-
-### [KIF形式](kif.md)
-
-柿木将棋や「Kifu for Windows」で採用されている、人間が読みやすい棋譜形式です。
-
-**特徴：**
-- 日本語表記で読みやすい
-- コメント機能が充実
-- しおり機能で特定局面を記録
-- 詰将棋情報にも対応
-
-```text
-**例：**
-開始日時：1999/07/15
-手合割：平手
-先手：先手の名前
-後手：後手の名前
-手数----指手---------消費時間--
-   1 ７六歩(77)   ( 0:16/00:00:16)
-   2 ３四歩(33)   ( 0:00/00:00:00)
-   3 中断         ( 0:03/ 0:00:19)
+    KIF <--> Record
+    KI2 <--> Record
+    CSA <--> Record
+    JKF <--> Record
+    USI <--> Record
+    Record <--> SBIN
+    Record <--> PACK
+    Record --> BookIR
+    Position <--> HCP
+    Position <--> PSV
+    Position <--> SAZ
+    BookIR <--> StaticBook
+    BookIR <--> DB2016
+    BookIR <--> SBK
+    YBB --> BookIR
 ```
 
-### [KI2形式](ki2.md)
+## 1. 棋譜フォーマット（KIF / KI2 / CSA / JKF）
 
-KIF形式を簡略化したもので、移動元座標を省略し、1行に複数の指し手を記録できます。
+1 局の指し手、消費時間、コメント、対局者情報などを記録するテキストフォーマット群である。
+すべて `Record` 型を介して相互に変換できる。
 
-**特徴：**
-- 移動元座標を省略
-- 1行に複数の指し手を記録可能
-- より簡潔で読みやすい
-- ファイルサイズが小さい
+| 項目 | [KIF](kif.md) | [KI2](ki2.md) | [CSA](csa.md) | [JKF](jkf.md) |
+| :--- | :--- | :--- | :--- | :--- |
+| 主な用途 | 将棋ソフト間の標準交換、観戦記 | 新聞や書籍に近い人間向け表記 | コンピュータ将棋対局、通信プロトコル | Web アプリケーション、プログラム処理 |
+| 文字コード | UTF-8 / Shift_JIS | UTF-8 / Shift_JIS | UTF-8 / Shift_JIS | UTF-8（JSON 標準） |
+| 指し手表記 | `７六歩(77)`（手数と移動元座標あり） | `▲７六歩`（相対動作表記で移動元省略） | `+7776FU`（移動元、移動先、成後の駒種） | 構造化 JSON オブジェクト |
+| 分岐手順（変化） | ○（`変化：N手`） | ○（`変化：N手`） | ✕（仕様上非対応） | ○（`"forks"` 配列） |
+| 消費時間の精度 | 秒単位（`MM:SS` / `HH:MM:SS`） | ✕（記録なし） | 秒 / ミリ秒単位（`T12` / V3.0 は `T6.123`） | 秒単位（`time.now` / `time.total`） |
+| 指し手コメント | ○（`*コメント`） | ○（`*コメント`） | ○（`'*コメント`） | ○（`"comments"` 配列） |
+| 終局行欠落時の挙動 | `main_terminal = None`（`Invalid`） | `SpecialMove::Interrupt`（`Paused`） | `main_terminal = None`（`Invalid`） | `main_terminal = None`（`Invalid`） |
 
-**例：**
-開始日時：1999/07/15
-手合割：平手
-先手：先手の名前
-後手：後手の名前
+### 棋譜変換の実装例
 
-```text
-▲７六歩 △３四歩 ▲２六歩 △８四歩 ▲２五歩 △８五歩
-▲７八金 △３二金 ▲２四歩 △同　歩 ▲同　飛 △２三歩打
-```
-
-### [CSA形式](csa.md)
-
-コンピュータ将棋協会が定めた標準的な棋譜交換フォーマットです。
-
-**特徴：**
-- プログラムによる解析を重視
-- 標準化された駒と位置の表記
-- バージョン管理により拡張可能
-- V3.0で評価値・読み筋に対応
-
-```text
-**例：**
-'CSA encoding=UTF-8
-V3.0
-N+先手
-N-後手
-$EVENT:第34回世界コンピュータ将棋選手権
-$START_TIME:2024/05/05 15:05:40
-PI
-+
-+2726FU
-T0
--3334FU
-T6
-%CHUDAN
-```
-
-### [JKF形式](jkf.md)
-
-将棋の棋譜をJSON形式で表現するフォーマットです。
-
-**特徴：**
-- JSON形式でプログラムでの扱いが容易
-- 構造化されたデータ
-- 分岐を完全にサポート
-- Webアプリケーションとの親和性が高い
-
-**例：**
-```json
-{
-  "header": {
-    "先手": "先手の名前",
-    "後手": "後手の名前",
-    "開始日時": "1999/07/15"
-  },
-  "initial": {
-    "preset": "HIRATE"
-  },
-  "moves": [
-    {},
-    {
-      "move": {
-        "from": {"x": 7, "y": 7},
-        "to": {"x": 7, "y": 6},
-        "piece": "FU"
-      }
-    }
-  ]
-}
-```
-
-## フォーマット間の変換
-
-rsshogiを使用すると、フォーマット間の変換が簡単に行えます：
-
-### Python での例
+#### Python
 
 ```python
-import rsshogi as rs
+from rsshogi import Record
 
-# KIF を読み込み
-kif_text = open("game.kif", "r", encoding="utf-8").read()
-record = rs.record.Record.from_kif_str(kif_text)
-
-# 各フォーマットに変換
+# KIF 文字列をパースして他フォーマットへ変換する
+record = Record.from_kif_str(kif_text)
 csa_text = record.to_csa()
 ki2_text = record.to_ki2()
 jkf_text = record.to_jkf()
 
-# ファイルに保存
-with open("game.csa", "w", encoding="utf-8") as f:
-    f.write(csa_text)
-
-with open("game.ki2", "w", encoding="utf-8") as f:
-    f.write(ki2_text)
-
-with open("game.jkf", "w", encoding="utf-8") as f:
-    f.write(jkf_text)
+# Shift_JIS（cp932）で KIF ファイルに書き出す
+record.write_kif("game_sjis.kif", encoding="cp932")
 ```
 
-### Rust での例
+#### Rust
 
-```rust,ignore
-use rsshogi::records::formats::{kif, csa, ki2, jkf};
-use std::fs;
+Rust では `rsshogi` クレートの `records` feature を有効にすることで、各フォーマットの関数を利用できる。
+KI2 のパースおよびエクスポート関数は独立した `ki2` サブモジュールではなく、`rsshogi::records::formats::kif` モジュール内で定義され、`rsshogi::records::formats::*` および `rsshogi::records::*` に再エクスポートされている。
 
-// KIF を読み込み
-let kif_text = fs::read_to_string("game.kif")?;
-let record = kif::parse_kif_str(&kif_text)?;
+```rust
+use rsshogi::records::formats::{
+    csa::{export_csa, parse_csa_str},
+    jkf::{export_jkf, parse_jkf_str},
+    kif::{export_ki2, export_kif, parse_ki2_str, parse_kif_str},
+};
 
-// 各フォーマットに変換
-let csa_text = csa::export_csa(&record)?;
-let ki2_text = ki2::export_ki2(&record)?;
-let jkf_text = jkf::export_jkf(&record)?;
-
-// ファイルに保存
-fs::write("game.csa", csa_text)?;
-fs::write("game.ki2", ki2_text)?;
-fs::write("game.jkf", jkf_text)?;
+let record = parse_kif_str(kif_text)?;
+let csa_text = export_csa(&record)?;
+let ki2_text = export_ki2(&record)?;
+let jkf_text = export_jkf(&record)?;
 ```
 
-## rsshogi の対応範囲
+## 2. 定跡フォーマット（StaticBook / YaneuraOu / SBK）
 
-- KIF、CSA、KI2、JKF のパースと出力
-- KIF、KI2、CSA の評価値出力
-- CSA のノード数と読み筋を含む解析行の往復
+局面から候補手、評価値、探索深さ、採択回数（重み）へのマッピングを保持するフォーマット群である。
+`rsshogi` の 3 層アーキテクチャと変換規則の詳細は [定跡 3 層アーキテクチャ](book-architecture.md) を参照。
 
-## 実装上の注意点
+| 項目 | [StaticBook v2](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
+| :--- | :--- | :--- | :--- | :--- |
+| 形式 | 独自固定長バイナリ（`.book`） | テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
+| 局面キー | `BookKey`（64/128-bit Zobrist） | 正規化 SFEN 文字列 | 32 バイト `PackedSfen` + `ply` | SFEN + `PackedSfen` 索引 + `state_id` |
+| 保持フィールド | `mv`, `score` (`i16`), `depth` (`u16`) | `mv`, `ponder`, `score` (`Option<i32>`), `depth` (`Option<u32>`), `count` (`Option<u64>`), `comment` | `mv`, `eval` (`i16`), `depth` (`Option<u16>`), `ply` (`u16`) | `mv`, `evaluation` (`Option<i32>`), `weight` (`Option<i32>`), `next_state_id`, `evals`, `comment` |
+| 読み込み方式 | メモリ常駐 + 二分探索 | ストリーミング走査または二分探索 | メモリ常駐 + `PackedSfen` 二分探索 | `PackedSfen` 二分探索 + オンデマンド Protobuf 復号 |
+| 書き出し対応 | ○（`StaticBook::write_file`） | ○（`BookDatabase::write_yaneuraou_db2016`） | ✕（読み取り専用） | ○（`BookDatabase::write_sbk`） |
+| Python 対応 | `StaticBook`, `MemoryBook`, `BookBuilder` | `YaneuraOuBook`（読み取り専用） | ✕（Rust のみ） | `SbkBook`（読み取り専用） |
 
-### 分岐の扱い
+## 3. 学習および圧縮バイナリフォーマット
 
-各フォーマットでの分岐の対応状況：
+ニューラルネットワークの学習データ生成、大規模棋譜の高速ストリーム処理、および MCTS 自己対局ログの保存に特化したバイナリフォーマット群である。
 
-| フォーマット | パース | 出力 | 備考 |
-|--------------|--------|------|------|
-| KIF | ✅ | ✅ | `変化：N手` 形式 |
-| KI2 | ✅ | ✅ | `変化：N手` 形式 |
-| CSA | 本手順 | 本手順 | `/` 区切りの複数棋譜に対応 |
-| JKF | ✅ | ✅ | `forks` フィールド |
+| フォーマット | 1 要素のサイズ | 主な用途 | 詳細ページ |
+| :--- | :--- | :--- | :--- |
+| `HuffmanCodedPos` (HCP) | 32 バイト固定 | Apery / cshogi 互換のハフマン符号化局面 | [学習用バイナリ仕様](training-binaries.md) |
+| `HuffmanCodedPosAndEval` (HCPE) | 38 バイト固定 | HCP + 評価値 + 最善手 (`AperyMove`) + 勝敗結果 | [学習用バイナリ仕様](training-binaries.md) |
+| `PackedSfen` | 32 バイト固定 | YaneuraOu 互換のビットパック局面 | [学習用バイナリ仕様](training-binaries.md) |
+| `PackedSfenValue` (PSV) | 40 バイト固定 | PackedSfen + 評価値 + 指し手 (`Move`) + 手数 + 勝敗 | [学習用バイナリ仕様](training-binaries.md) |
+| `PACK` | 可変長（対局単位） | 開始局面 + 手順 (`AperyMove`) と評価値 + 終局結果の連結保存 | [学習用バイナリ仕様](training-binaries.md) |
+| `SBINPACK` (`SBN2`) | 可変長（チャンク / チェーン） | 合法手インデックスと評価値差分による高圧縮棋譜ストリーム | [sbinpack フォーマット仕様](../sbinpack.md) |
+| `SAZPACK` (`SAZ2` v3) | 可変長（チャンク） | AlphaZero 型 MCTS 自己対局のゲーム統計と疎な方策分布の保存 | [sazpack フォーマット仕様](../sazpack.md) |
 
-### 文字コード
+## 関連項目
 
-| フォーマット | 推奨文字コード | 備考 |
-|--------------|----------------|------|
-| KIF | UTF-8 (`.kifu`) / Shift-JIS (`.kif`) | 拡張子で区別 |
-| KI2 | UTF-8 / Shift-JIS | 自動判定 |
-| CSA | UTF-8 (V3.0) / Shift-JIS (V2.x) | ファイル内で宣言 |
-| JKF | UTF-8 | JSON標準 |
-
-## 参考リンク
-
-### 公式仕様
-
-- [棋譜ファイル KIF 形式（柿木義一氏）](https://kakinoki.o.oo7.jp/kif_format.html)
-- [Kifu for Windows の紹介](https://kakinoki.o.oo7.jp/KifuwInt.htm)
-- [棋譜の表記方法（日本将棋連盟）](https://www.shogi.or.jp/faq/kihuhyouki.html)：公式な棋譜表記ルール
-- [CSA標準棋譜ファイル形式 V3.0](http://www2.computer-shogi.org/protocol/record_v3.html)
-- [CSA標準棋譜ファイル形式 V2.2](http://www2.computer-shogi.org/protocol/record_v22.html)
-- [CSA標準棋譜ファイル形式 V2.1](http://www2.computer-shogi.org/protocol/record_v21.html)
-- [JSON Kifu Format（Kifu for JS）](https://github.com/na2hiro/Kifu-for-JS/tree/master/packages/json-kifu-format)
-
-### 関連サイト
-
-- [コンピュータ将棋協会](http://www2.computer-shogi.org/)
-- [柿木将棋](https://kakinoki.o.oo7.jp/)
-- [Kifu for JS](https://github.com/na2hiro/Kifu-for-JS)
-
-## 関連ドキュメント
-
-- [Record API（Python）](../../python/record.md)
-- [Records API（Rust）](https://docs.rs/rsshogi)：docs.rs（外部サイト）
+- [Record と棋譜データモデル](../records.md)
+- [定跡 3 層アーキテクチャ](book-architecture.md)
+- [局面圧縮の仕組み（HCP / PackedSfen）](../../internals/serialization/compression.md)

@@ -1,59 +1,65 @@
-# Policy ラベル
+# 方策ラベル（MoveLabel / CompactMoveLabel）
 
-> **前提知識**: [指し手](./moves.md)
+ディープラーニング将棋エンジン（AlphaZero 型や dlshogi 型）では、ニューラルネットワークの Policy Head（方策出力層）が「現在の局面における各指し手の選択確率（ロジット）」を固定長ベクトルとして出力する。
+`rsshogi` は `policy-labels` Cargo feature が有効なとき、任意の合法手を固定次元インデックスへ O(1) で双方向マッピングする `MoveLabel(u16)`（2187 次元）と `CompactMoveLabel(u16)`（1496 次元）を提供する。
 
-`rsshogi::labels::policy` は指し手を policy 学習用の固定クラスへ変換する。
-局面の合法性や特徴量の構築はこのモジュールの責務ではない。
+---
 
-## `MoveLabel`
+## 手番の正規化（先手視点への統一）
 
-`MoveLabel` は 27 クラスと 81 個の移動先を組み合わせた 2187 クラスのラベルである。
-クラスは通常移動の方向と成りの 20 種、および駒打ちの 7 種からなる。
-後手番の手は盤面を 180 度回転して、手番側から見た同じ向きへ正規化する。
+ニューラルネットワークの入力特徴量と出力ラベルは、常に「手番側から見た相対座標（先手視点）」で統一される。
+そのため、`MoveLabel::from_move(mv, color)` では、後手番（`Color::WHITE`）のときに移動元マス `from` と移動先マス `to` の双方に対して 180 度回転 `Square::flip()`（`80 - sq`）を適用してからラベルを計算する。
 
-```rust,ignore
-use rsshogi::labels::policy::{MoveLabel, MoveLabelClass};
-use rsshogi::types::{Color, Move};
+この正規化により、先手の「▲７六歩」と後手の「△３四歩」は、手番側から見てまったく同じ幾何学的移動として同一のラベル ID にマッピングされる。
 
-let mv = Move::from_usi("7g7f").unwrap();
-let label = MoveLabel::from_move(mv, Color::BLACK).unwrap();
-assert_eq!(label.class(), MoveLabelClass::Up);
+---
+
+## 2187 ラベル表現（`MoveLabel`）
+
+dlshogi 等で標準的に用いられる 2187 次元表現は、「移動先マス（81 通り）× 移動クラス（27 通り）= 2187 通り」の直積空間として定義される。
+
+```rust
+let label_id: u16 = class.raw() as u16 * 81 + to_sq.raw() as u16;
 ```
 
-`MoveLabel::from_move` と `from_move32` は通常の構造を持つ指し手だけをラベル化する。
-この変換は局面を受け取らないため、返ったラベルはその局面で合法であることを意味しない。
+### 27 種類の移動クラス（`MoveLabelClass`）
 
-ラベル値は概念的に `class * 81 + to_square` で並ぶ。
-同じ方向クラスの升は連続し、クラスの境界をまたぐと移動方向または駒打ち種別が変わる。
-`class()` と `to_sq()` は分解した値を返すので、学習器の出力を解析するときに raw 値を手計算しなくてよい。
+盤上の任意のマスへ到達し得る動きは、8 方向の直線および斜め移動（1〜8 マス移動を同一方向として集約）と桂馬の 2 方向跳躍を合わせた **10 方向** に分類できる。
+これに「成と不成」の区別（$10 \times 2 = 20$ 通り）と、持ち駒 7 種の「駒打ち」（7 通り）を加えた計 **27 クラス**（`0..=26`）が `MoveLabelClass` である。
 
-## `CompactMoveLabel`
+| クラス ID（`0..=26`） | カテゴリ | `MoveLabelClass` 定数 | 幾何学的意味（先手視点） |
+| :--- | :--- | :--- | :--- |
+| `0..=7` | 盤上移動（不成） | `UP`, `UP_LEFT`, `UP_RIGHT`, `LEFT`, `RIGHT`, `DOWN`, `DOWN_LEFT`, `DOWN_RIGHT` | 8 方向への移動（1 マス移動と飛び駒の長距離移動を統合）。 |
+| `8..=9` | 盤上移動（不成） | `KNIGHT_LEFT`, `KNIGHT_RIGHT` | 桂馬の左跳躍と右跳躍（不成）。 |
+| `10..=17` | 盤上移動（成） | `UP_PROMOTE` 〜 `DOWN_RIGHT_PROMOTE` | 8 方向への移動 + 成り（クラス `0..=7` に `+10`）。 |
+| `18..=19` | 盤上移動（成） | `KNIGHT_LEFT_PROMOTE`, `KNIGHT_RIGHT_PROMOTE` | 桂馬の左跳躍と右跳躍 + 成り（クラス `8..=9` に `+10`）。 |
+| `20..=26` | 駒打ち | `DROP_PAWN`, `DROP_LANCE`, `DROP_KNIGHT`, `DROP_SILVER`, `DROP_BISHOP`, `DROP_ROOK`, `DROP_GOLD` | 持ち駒 7 種（歩、香、桂、銀、角、飛、金）の駒打ち。 |
 
-`CompactMoveLabel` は 2187 クラスから、移動パターン、成り、駒打ちの構造上現れないクラスを除いた 1496 クラスである。
-`compact()` は圧縮可能な `MoveLabel` を `CompactMoveLabel` に変換する。
-`expand()` は圧縮前の `MoveLabel` を返す。
+盤上移動における方向クラス（`0..=9`）は、正規化後の移動元 `from_sq` と移動先 `to_sq` の筋差分 `df = to_file - from_file` と段差分 `dr = to_rank - from_rank` の符号および比率から一意に決定される。
+成フラグ `mv.is_promote()` が真であれば方向クラスに `+10` を加算し、駒打ちであれば `20 + HandPiece::from_piece_type(pt).raw()` をクラス ID とする。
 
-```rust,ignore
-use rsshogi::labels::policy::CompactMoveLabel;
-use rsshogi::types::{Color, Move};
+---
 
-let mv = Move::from_usi("7g7f").unwrap();
-let compact = CompactMoveLabel::from_move(mv, Color::BLACK).unwrap();
-assert!(compact.expand().is_structurally_valid());
+## 1496 圧縮ラベル表現（`CompactMoveLabel`）
+
+2187 次元の直積空間には、将棋の盤面幾何学およびルール上、いかなる合法局面からも絶対に生成され得ない「構造的な死にラベル（Dead Labels）」が **691 個** 含まれている。
+代表的な死にラベルの内訳は以下の通りである。
+
+- **盤外からの移動**：たとえば一段目のマスに対して「下から上へ移動して到達する（`DOWN`）」ことは盤外からの移動を意味するため存在しない。同様に 1 筋への左からの移動や、一段目および二段目への桂馬の跳躍着地も構造的に不可能である。
+- **行き所のない駒打ち**：一段目への歩打ち（`DROP_PAWN`）や香打ち（`DROP_LANCE`）、一段目および二段目への桂打ち（`DROP_KNIGHT`）はルール上常に非合法である。
+- **強制成りの違反**：一段目への桂馬跳躍で不成（`KNIGHT_LEFT` / `KNIGHT_RIGHT`）を選択する手は存在しない。
+
+### コンパイル時テーブルによる O(1) 全単射変換
+
+`rsshogi` は `build.rs` において全 2187 ラベルの幾何学的およびルール上の到達可能性を網羅検査し、有効な **1496 個** のラベルのみを詰めた定数変換表を `$OUT_DIR/policy_label_tables.rs` に生成する。
+
+```rust
+// 2187 次元 -> 1496 次元への圧縮テーブル（無効ラベルは None）
+pub const MOVE_LABEL_TO_COMPACT: [Option<u16>; 2187] = [ ... ];
+
+// 1496 次元 -> 2187 次元への復元テーブル
+pub const COMPACT_TO_MOVE_LABEL: [u16; 1496] = [ ... ];
 ```
 
-圧縮可能であることも局面で合法であることを表さない。
-学習データの手は、先に `Position` と合法手生成で検証してからラベル化する。
-
-通常のラベルと compact ラベルは異なる分類空間である。
-モデルの出力次元、訓練データ、復元処理は一方の scheme で統一し、数値を他方の raw 値として扱わない。
-
-## 対称変換
-
-`MoveLabel::mirror_file` と `CompactMoveLabel::mirror_file` は筋反転したラベルを返す。
-左右対称 augmentation では局面、指し手、ラベルを同じ変換で揃える。
-手番正規化の 180 度回転と、筋反転は別の変換なので混同しない。
-
-## 次に読む
-
-→ [局面](../position/index.md) で、学習データの手を合法性とともに扱う API を確認する。
+`CompactMoveLabel::from_label(label)` と `CompactMoveLabel::to_label(self)` は、この 2 つの固定配列を 1 回引くだけで相互変換を行う。
+ニューラルネットワークの出力層を 2187 次元から 1496 次元へ縮小することで、最終全結合層のパラメータ数と Softmax / Cross-Entropy 計算量を約 **31.6% 削減** しつつ、実行時のラベル変換オーバーヘッドをゼロに抑えている。

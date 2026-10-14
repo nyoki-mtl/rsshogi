@@ -1,79 +1,138 @@
-# 駒の表現
+# 駒と持ち駒（PieceType / Piece / Hand）
 
-> **前提知識**: [座標系](./coordinates.md)
+将棋の駒には「成と不成」「先手と後手」「盤上と持ち駒」の状態遷移が存在する。
+`rsshogi` では、これらを `PieceType`、`Piece`、`HandPiece`、`Hand` の 4 つの型で表現し、条件分岐やループを使わないビット演算で状態変換と枚数比較を実現している。
 
-駒は先後を持たない `PieceType` と、先後を含む `Piece` に分けて表す。
-持ち駒は盤上の `Piece` ではなく `HandPiece` と `Hand` で表す。
+---
 
-## `Color`
+## 駒種（`PieceType`）
 
-`Color::BLACK` は先手、`Color::WHITE` は後手を表す。
-`flip()` は相手番を返し、`iter()` は両方の色を反復する。
-局面の手番は `Position::turn()` から取得する。
+`PieceType`（`#[repr(transparent)] pub struct PieceType(i8)`）は、先後の区別を除いた駒の種類を表す。
+生駒（`1..=8`）に `+8`（ビット 3 の加算）を行うと対応する成駒（`9..=14`）になるよう設計されている。
 
-## `PieceType`
+| 内部値 | 定数名 | 意味 | 成り対応（`+8`） | 内部値 | 定数名 | 意味 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `0` | `NONE` | 駒なし | なし | `8` | `KING` | 玉 / 王 |
+| `1` | `PAWN` | 歩 | `PRO_PAWN`（`9`） | `9` | `PRO_PAWN` | と金 |
+| `2` | `LANCE` | 香 | `PRO_LANCE`（`10`） | `10` | `PRO_LANCE` | 成香 |
+| `3` | `KNIGHT` | 桂 | `PRO_KNIGHT`（`11`） | `11` | `PRO_KNIGHT` | 成桂 |
+| `4` | `SILVER` | 銀 | `PRO_SILVER`（`12`） | `12` | `PRO_SILVER` | 成銀 |
+| `5` | `BISHOP` | 角 | `HORSE`（`13`） | `13` | `HORSE` | 馬 |
+| `6` | `ROOK` | 飛 | `DRAGON`（`14`） | `14` | `DRAGON` | 龍 |
+| `7` | `GOLD` | 金 | なし | `15` | `GOLD_LIKE` | 金相当の合成識別子 |
 
-`PieceType` は駒種だけを表し、`PAWN` から `KING`、成駒の `PRO_PAWN` から `DRAGON` を持つ。
-`NONE` は空マスに対応する。
-`promote()` と `demote()` は成れる駒だけを変換し、金と玉はそのまま返す。
+このビット配置により、成り判定と生駒への復元は単一のビットマスク演算で行える。
 
-```rust,ignore
-use rsshogi::types::PieceType;
+- **成駒判定（`is_promoted`）**：`(self.0 & 8) != 0 && self.0 != PieceType::KING.0 && self.0 != PieceType::GOLD_LIKE.0`
+- **生駒への復元（`unpromote`）**：`KING`（`8`）を除き、`self.0 & 7` で生駒の ID（`1..=7`）が得られる。捕獲した駒を持ち駒に戻す際にテーブル参照を必要としない。
 
-assert_eq!(PieceType::PAWN.promote(), PieceType::PRO_PAWN);
-assert_eq!(PieceType::HORSE.demote(), PieceType::BISHOP);
-assert_eq!(PieceType::GOLD.promote(), PieceType::GOLD);
+なお、`PieceType::COUNT = 16`、`PieceType::HAND_TABLE_SIZE = 8`（`NONE` + 生駒 7 種）が配列サイズ定数として定義されている。
+
+---
+
+## 先後付きの駒（`Piece`）
+
+`Piece`（`#[repr(transparent)] pub struct Piece(i8)`）は、`PieceType` の下位 4 ビットに、ビット 4（`COLOR_BIT = 16`）の先後フラグを合成した 5 ビット値である。
+
+```
+Bit:   7   6   5    4      3      2   1   0
+     +---+---+---+------+------+---+---+---+
+     | 0 | 0 | 0 |Color |Promot| Base Piece|
+     +---+---+---+------+------+---+---+---+
+                  0:先手 0:生駒   1..=7 (生駒)
+                  1:後手 1:成駒/玉 8 (玉: Promot=1, Base=0)
 ```
 
-`is_hand_piece()` が真になるのは歩、香、桂、銀、角、飛、金だけである。
-`PieceType::hand_pieces()` はその 7 種を返し、玉と成駒を持ち駒として扱わない。
-`GOLD_LIKE` は金相当の利きをまとめる内部分類であり、`PieceType::iter()` には含まれない。
+具体的な数値範囲は以下の通りとなる。
 
-| raw | `PieceType` | SFEN |
-|---:|---|---|
-| 0 | `NONE` | 空升。 |
-| 1..=8 | `PAWN` から `KING` | `P` から `K`。 |
-| 9..=12 | `PRO_PAWN` から `PRO_SILVER` | `+P` から `+S`。 |
-| 13..=14 | `HORSE`、`DRAGON` | `+B`、`+R`。 |
-| 15 | `GOLD_LIKE` | 盤上の通常駒ではない。 |
+- `0`：`Piece::NONE`（空きマス）
+- `1..=14`：先手の実駒（`B_PAWN = 1` 〜 `B_DRAGON = 14`）、および合成識別子 `B_GOLD_LIKE = 15`
+- `16`：**無効値**（後手ビットのみが立ち `PieceType` が `0` の状態であり、`from_raw` では弾かれる）
+- `17..=30`：後手の実駒（`W_PAWN = 17` 〜 `W_DRAGON = 30`）、および合成識別子 `W_GOLD_LIKE = 31`
 
-成り駒の raw 値は元の駒種へ 8 を加えた値である。
-この対応により `promote()` と `demote()` は成れる駒を対称に変換できる。
+この構造により、`Piece` から各属性への分解はすべて 1〜2 命令のビット演算で完了する。
 
-## `Piece`
+- **駒種の抽出（`piece_type`）**：`PieceType(self.0 & 0x0f)`
+- **手番の抽出（`color`）**：`Color((self.0 >> 4) as u8)`（`self != Piece::NONE` のとき）
+- **成駒への変換（`promote`）**：成れる駒に対して `Piece(self.0 | 8)`
 
-`Piece` は `Color` と `PieceType` を一つの値にまとめる。
-`Piece::from_parts(color, piece_type)` で作り、`color()` と `piece_type()` で分解する。
-`promote()`、`demote()`、`base_piece_type()` は色を保ったまま駒種を変換する。
+---
 
-```rust,ignore
-use rsshogi::types::{Color, Piece, PieceType};
+## 持ち駒のビットパッキング（`Hand` / `HandPiece`）
 
-let bishop = Piece::from_parts(Color::WHITE, PieceType::BISHOP);
-assert_eq!(bishop.promote(), Piece::W_HORSE);
-assert_eq!(bishop.base_piece_type(), PieceType::BISHOP);
+持ち駒の駒種インデックスには、`0..=6` の連続値を持つ `HandPiece`（`PAWN = 0`、`LANCE = 1`、`KNIGHT = 2`、`SILVER = 3`、`BISHOP = 4`、`ROOK = 5`、`GOLD = 6`、`COUNT = 7`）を用いる。
+片方の陣営が持つ全 7 種の持ち駒枚数は、32 ビット符号なし整数を包む `Hand(u32)` 1 個にすべてパックされる。
+
+### `Hand(u32)` のビットレイアウト
+
+各駒種の枚数フィールドの間には、減算時の桁借り（ボロー）を受け止めるための **ボロービット（Borrow Bit）** が 1 ビットずつ配置されている（歩と香の間のみビット 6〜7 の 2 ビットが未使用のパディングとなっている）。
+
+```
+Bit:  31  30..28  27  26  25..24  23  22  21..20  19  18..16  15  14..12  11  10..8  7..6   5   4..0
+     +---+-------+---+---+-------+---+---+-------+---+-------+---+-------+---+------+-----+---+------+
+     | B | Gold  | 0 | B | Rook  | 0 | B |Bishop | B |Silver | B |Knight | B |Lance | 0 0 | B | Pawn |
+     +---+-------+---+---+-------+---+---+-------+---+-------+---+-------+---+------+-----+---+------+
+      (1)  (3b)       (1)  (2b)       (1)  (2b)   (1)  (3b)   (1)  (3b)   (1)  (3b)        (1)  (5b)
 ```
 
-SFEN の大文字は先手、小文字は後手を表す。
-`Piece` と `PieceType` は `Display` と `FromStr` を実装し、SFEN で使う駒表記を相互変換できる。
+全 7 駒種の正確なビット範囲、シフト量、マスク値、およびボロービットの位置は以下の通りである。
 
-`Piece` の raw 値は下位 4 bit が `PieceType`、bit 4 が色である。
-先手の `B_PAWN` は 1、後手の `W_PAWN` は 17 であり、raw 値 16 は有効な駒ではない。
-この値を color や成りの独自ビット列として再解釈せず、`color()` と `piece_type()` で読む。
+| 駒種（`HandPiece`） | 枚数ビット範囲 | ビット幅 | シフト量（`SHIFT`） | 値マスク | 最大表現値 | 将棋の上限枚数 | ボロービット位置 | ボローマスク（`1 << bit`） |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **歩（`PAWN = 0`）** | `0..=4` | 5 bits | `0` | `0x1f` | 31 | 18 | Bit 5 | `1 << 5`（`0x0000_0020`） |
+| **香（`LANCE = 1`）** | `8..=10` | 3 bits | `8` | `0x07` | 7 | 4 | Bit 11 | `1 << 11`（`0x0000_0800`） |
+| **桂（`KNIGHT = 2`）** | `12..=14` | 3 bits | `12` | `0x07` | 7 | 4 | Bit 15 | `1 << 15`（`0x0000_8000`） |
+| **銀（`SILVER = 3`）** | `16..=18` | 3 bits | `16` | `0x07` | 7 | 4 | Bit 19 | `1 << 19`（`0x0008_0000`） |
+| **角（`BISHOP = 4`）** | `20..=21` | 2 bits | `20` | `0x03` | 3 | 2 | Bit 22 | `1 << 22`（`0x0040_0000`） |
+| **飛（`ROOK = 5`）** | `24..=25` | 2 bits | `24` | `0x03` | 3 | 2 | Bit 26 | `1 << 26`（`0x0400_0000`） |
+| **金（`GOLD = 6`）** | `28..=30` | 3 bits | `28` | `0x07` | 7 | 4 | Bit 31 | `1 << 31`（`0x8000_0000`） |
 
-## `Hand`
+これらを束ねるマスク定数として、枚数ビット全体の `HAND_BIT_MASK` とボロービット全体の `HAND_BORROW_MASK` が定義されている。
 
-`Hand` は一方の持ち駒の枚数をまとめて保持する値型である。
-`count()` で枚数を読み、`add()` と `sub()` で `HandPiece` 単位の枚数を更新する。
-局面の持ち駒は `Position::hand(color)` で取得する。
+```rust
+const HAND_BIT_MASK: u32 = 0x1f
+    | (0x7 << 8)
+    | (0x7 << 12)
+    | (0x7 << 16)
+    | (0x3 << 20)
+    | (0x3 << 24)
+    | (0x7 << 28);
 
-盤上の駒を取ると `Piece::demote()` に対応する持ち駒種へ戻る。
-したがって `PieceType::PRO_PAWN` や `PieceType::HORSE` を `Hand` へ直接入れない。
+const HAND_BORROW_MASK: u32 = (1 << 5)
+    | (1 << 11)
+    | (1 << 15)
+    | (1 << 19)
+    | (1 << 22)
+    | (1 << 26)
+    | (1 << 31);
+```
 
-持ち駒の枚数は局面の色ごとに独立している。
-`Position::hand(Color::BLACK)` は先手の持ち駒だけを返し、手番と同じ色であるとは限らない。
-駒打ちを作るときは、手番の `Hand` にあるかを確認してから `Move::drop` を使う。
+### 基本操作と Zobrist テーブルへの対応
 
-## 次に読む
+各駒種の 1 枚分に相当する重み `HAND_INCREMENT[hp] = 1 << SHIFT[hp]` を用いることで、持ち駒の増減は通常の 32 ビット加減算だけで完了する。
 
-→ [指し手](./moves.md) で、座標と駒打ちを `Move` に格納する方法を確認する。
+- **1 枚追加（`add_one`）**：`Hand(self.0 + (1 << shift))`
+- **1 枚削除（`remove_one`）**：`Hand(self.0 - (1 << shift))`
+- **枚数取得（`count`）**：`(self.0 >> shift) & mask`
+- **所持判定（`has`）**：`(self.0 & (mask << shift)) != 0`
+- **オーバーフロー検査（`has_overflow`）**：`(self.0 & HAND_BORROW_MASK) != 0`
+
+さらに、各駒種に割り当てられたビット幅（最大表現値 + 1：歩 32、香/桂/銀/金 各 8、角/飛 各 4）の合計は $32 + 8 + 8 + 8 + 4 + 4 + 8 = 72$ となる。
+この構造は Zobrist ハッシュの持ち駒テーブル（`HAND_SLOT_COUNT = 72`）のフラット配列レイアウトと 1 対 1 で対応しており、`count` で取り出した枚数をそのままベースオフセットに加算するだけでハッシュキーを引くことができる。
+
+### ボロービットを用いた一括優劣比較（SWAR 比較）
+
+探索中の千日手判定では、同一盤面で手番側の持ち駒が過去局面より優越しているか（優等局面：`RepetitionState::Superior`）あるいは劣後しているか（劣等局面：`RepetitionState::Inferior`）を判定する必要がある。
+すなわち「全 7 種の持ち駒すべてについて `self.count(hp) >= other.count(hp)` が成り立つか」を検査しなければならない。
+
+`Hand` ではボロービットを活用する SWAR（SIMD Within A Register）技法により、7 回のループや分岐を一切行わず、以下の数命令で全 7 駒種の一括比較を実現している。
+
+```rust
+let diff = (self.0 | HAND_BORROW_MASK).wrapping_sub(other.0);
+let is_superior_or_equal = (diff & HAND_BORROW_MASK) == HAND_BORROW_MASK;
+```
+
+1. `self.0` のすべてのボロービットをあらかじめ `1` にセット（`self.0 | HAND_BORROW_MASK`）してから `other.0` を減算する。
+2. もしある駒種で `self` の枚数が `other` より少なければ、その駒種のフィールドの上位にあるボロービットから桁借りが発生し、ボロービットが `1` から `0` に反転する。ボロービットが壁となるため、さらに上位の駒種フィールドへ桁借りが伝播することはない。
+3. したがって、減算結果 `diff` のすべてのボロービットが `1` のまま残っていれば（`diff & HAND_BORROW_MASK == HAND_BORROW_MASK`）、全 7 駒種すべてにおいて `self >= other` であることが 1 回のマスク比較で証明される。
+   なお、`crates/rsshogi/src/types/hand.rs` の実装では、これと数学的に同値で命令数のさらに少ない `((self.0 - other.0) & HAND_BORROW_MASK) == 0`（正常な `Hand` ではボロービットが `0` であるため、いずれかの駒種で負になると対応するボロービットまたはその上位にボローが立つ性質を利用）によって判定を行っている。

@@ -1,246 +1,187 @@
-# sbinpack v2
+# sbinpack フォーマット仕様（SBN2）
 
-## 概要
+`sbinpack`（Shogi binpack、マジック `SBN2`、現行バージョン `2`）は、Stockfish の NNUE 訓練データ形式である binpack を将棋向けに適応した高圧縮バイナリフォーマットである。
+開始局面（`SbinpackStem`）と、それに続く連続した指し手および評価値列（チェーン）を、合法手オーダリングインデックスとパリティ正規化差分で可変長符号化して保存する。
 
-**sbinpack**（**S**hogi **binpack**）は、チェスの訓練データ形式である
-[binpack](https://github.com/official-stockfish/Stockfish/blob/tools/docs/binpack.md)
-を将棋向けに適応したバイナリフォーマットです。
+## 設計の特徴と Stockfish binpack との比較
 
-オリジナルの binpack は Stockfish の NNUE 訓練データ用に設計され、実戦譜から生成された
-連続局面を効率的に圧縮できます。
-sbinpack は同じ設計を将棋へ適用し、開始局面と連続する指し手列を保存します。
+| 項目 | Stockfish binpack（チェス） | `sbinpack` v2（将棋） |
+| :--- | :--- | :--- |
+| チャンクマジック | `BINP` | `SBN2` |
+| 先頭局面表現 | 24 バイト | 32 バイト `PackedSfen` |
+| Stem サイズ | 32 バイト | 38 バイト（`SbinpackStem`） |
+| エンディアン | ビッグエンディアン | リトルエンディアン（LE） |
+| 可変長整数符号化 | 4-bit + 拡張ビット | ULEB128（符号付き差分は ZigZag + ULEB128） |
+| チェーン単位メタデータ | なし | `MetadataLen` (`0..=127`) + opaque バイト列 |
 
-v2 の仕様として、`EncodedMove` のオーダリング、評価値差分、per-chain メタデータ拡張枠を定義します。
+## 1. ワイヤーレイアウト仕様
 
-## 方針
+`sbinpack` ファイルは 1 個以上のチャンク（`Chunk`）を連結したストリームであり、各チャンクは 8 バイトのチャンクヘッダと 0 個以上のチェーン（`Chain`）で構成される。
 
-- `sbinpack` は、評価値を伴う連続局面を保存する用途に使います。
-
-## 参考資料
-
-- **オリジナル binpack 仕様**: [Stockfish binpack.md](https://github.com/official-stockfish/Stockfish/blob/tools/docs/binpack.md)
-- **binpack 圧縮実装**: [nnue_data_compress](https://github.com/Sopel97/nnue_data_compress)
-
-## 設計目標
-
-- **仕様の安定性**: バージョンで順序が揺れないルールベースのオーダリングを採用する。
-- **圧縮効率**: 小さいインデックスを可変長整数で短く保存できる。
-- **説明可能性**: 将棋の自然な分類（打ち/非打ち、成り/非成り、駒種、座標）で決まる。
-- **binpack 互換の構造**: Chunk / Chain / Stem / MoveText の階層構造を踏襲する。
-
-## Python bindings (rsshogi)
-
-```python
-record.to_sbinpack(
-    stem_score: int = 0,
-    include_main: bool = True,
-    include_variations: bool = False,
-    metadata: bytes | None = None,
-) -> bytes
-Record.from_sbinpack(data: bytes) -> Record
-Record.from_sbinpack_with_metadata(data: bytes) -> tuple[Record, bytes]
-rsshogi.record.decode_sbinpack(data: bytes) -> list[tuple[Record, bytes]]
-rsshogi.record.decode_sbinpack_file(path) -> list[tuple[Record, bytes]]
+```text
+File  = Chunk*
+Chunk = ChunkHeader (8 bytes) + Chain*
+Chain = SbinpackStem (38 bytes)
+      + MetadataLen (1 byte, 0..=127)
+      + Metadata (MetadataLen bytes)
+      + Count (u16 LE, 2 bytes)
+      + (EncodedMove (ULEB128) + EncodedScore (ZigZag + ULEB128)) * Count
 ```
 
-- `include_variations=True` の場合、metadata は出力される各 variation chain にコピーされるため、同じ bytes が 1 ファイル内に複数回現れ得ます。
+### チャンクヘッダ（8 バイト）
 
-- 本手順/分岐のすべての指し手に評価値が必要です（欠損時は `ValueError`）。
-- `include_variations=True` の場合、分岐ごとに独立した chain を追加します（学習用）。
-- `metadata` は 0..=127 bytes の per-chain opaque bytes です。未指定の場合は `MetadataLen=0` の 1 byte だけを出力します。
-- `from_sbinpack` は `Record` だけを返します。opaque metadata も必要な場合は `from_sbinpack_with_metadata` を使います。
-- `from_sbinpack` は **単一 chain** のみ対応します（複数 chain は `ValueError`）。
+| オフセット | サイズ | 型 | フィールド名 | 内容と検証規則 |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x00` | 4B | `[u8; 4]` | `magic` | `b"SBN2"` 固定。不一致時は `SbinpackError::InvalidMagic`。 |
+| `0x04` | 4B | `u32` LE | `chunk_size` | このチャンクヘッダ直後に続くペイロード（`Chain*`）の合計バイト数。 |
 
-## Rust の逐次デコード
+（デコード後の `SbinpackFile` 構造体は `version = 2` および `flags = 0` を保持する。）
 
-`SbinpackDecoder` は、入力全体を `SbinpackFile` に展開せず、chunk、chain、指し手適用前の局面を 1 件ずつ通知します。
-入力には借用した `&[u8]` または所有する `Vec<u8>` を渡せます。
+### チェーン構造（`SbinpackChain`）
 
-```rust,ignore
+1 つのチェーンは開始局面から連続する手順ライン（本手順または 1 つの変化手順）を表す。
+
+| 順序 | サイズ | 型 | フィールド名 | 内容と検証規則 |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 38B | `SbinpackStem` | `stem` | チェーン先頭局面の 38 バイト固定長ヘッダ（下表参照）。 |
+| 2 | 1B | `u8` | `metadata_len` | `metadata` のバイト長（`0..=127`）。`128` 以上の値は `SbinpackError::MetadataTooLarge`。 |
+| 3 | `0..=127` B | `[u8]` | `metadata` | 利用側が任意に定義できるチェーン単位の opaque バイト列（`metadata_len == 0` のときは 0 バイト）。 |
+| 4 | 2B | `u16` LE | `count` | 後続する `MoveText` に含まれる指し手の総数 $K$。 |
+| 5 | 可変長 | `(ULEB128, ULEB128) * K` | `moves` | 1 手ごとに `EncodedMove`（合法手インデックスの ULEB128）と `EncodedScore`（評価値差分の ZigZag + ULEB128）を交互に $K$ 回繰り返す。 |
+
+### 先頭局面ヘッダ（`SbinpackStem`、38 バイト）
+
+`SbinpackStem` は `sbinpack` 固有の 38 バイト構造体であり、40 バイトの `PackedSfenValue`（PSV）とはレイアウトが異なる。
+
+| オフセット | サイズ | 型 | フィールド名 | 内容 |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x00` | 32B | `[u8; 32]` | `packed_sfen` | チェーン先頭局面の 32 バイト `PackedSfen`。 |
+| `0x20` | 2B | `i16` LE | `score` | 先頭局面の評価値（手番視点、単位：cp）。 |
+| `0x22` | 2B | `u16` LE | `best_move_u16` | 先頭局面の 16-bit 指し手（`rsshogi::Move::raw()`）。 |
+| `0x24` | 2B | `u16` LE | `ply_result` | 下位 10 ビット（bits `0..=9`）が先頭局面の手数 `ply`（`0..=1023`、超過時は `1023` に飽和）、上位 6 ビット（bits `10..=15`）が `GameResult` の数値表現（`0..=63`）。 |
+
+### `Record` との相互変換における `SbinpackStem` の扱い
+
+- **`Record` から `sbinpack` への変換時**：チェーンの指し手列 `moves` が 1 手以上ある場合は先頭手 `moves[0].mv` が `stem.best_move_u16` に格納され、0 手（空手順）の場合は `Move::MOVE_NONE`（`0`）が格納される。`stem.score` には呼び出し側が指定した `stem_score`（既定値 `0`）が格納される。
+- **`sbinpack` から `Record` への変換時**：`stem.packed_sfen` と `ply_result` から初期局面と対局結果が復元されるが、`stem.score` および `stem.best_move_u16` は `Record` 側にはコピーされない（各手の評価値は `MoveText` 内の `EncodedScore` から復元される）。
+
+## 2. 指し手の符号化（`EncodedMove`）と決定的オーダリング
+
+各局面における指し手は、`MoveListGen::<LegalAll>` で生成されたすべての通常合法手を以下の **v1.0.0 決定的オーダリング規則** でソートした際の 0 始まりインデックス（`u16`）を ULEB128 で可変長符号化したものである。
+
+### 合法手ソートキーの優先順位（昇順）
+
+1. **駒打ち判定**：盤上移動（`0`） $\to$ 駒打ち（`1`）。
+2. **捕獲判定**：非捕獲の静かな手（`0`） $\to$ 駒を取る手（`1`）。
+3. **成り判定**：不成（`0`） $\to$ 成り（`1`）。
+4. **移動前（または打つ）駒種の優先順位**：
+   `歩 (0)` $\to$ `香 (1)` $\to$ `桂 (2)` $\to$ `銀 (3)` $\to$ `金 (4)` $\to$ `角 (5)` $\to$ `飛 (6)` $\to$ `玉 (7)` $\to$ `と (8)` $\to$ `成香 (9)` $\to$ `成桂 (10)` $\to$ `成銀 (11)` $\to$ `馬 (12)` $\to$ `龍 (13)`。
+5. **移動先（`to`）の段**：手番視点で正規化（後手番は盤面を 180 度回転）した後の段で、敵陣に近い前方段を優先（1 段目 $\to$ 9 段目）。
+6. **移動先（`to`）の筋**：手番視点で正規化した後の筋で、中央筋を優先（`5, 4, 6, 3, 7, 2, 8, 1, 9` 筋の順）。
+7. **移動元（`from`）の段**：盤上移動について、手番視点で正規化した後の前方段を優先（1 段目 $\to$ 9 段目）。
+8. **移動元（`from`）の筋**：盤上移動について、手番視点で正規化した後の中央筋を優先（`5, 4, 6, 3, 7, 2, 8, 1, 9` 筋の順）。
+9. **タイブレーク**：`mv.to_move().raw()` の昇順。
+
+出現頻度の高い手（歩や銀の前進、中央付近の着手など）に小さいインデックスが割り当てられるため、ほとんどの合法手インデックスが 1 バイト（`0..=127`）の ULEB128 に収まる。
+
+## 3. 評価値差分の符号化（`EncodedScore`）
+
+各指し手 `moves[i]` の評価値 `move_eval_i`（`i32`、その手を指す直前の手番視点）は、手番の交代による符号反転を打ち消すパリティ正規化を行ったうえで、直前の値との差分を ZigZag + ULEB128 で符号化する。
+
+$$\text{norm}_i = \begin{cases} \text{move\_eval}_i & (i \text{ が偶数}) \\ -\text{move\_eval}_i & (i \text{ が奇数}) \end{cases}$$
+
+$$\Delta_0 = \text{norm}_0 - \text{stem.score}, \qquad \Delta_i = \text{norm}_i - \text{norm}_{i-1} \quad (i \ge 1)$$
+
+$$\text{EncodedScore}_i = \text{ULEB128}(\text{ZigZag}(\Delta_i))$$
+
+ここで 32-bit 符号付き整数 $x$ に対する ZigZag 変換と逆変換は以下の通りである。
+
+$$\text{zigzag}(x) = ((x \ll 1) \oplus (x \gg 31)) \text{ as } \text{u32}, \qquad \text{unzigzag}(u) = ((u \gg 1) \text{ as } \text{i32}) \oplus -((u \mathbin{\&} 1) \text{ as } \text{i32})$$
+
+形勢が急変しない通常の対局では、パリティ正規化後の隣接評価値差分 $\Delta_i$ が $0$ 付近の小さな値に集中するため、高い圧縮率が得られる。
+
+## 4. コード例
+
+### Python
+
+Python では `Record` のメソッドに加えて、`rsshogi.record` モジュール（およびトップレベル `rsshogi`）で複数局やファイル単位の読み書き関数を提供している。
+
+```python
+from rsshogi import EngineInfo, GameResult, MoveEntry, Record, SpecialMoveEntry
+from rsshogi.record import (
+    decode_sbinpack,
+    decode_sbinpack_file,
+    write_sbinpack,
+    write_sbinpack_file,
+)
+
+# 評価値付きの Record を構築する（sbinpack 変換には全手の評価値が必須）
+record = Record.from_main_line(
+    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+    [
+        MoveEntry("7g7f", engine_info=EngineInfo(eval=110)),
+        MoveEntry("3c3d", engine_info=EngineInfo(eval=-115)),
+    ],
+    SpecialMoveEntry("RESIGN", GameResult.WHITE_WIN),
+)
+
+# 1. 単一 Record と sbinpack バイト列の相互変換
+data = record.to_sbinpack(
+    stem_score=100,
+    include_main=True,
+    include_variations=False,
+    metadata=b"game-001",
+)
+restored = Record.from_sbinpack(data)
+restored_rec, meta = Record.from_sbinpack_with_metadata(data)
+
+# 2. 複数 Record の一括シリアライズとファイル入出力
+chunk_bytes = write_sbinpack([record], stem_score=100, metadata=b"batch-1")
+pairs = decode_sbinpack(chunk_bytes)  # list[tuple[Record, bytes]]
+
+write_sbinpack_file("train.sbinpack", [record], stem_score=100)
+file_pairs = decode_sbinpack_file("train.sbinpack")
+```
+
+### Rust（ゼロコピー逐次デコーダ `SbinpackDecoder`）
+
+Rust の `SbinpackDecoder` は、ファイル全体を `Vec<SbinpackChain>` に展開することなく、チャンクとチェーンを先頭から走査して各指し手適用前の `&Position` をゼロコピーでコールバックへ貸し出す。
+また、`decode_next_controlled_with` で `ChainStart` イベント時に `SbinpackDecodeControl::SkipChain` を返すと、`PackedSfen` の復元や合法手生成を行わずにそのチェーンの可変長ペイロードを高速にスキップできる。
+
+```rust
 use rsshogi::records::formats::sbinpack::{
-    SbinpackDecodeEvent, SbinpackDecoder, SbinpackError,
+    SbinpackDecodeControl, SbinpackDecodeEvent, SbinpackDecoder, SbinpackError,
 };
+use rsshogi::types::GameResult;
 
-fn visit(bytes: Vec<u8>) -> Result<(), SbinpackError> {
+fn scan_sbinpack(bytes: &[u8]) -> Result<usize, SbinpackError> {
     let mut decoder = SbinpackDecoder::new(bytes);
-    while let Some(result) = decoder.decode_next_with(|event| {
-        if let SbinpackDecodeEvent::PositionBeforeMove { position, eval, .. } = event {
-            // position は指し手適用前の局面。必要な所有値はここで取り出す。
-            let _ = (position.turn(), eval);
+    let mut visited_positions = 0usize;
+
+    while let Some(step) = decoder.decode_next_controlled_with(|event| match event {
+        SbinpackDecodeEvent::ChainStart { result, metadata, .. } => {
+            // 例: 未確定局や特定のメタデータを持つチェーンをリプレイせずにスキップする
+            if result == Some(GameResult::Invalid) || metadata.is_empty() {
+                SbinpackDecodeControl::SkipChain
+            } else {
+                SbinpackDecodeControl::Continue
+            }
         }
+        SbinpackDecodeEvent::PositionBeforeMove { position, mv, eval, .. } => {
+            let _ = (position.turn(), mv, eval);
+            visited_positions += 1;
+            SbinpackDecodeControl::Continue
+        }
+        _ => SbinpackDecodeControl::Continue,
     }) {
-        result?;
+        step?;
     }
-    Ok(())
+    Ok(visited_positions)
 }
 ```
 
-`decode_next_controlled_with` で `ChainStart` から `SkipChain` を返すと、`PackedSfen` と指し手インデックスの合法性を検証せず、その chain の可変長 payload を読み飛ばせます。
-結果種別や opaque metadata だけで chain を除外する consumer 向けの高速経路です。
-通常の `decode_next_with` は全 chain を replay して検証します。
+## 関連項目
 
-## EncodedMove の前提
-
-- `LegalAll` で合法手を列挙し、その並びの **インデックス**を `EncodedMove` とする。
-- インデックスは 0 起点で、`u16` に収まる合法手列を指します。
-- インデックスの並びは **固定ルール**で決める（統計依存の再学習はしない）。
-
-## ファイルフォーマット（v2）
-
-オリジナルの binpack 形式（Chunk / Chain / Stem / MoveText の構造）を踏襲しつつ、
-将棋固有の要素（PackedSfen、mv、合法手オーダリング）を組み込んでいます。
-
-### binpack との主な違い
-
-| 項目 | binpack (Chess) | sbinpack (Shogi) |
-|------|-----------------|------------------|
-| マジック | `BINP` | `SBN2` |
-| 局面表現 | 24 bytes | PackedSfen (32 bytes) |
-| 指し手 | 2 bytes | mv |
-| Stem サイズ | 32 bytes | 38 bytes |
-| エンディアン | Big-endian | Little-endian |
-| 可変長整数 | 4bit+拡張ビット | ULEB128 |
-
-### バイトオーダー
-
-- すべて **リトルエンディアン**。
-- 可変長整数は **ULEB128**。
-- v2 は `SBN2` マジックで識別します。
-
-### ルート構造
-
-File = Chunk*
-
-```text
-Chunk = ChunkHeader + Chain*
-ChunkHeader = "SBN2" + chunk_size(u32 LE)
-```
-
-### Chain（局面単位エントリ）
-
-```text
-Chain = Stem + MetadataLen + Metadata + Count + MoveText
-Stem  = SbinpackStem(38 bytes, LE)
-MetadataLen = u8 byte_length(Metadata), 0..=127
-Metadata = opaque user bytes
-Count = u16 LE
-MoveText = (EncodedMove, EncodedScore) * Count
-```
-
-- `MetadataLen` は 1 byte 固定です。v2 の metadata 上限は 127 bytes/chain なので、`0x80..=0xff` は不正値です。
-
-- `MetadataLen=0` の場合、Metadata は空です。
-- Metadata は opaque bytes です。rating、game id、engine name などの内部構造は利用側で定義できます。
-- `MetadataLen` は `chunk_end` 内、かつ後続の `Count(u16)` を読める範囲に収まる必要があります。
-- metadata は小さな sideband 用です。v2 の実装上限は 127 bytes/chain で、これを超える場合は不正データとして扱います。
-
-### SbinpackStem（38 bytes）
-
-`SbinpackStem` は sbinpack 固有の構造であり、40 bytes の
-`PackedSfenValue` とは別形式です。
-
-```text
-packed_sfen[32]  # PackedSfen (互換)
-score_i16        # Stemの評価値（cp, i16）
-best_move_u16  # mv
-ply_result_u16   # result(6bit) + ply(10bit, 局面のply)
-```
-
-## EncodedMove（v2）
-
-```text
-EncodedMove = ULEB128(legal_move_index)
-```
-
-- `legal_move_index` は **v1.0.0 オーダリング**のインデックス。
-- 0 起点です。
-
-v2 でも `EncodedMove` のオーダリングは v1.0.0 と同じです。
-
-## Metadata（v2）
-
-`Metadata` は sbinpack core から見て opaque な byte 列です。未使用時は `MetadataLen=0`、使用時は
-`MetadataLen` で byte 数を宣言してから、そのまま `Metadata` を格納します。
-
-固定 tag は v2 では予約しません。将来、rsshogi 標準 metadata schema を定義する場合も、この
-opaque bytes の上に別仕様として載せます。
-
-## EncodedScore（v2）
-
-> 評価値は差分 + ZigZag + ULEB128 で可変長化する。
-
-```text
-norm_i = move_eval_i              # i が偶数
-norm_i = -move_eval_i             # i が奇数
-delta_0 = norm_0 - stem_score
-delta_n = norm_n - norm_{n-1}     # n >= 1
-EncodedScore = ULEB128(ZigZag(delta))
-```
-
-- `move_eval` と `stem_score` は、対応する局面の手番側から見た cp 値です。
-  `moves[i].eval` はその手を指す前の局面に対応します。
-- wire 形式に評価値の視点を示すフラグはないため、外部 producer と consumer もこの手番側視点の契約に従う必要があります。
-- 差分を取る前に、各 `move_eval` を stem 側の視点へ正規化します。`moves[0]` は stem と同じ「指す前の局面」に対応するため反転せず、以後は 1 手ごとに符号を反転します。
-- 正規化は wire 上の差分計算だけに使います。decode 後の `move_eval` と `stem_score` は手番側視点のままです。
-- 評価値は ZigZag + ULEB128 で符号化された `i32` として扱います。
-  `-32000..=32000` 外の値も特殊符号化せず、そのまま差分に乗せます。
-
-### ZigZag 定義
-
-```text
-zigzag(i32) = (i32 << 1) ^ (i32 >> 31)
-unzigzag(u32) = (u32 >> 1) ^ -(u32 & 1)
-```
-
-## ply_result の定義（v2）
-
-```text
-bit0..9:  ply (0..1023)
-bit10..15: result (GameResult, 0..63)
-```
-
-- `result` は `GameResult` を 6bit で保持（現在の最大値は21）。
-- `ply` は 10bit で保持（0..1023）。1023超は 1023 に丸める。
-
-## v1.0.0 オーダリング（確定）
-
-以下のキーを **この順番で**比較し、昇順が小さいインデックスになります。
-
-1. **非打ち** → **打ち**
-2. **quiet（非捕獲）** → **capture（捕獲）**
-3. **非成り** → **成り**
-4. **駒種優先順位**（下記）
-5. **目的地(to)の段**（前進優先）
-6. **目的地(to)の筋**（中央優先）
-7. **移動元(from)の段**（前進優先）
-8. **移動元(from)の筋**（中央優先）
-9. **mv**（タイブレーク）
-
-### 駒種優先順位（通常手）
-
-```text
-P > L > N > S > G > B > R > K > +P > +L > +N > +S > +B > +R
-```
-
-- 「素直な将棋の駒順」として説明可能性を優先。
-- 成駒は基礎駒の後にまとめる。
-
-### 駒種優先順位（打ち駒）
-
-```text
-P > L > N > S > G > B > R
-```
-
-### 段/筋の比較ルール
-
-- **手番視点で正規化**してから比較する。
-  - 先手: そのまま
-  - 後手: 盤を 180 度回転（`inv`）
-- **段**は前進優先（正規化後に `1 → 9`）。
-- **筋**は中央優先（`5,4,6,3,7,2,8,1,9`）。
-
-## オーダリングの根拠
-
-- **安定性**: 統計で順序が揺れると互換性が崩れるため、ルールベースを採用。
-- **自然な分類**: 打ち/非打ち、捕獲/非捕獲、成り/非成り、駒種、座標は将棋の標準的な分類。
-- **圧縮効率**: 順序の大枠は頻度に沿う傾向があり、可変長符号化で十分な圧縮が得られる。
+- [学習用バイナリ仕様（HCP / HCPE / PackedSfen / PSV / PACK）](formats/training-binaries.md)
+- [sazpack フォーマット仕様](sazpack.md)
+- [Record と棋譜データモデル](records.md)

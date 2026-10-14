@@ -1,93 +1,79 @@
-# 探索エンジンとの統合
+# 探索エンジン連携プリミティブ
 
-> **前提知識**: [局面](./index.md) と [差分更新と状態管理](./state-management.md)
+`Position` は、単にルールに従って局面を進めるだけでなく、Alpha-Beta 探索や MCTS（モンテカルロ木探索）のホットパスで必要となる情報を最小コストで引き出すための専用プリミティブを備えている。
+本ページでは、`MoveFacts`、`StateCacheView`、`key_after_move` と投機的プリフェッチ、千日手や連続王手判定、および探索用クローン（`clone_for_search_bounded`）の設計を解説する。
 
-`rsshogi` は局面、ルール、手生成を提供し、探索アルゴリズム、評価関数、置換表は所有しない。
-探索側は `Position` を保持し、評価器と探索スタックの状態を別に管理する。
+---
 
-## 分離する理由
+## 1. `MoveFacts` と `StateCacheView`
 
-局面の合法性と評価値は異なる責務である。
-局面ライブラリが特定の評価方式を保持すると、GUI や棋譜解析のように評価を使わない消費者までその状態に依存する。
-探索側が評価 state を持てば、同じ Position に対して異なる評価器、置換表、時間管理を組み合わせられる。
+探索ノードで `try_apply_move32_with_facts` を呼び出すと、局面更新の中で自然に判明した属性が `MoveFacts` 構造体として返される。
 
-## 基本ループ
-
-探索では `LegalAll` または `Legal` で手を生成し、各手を apply/undo の対で探索する。
-全ての合法手がなく、手番側が王手中なら詰みである。
-`Position::is_mated()` はこの判定を一度で行う読み取り API である。
-
-```rust,ignore
-use rsshogi::board::{movegen::generate_legal_all_move32, Move32List};
-
-let mut moves = Move32List::new();
-generate_legal_all_move32(&position, &mut moves);
-if moves.is_empty() {
-    let score_is_mate = position.is_in_check();
-    // 探索側の終端スコアへ変換する。
+```rust
+pub struct MoveFacts {
+    pub move32: Move32,
+    pub moved_piece_after: Piece,
+    pub captured_piece: Option<Piece>,
+    pub gives_check: bool,
+    pub is_drop: bool,
+    pub is_promotion: bool,
 }
 ```
 
-`LegalAll` は通常省略される不成も含むので、完全性が必要な探索、検証、詰み判定に適する。
-通常の対局手だけでよい経路では `Legal` を使う。
+探索エンジンは、Late Move Reductions（LMR）や Futility Pruning、Check Extension の条件判定において「今の指し手が駒取りだったか」「成りだったか」「王手になったか」を毎回チェックする。
+`MoveFacts` を受け取ることで、局面更新後に改めて `Position` の状態や指し手ビットをデコードし直す重複計算を省ける。
 
-現在ノードで一手詰めを調べる場合、読み取り専用の局面には `mate::solve_mate_in_one` を使う。
-探索が変更可能な `Position` を保持している場合は、`mate::solve_mate_in_one_in_place` を使うと作業局面の複製を省略できる。
-in-place API は正常終了時に局面を復元するが、呼び出し前に state stack が現局面と同期している必要がある。
+また、`Position::state_cache_view()` が返す `StateCacheView` は、現在の `StateHot` に格納されているハッシュ値群（`key`、`board_key`、`pawn_key`、`non_pawn_material`）、戦術ビットボード（`checkers`、`blockers_for_king`、`pinners`）、直前手（`last_move`）、捕獲駒（`captured_piece`）、連続王手カウント（`continuous_check`）、および `plies_from_null` を 1 つの読み取り専用ビューとして提供する。
 
-探索が pseudo-legal mode を使って候補を絞る場合は、玉の安全を確認する段階を別に持つ。
-terminal 判定、PV の確定、外部へ返す手には `Legal` または `LegalAll` の契約を使う。
+---
 
-## 評価差分の同期
+## 2. `key_after_move` と置換表の投機的プリフェッチ（`prefetch`）
 
-評価器は apply 前後の盤面を独自に持つ必要はない。
-`apply_move32_with_facts` の `MoveApplyFacts` には移動駒、取得駒、成り、駒打ち、更新後キーが含まれる。
-評価器はこの値を使って自分の差分 state を更新し、undo 時には探索側の評価スタックを戻す。
+大規模な置換表（数 GB〜数十 GB）は CPU の L3 キャッシュに収まらず、メインメモリ（DRAM）へのアクセスには約 100〜200 クロックサイクルのレイテンシがかかる。
+`Position::key_after_move(mv)`（または `key_after_move32(mv)`）は、**実際に `apply_move32` で盤面や `BitboardSet` を更新することなく、その指し手を指した後の Zobrist ハッシュ値（`key`）だけを数命令の XOR で先行算出する**。
 
-```rust,ignore
-let facts = position.apply_move32_with_facts(mv, gives_check);
-evaluator.apply(facts);
-let score = search(position, evaluator);
-position.undo_move32(mv)?;
-evaluator.undo();
+```rust
+let next_key = pos.key_after_move32(mv);
+tt.prefetch(next_key); // メモリコントローラへキャッシュラインの先読みを発行
+
+// プリフェッチが裏で進行している間に、王手判定や局面更新を実行する
+pos.apply_move32(mv);
 ```
 
-`gives_check` は `position.gives_check_move32(mv)` で事前に求められる。
-評価器の undo と Position の undo は同じ枝の LIFO 順序で行う。
+このように `apply_move32` の重い処理（ビットボードの更新、ピンや王手マスの再計算）を実行する前に `key_after_move` で次局面のキーを求めて `_mm_prefetch` 等を発行することで、メモリアクセスのレイテンシを局面更新の計算時間とオーバーラップさせて隠蔽できる。
 
-捕獲駒は apply 後には移動先から消えているため、捕獲の特徴量を更新する評価器は `facts.captured_piece` を読む。
-成りによる特徴変化は `facts.moved_piece_before` と `facts.moved_piece_after` を比較できる。
+---
 
-## 置換表と反復
+## 3. 千日手、連続王手、優劣局面の高速判定
 
-置換表のキーには `position.key()` を使える。
-子局面を先読みして置換表を参照する場合は、`key_after(mv)` を先に求める。
-置換表そのものの容量、置換方針、prefetch は探索エンジンの責務である。
+`crates/rsshogi/src/board/position/rules.rs` における反復局面判定（`update_repetition` / `repetition_state`）は、盤面ハッシュ `board_key` と `StateHot` の履歴メタデータを組み合わせて高速化されている。
 
-探索の終端では `repetition_state()` を確認し、エンジンのスコア規約へ変換する。
-`RepetitionState::Win` と `RepetitionState::Lose` は手番側から見た連続王手千日手の結果なので、色固定の評価へ変換するときは手番を取り違えない。
+### 遡及範囲の限定と 2 手おきの走査
 
-## tactical cache の利用
+駒打ちや盤上移動では手番が毎回反転するため、同一手番の同一盤面（`board_key` が等しい局面）は必ず **偶数手前（2 手前、4 手前、6 手前...）** にしか出現しない。
+さらに、Null Move を挟んだ過去には千日手や連続王手が成立しないため、探索すべき上限手数は `max_back = state.plies_from_null.min(current_idx)`（および呼び出し側が指定した `max_ply`）に制限される。
 
-`current_state_cache()` から得る view は、チェック、ピン、王手候補をまとめて読むために使える。
-view を保持したまま `Position` を mutable に更新することは Rust の借用規則でできない。
-子局面を apply または undo した後は、新しい current state から view を取得し直す。
+```
+現局面 (idx) ──[2 手前 (idx - 2)]──[4 手前 (idx - 4)]── ... ──[上限: idx - max_back]
+```
 
-| Position の情報 | 探索での典型的な用途 |
-|---|---|
-| `key()` | 現在ノードの置換表 probe。 |
-| `key_after(mv)` | 子ノードの事前 probe。 |
-| `repetition_state()` | 反復終端のスコア化。 |
-| `checkers()` | 王手延長や終端の補助。 |
-| `last_move()` | continuation history の索引。 |
-| `MoveApplyFacts` | 評価差分と検索スタックの更新。 |
+### 判定ロジックの優先順位
 
-## 容量を固定する探索
+過去の局面 `prev`（`step = 2, 4, 6, ...`）を遡る際、`prev.board_key == current.board_key` が一致した時点で以下の判定を行う。
 
-検索開始前に `prepare_search_state_capacity` を呼ぶと、指定した深さまで state slot を準備できる。
-その後は `try_apply_search_move32_with_facts` と null move 用 API を使い、容量不足を `MoveError` として扱える。
-この方式は allocation の時点を検索ループの外へ出したいエンジンに適する。
+1. **完全同一局面（`prev.key == current.key`、すなわち持ち駒も完全に同一）**：
+   - `repetition_count` を `prev.repetition_count + 1` に更新する。
+   - **連続王手の千日手判定**：現局面までの連続王手手数 `continuous_check[us] * 2 >= step` であれば、手番側が王手をかけ続けて同一局面に達しているため反則負け（`RepetitionState::Lose`）となる。逆に相手側の `continuous_check[them] * 2 >= step` であれば相手側の反則により勝ち（`RepetitionState::Win`）となる。
+   - 連続王手でなければ通常の千日手（`RepetitionState::Draw`）となる。なお、公式ルール上の千日手成立（同一局面 4 回目、すなわち `repetition_count >= 3`）は `Position::is_repetition(max_ply)` で判定でき、探索中に 2 回目の出現時点で即座に打ち切る場合は `Position::repetition_state(max_ply)` を用いる。
+2. **同一盤面で持ち駒のみが異なる局面（`prev.key != current.key`）**：
+   - `Hand` のボロービットを用いた [SWAR 一括優劣比較](../types/pieces.md) により、手番側の持ち駒 `current.hand` と `prev.hand` を比較する。
+   - 全駒種で `current.hand >= prev.hand` なら **優等局面（`RepetitionState::Superior`）**、全駒種で `current.hand <= prev.hand` なら **劣等局面（`RepetitionState::Inferior`）** と判定する。
 
-## 次に読む
+---
 
-→ [合法手生成](../movegen/index.md) で、探索目的に応じた generator mode を選ぶ。
+## 4. 探索用軽量クローン：`clone_for_search_bounded`
+
+並列探索（Lazy SMP や YBWC）でスレッドごとに `Position` を複製したり、探索ノードの途中で 1 手詰めソルバ等のサブ探索用に作業用 `Position` を作ったりする場合、通常の `Position::clone()` を呼ぶと対局開始からの全履歴チャンクがコピーされてしまう。
+
+`Position::clone_for_search_bounded(max_back_plies)` は、巻き戻しや千日手判定に必要な直近の履歴上限 `keep_back = max_back_plies.max(plies_from_null)` を算出し、`StateStack::clone_suffix(keep_back + 1)` によって末尾の必要な `StateInfo` だけを持つ軽量な `Position` を生成する。
+例えば 1 手詰めソルバ（`mate.rs`）では `pos.clone_for_search_bounded(16)` を用いており、対局が 200 手進んでいてもわずか 1 チャンク以内のコピーで作業局面を構築できる。
