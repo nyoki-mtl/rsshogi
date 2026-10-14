@@ -1,110 +1,100 @@
-# 基本操作
+# 基本演算、幾何テーブル、SIMD 命令
 
-`Bitboard` はマス集合なので、基本操作は集合演算として読める。
+`Bitboard` の基本演算は、128 ビット全体の集合演算（AND / OR / XOR / ANDNOT / 交差判定）と、立っているビットを 1 マスずつ取り出すビット走査（Bitscan）、および 2 マス間の幾何学的関係を引くルックアップテーブルの 3 要素から構成される。
 
-```rust,ignore
-let occupied = black | white;
-let empty = Bitboard::ALL & !occupied;
-let capturable = enemy & attacks;
-let quiet_targets = attacks.and_not(occupied);
-```
+---
 
-`!` と `Bitboard::not` は盤外ビットを必ず 0 にする。
+## 128 ビット論理演算と SSE2 / SSE4.1 命令
 
-`and_not(a, b)` は `a & !b` を表し、対象集合から除外集合を引くホットパス用の操作である。
+`Bitboard` は `#[repr(C, align(16))]` で 16 バイト境界にアラインされているため、`x86_64` 環境（`not(miri)`）では SSE2 および SSE4.1 の 128 ビット SIMD 命令（`core::arch::x86_64`）を用いて、`p[0]` と `p[1]` の 2 レーンを 1 命令で同時処理する。
+Miri 実行時や `const fn` 文脈、および非 x86_64 ターゲットでは、自動的に同じ意味を持つスカラー実装（`[u64; 2]` の要素ごと演算）へフォールバックする。
 
-## マスの操作
+| `Bitboard` の操作 | x86_64 SIMD イントリンシック | 発行される機械語命令 | スカラー実装（`const fn` / フォールバック） |
+| :--- | :--- | :--- | :--- |
+| `self & rhs`（論理積） | `_mm_and_si128` | `pand` / `vpand` | `[p[0] & rhs.p[0], p[1] & rhs.p[1]]` |
+| `self \| rhs`（論理和） | `_mm_or_si128` | `por` / `vpor` | `[p[0] \| rhs.p[0], p[1] \| rhs.p[1]]` |
+| `self ^ rhs`（排他的論理和） | `_mm_xor_si128` | `pxor` / `vpxor` | `[p[0] ^ rhs.p[0], p[1] ^ rhs.p[1]]` |
+| `self.andnot(rhs)`（差集合 `self & !rhs`） | `_mm_andnot_si128(rhs, self)` | `pandn` / `vpandn` | `[p[0] & !rhs.p[0], p[1] & !rhs.p[1]]` |
+| `!self`（盤面内ビット反転） | `BOARD_MASK` との XOR | `pxor` / `vpxor` | `[!p[0] & BOARD_MASK_LOW, !p[1] & BOARD_MASK_HIGH]` |
+| `self.intersects(rhs)`（交差判定） | `_mm_testz_si128(a, b) == 0` | `ptest` / `vptest` | `((p[0] & rhs.p[0]) \| (p[1] & rhs.p[1])) != 0` |
+| `self == rhs`（等値比較） | `_mm_testz_si128(a ^ b, a ^ b) != 0` | `pxor` + `ptest` | `p[0] == rhs.p[0] && p[1] == rhs.p[1]` |
 
-`from_square` は一つだけビットが立つ集合を作る。
+特に注目すべきは、差集合演算 `andnot` と SSE4.1 の `_mm_testz_si128`（`ptest` 命令）である。
 
-可変の集合には `set`、`clear`、`test` を使う。
+- **`andnot` による命令統合**：移動先マスクから味方駒を除外する `attacks & !our_pieces` を素直に書くと、ビット反転（`!our_pieces`）とマスク処理の後に AND を行う 2〜3 命令が必要になる。`attacks.andnot(our_pieces)` は SSE2 の `_mm_andnot_si128`（第 1 引数をビット反転して第 2 引数と AND をとる 1 命令）に直接対応し、盤外ビットのマスク処理も不要となる。
+- **`_mm_testz_si128` による 128 ビット一括ゼロ判定**：`intersects`（2 つのビットボードに共通のマスがあるか）や `PartialEq::eq`（2 つのビットボードが完全に等しいか）を 64 ビット汎用レジスタで行うと、`p[0]` と `p[1]` の比較結果を合成する必要がある。SSE4.1 が有効な環境では `_mm_testz_si128` を使うことで、128 ビットレジスタ全体の AND 結果がゼロかどうかを CPU の ZF（ゼロフラグ）へ直接反映させ、分岐予測ミスやレジスタ間転送を省いている。
 
-`test_index` は検証済みの生インデックスを持つホットパス向けであり、通常は `Square` を受け取る `test` を使う。
+---
 
-いずれも盤上の `Square` を前提とし、開発時には `debug_assert` が範囲外利用を検出する。
+## ビット走査（`lsb` / `pop_lsb`）と BMI1 命令
 
-## 走査
+ビットボード内に立っているビット（`1`）の個数を数える `count()` と、最も小さいインデックスのマスを 1 つずつ取り出す `pop_lsb()` は、指し手生成ループの中核である。
 
-`lsb` と `msb` はそれぞれ最小・最大の `Square` を `Option` で返す。
+### ポピュレーションカウント（`count`）
 
-`pop_lsb` は最小ビットを返して集合から消すため、候補集合を消費しながら列挙できる。
-
-```rust,ignore
-let mut targets = attacks & !own;
-while let Some(to) = targets.pop_lsb() {
-    // to ごとの候補手を処理する。
+```rust
+pub const fn count(self) -> u32 {
+    self.p[0].count_ones() + self.p[1].count_ones()
 }
 ```
 
-`pop_lsb_unchecked` は空でないことを呼び出し側が保証するときだけ使う。
+x86_64 の `popcnt` 命令が有効な環境では、`count_ones()` は各 64 ビット要素に対する 1 命令のハードウェア `popcnt` にコンパイルされる。
 
-`BitIter` と `IntoIterator for &Bitboard` は同じ LSB 順の走査を提供する。
+### 最下位ビットの抽出と消去（`pop_lsb` / `Iterator`）
 
-`count`、`any`、`is_empty`、`more_than_one` は候補数による分岐に使う。
+`Bitboard` は `Iterator<Item = Square>` を実装しており、`for sq in bb` と書くだけで内部的に `pop_lsb(&mut self)` が繰り返される。
 
-## 盤面マスクと変換
-
-`file_mask` と `rank_mask` は静的に構築された 9 個ずつのマスクを返す。
-
-`promotion_zone` は色ごとの三段を返すため、成りの可否を判定する集合式に使える。
-
-`flip` は 180 度回転、`mirror_file` は筋方向の反転を返す。
-
-これらは各盤上マスを走査する変換であり、飛び利きの内部ビット反転とは役割が異なる。
-
-`byte_reverse`、`unpack`、`decrement`、`decrement_pair` は内部の二レーン計算を補助する操作である。
-
-これらを局面の対称変換や保存形式として解釈せず、必要なときは意図に対応する `flip` または `mirror_file` を選ぶ。
-
-## SIMD とフォールバック
-
-AND、OR、XOR、AND NOT は、x86_64 で SSE2 が有効なら 128 ビット intrinsic を使う。
-
-それ以外では二つの `u64` に同じ意味の演算を適用する。
-
-`intersects` は SSE4.1 が有効なら `ptest` を使い、それ以外では二ワードの交差判定に戻る。
-
-どちらの経路でも API の結果とビットの意味は同一である。
-
-## 集合式の定石
-
-ビット演算は優先順位よりも意味が読めることを優先し、中間集合に名前を付ける。
-
-```rust,ignore
-let own = bitboards.by_color(us);
-let enemy = bitboards.by_color(!us);
-let occupied = own | enemy;
-let targets = rook_attacks(from, occupied).and_not(own);
-```
-
-この形なら、利きの計算が占有を必要とし、最終的な移動先では自駒を除くことが明確になる。
-
-`attacks & enemy` は捕獲候補、`attacks.and_not(occupied)` は空きマスへの候補になる。
-
-捕獲可能な駒を先に取り出すか、移動先を先に取り出すかは後続処理が必要とする情報で選ぶ。
-
-## 破壊的走査の注意
-
-`pop_lsb` は受け手を変更する。
-
-元の集合を後で使うなら、値コピーを別のローカル変数に置いてから走査する。
-
-```rust,ignore
-let attackers = position.attackers_to(king, occupied);
-let mut remaining = attackers;
-while let Some(from) = remaining.pop_lsb() {
-    // attackers は元の集合として残る。
+```rust
+pub fn pop_lsb(&mut self) -> Option<Square> {
+    if self.p[0] != 0 {
+        let idx = self.p[0].trailing_zeros() as i8;
+        self.p[0] &= self.p[0] - 1;
+        return Some(unsafe { Square::from_raw_unchecked(idx) });
+    }
+    if self.p[1] != 0 {
+        let idx = self.p[1].trailing_zeros() as i8 + 63;
+        self.p[1] &= self.p[1] - 1;
+        return Some(unsafe { Square::from_raw_unchecked(idx) });
+    }
+    None
 }
 ```
 
-`Bitboard` は `Copy` なので、このコピーにヒープ割り当てはない。
+1. **1〜7 筋の走査（`self.p[0] != 0`）**：将棋盤の全体の約 78%（63 / 81 マス）は `p[0]` に含まれるため、まず `p[0]` を検査する。`trailing_zeros()`（`tzcnt` または `bsf` 命令）で最下位ビット位置 `idx` を取得し、`self.p[0] &= self.p[0] - 1`（BMI1 の `blsr` 命令にコンパイルされる）でその最下位ビットだけを `0` に消去する。
+2. **8〜9 筋の走査（`self.p[1] != 0`）**：`p[0]` が空になったら `p[1]` を同様に走査し、ビット位置に `+ 63` を加算して `Square`（`63..=80`）を返す。
 
-空集合で `pop_lsb_unchecked` を呼ぶことは unsafe 契約違反であり、候補が一つ以上あることを別の条件で確立した後だけに限定する。
+また、検査対象のマスが 1〜7 筋か 8〜9 筋かがあらかじめ分かっているホットパス向けに、片方の 64 ビット要素だけを走査する `for_each_low`（`p[0]` のみ）と `for_each_high`（`p[1]` のみ）も提供されている。
 
-## 更新の形
+---
 
-駒を一マス動かすときは、色別集合、駒種別集合、全占有のすべてで始点を消し終点を立てる。
+## 幾何学的ルックアップテーブル（`board/lookup.rs`）
 
-捕獲があれば、捕獲された色と駒種の集合から終点を消してから移動駒を置く。
+2 つのマス間の直線関係（間にあるマス、貫通する直線、3 マスの同一直線判定）は、ピン（絶対ピン）検出、王手回避における合い駒生成、および 1 手詰めソルバの合法性判定で頻繁に利用される。
+`crates/rsshogi/src/board/lookup.rs` では、これらをコンパイル時の `const` ブロックで `[[u128; 81]; 81]`（`packed_bits` 形式）として事前生成している。
 
-この操作は XOR だけで一般化できるように見えても、駒種の変化や捕獲があるため、局面更新の既存 API を通す方が安全である。
+### 1. `Bitboard::between(from, to)`（`BETWEEN` テーブル）
+
+2 マス `from` と `to` が縦、横、斜めのいずれかの同一直線上に並んでいるとき、**両端（`from` と `to`）を除いた厳密にその間にあるマスの集合** を返す。
+同一直線上にない場合や隣接している場合は `Bitboard::EMPTY` を返す。
+
+- **王手回避での利用**：飛び駒（飛、角、香、馬、龍）による遠隔王手を受けた際、`Bitboard::between(checker_sq, king_sq)` がそのまま「合い駒（移動合いや打つ合い）によって王手を遮断できるマスの集合」となる。
+- **ピン検出での利用**：敵の飛び駒と自玉の間の `between` と全体の占有ビットボード `occupied` の論理積をとり、そのビット数（`count()`）がちょうど `1` であれば、その 1 マスにある味方駒は絶対ピン（`blockers_for_king`）であると即座に判定できる。
+
+### 2. `Bitboard::line(from, to)`（`LINE` テーブル）
+
+2 マス `from` と `to` が縦、横、斜めの同一直線上に並んでいるとき、`from` と `to` を通り **盤端から盤端まで貫通する直線全体のマス集合** を返す。
+同一直線上にない場合は `Bitboard::EMPTY` を返す。
+
+- **ピンされた駒の移動可能判定**：絶対ピンされている味方駒（`from`）は、ピンしている敵駒と自玉を結ぶ直線（`Bitboard::line(from, king_sq)`）の上でしか移動できない。移動先候補ビットボードと `line(from, king_sq)` の AND をとるだけで、ピン方向から外れる非合法手を一括除外できる。
+
+### 3. `Bitboard::is_aligned(from, to, king)`
+
+3 つのマス `from`、`to`、`king` が縦、横、斜めの同一直線上にあり、かつ **`from` と `to` が `king` から見て同じ側（同じレイ方向）に存在するか** を判定する `const fn` である。
+
+```rust
+let same_line = from_df * to_dr == from_dr * to_df;
+let same_side = (from_df * to_df + from_dr * to_dr) > 0;
+```
+
+単なる同一直線判定（外積 `from_df * to_dr == from_dr * to_df`）だけでなく、内積 `(from_df * to_df + from_dr * to_dr) > 0` を条件に含めることで、玉を挟んで反対側にあるマスを除外している。
+この関数は `legality.rs` のピン整合性確認や、`mate.rs`（1 手詰めソルバ）における玉方の応手の高速なピン安全性フィルタ（`surely_legal_defender_move`）で直接呼び出される。

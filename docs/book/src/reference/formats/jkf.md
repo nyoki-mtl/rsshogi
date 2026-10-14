@@ -1,577 +1,238 @@
-# JKF 形式
+# JKF フォーマット仕様
 
-JKF（JSON Kifu Format）は、将棋の棋譜をJSON形式で表現するフォーマットです。プログラムでの扱いが容易で、Webアプリケーションとの親和性が高いのが特徴です。
+JKF（JSON Kifu Format）は、将棋の棋譜データを構造化された JSON オブジェクトとして表現するフォーマットである。
+文字コードが UTF-8 に統一されており、Web アプリケーションやスクリプト言語から標準の JSON パーサだけで直接読み書きできる利点がある。
 
-## 公式仕様
+## トップレベル構造
 
-- [Kifu for JS - JSON Kifu Format](https://github.com/na2hiro/Kifu-for-JS/tree/master/packages/json-kifu-format)
-
-## 概要
-
-JKF形式は以下の特徴を持ちます：
-
-- **JSON形式**でプログラムでの扱いが容易
-- **構造化されたデータ**で解析が簡単
-- **分岐（変化手順）を完全にサポート**
-- **メタデータを豊富に保持**
-- **Webアプリケーションとの親和性が高い**
-- **型安全**（TypeScript等で型定義が可能）
-
-## 基本構造
-
-JKF形式の棋譜は、以下の主要なフィールドで構成されます：
-
-```json
-{
-  "header": { /* 対局情報 */ },
-  "initial": { /* 開始局面 */ },
-  "moves": [ /* 指し手のリスト */ ]
-}
-```
-
-## ヘッダー情報（header）
-
-対局に関するメタ情報を保持します：
+JKF のルートオブジェクトは、`header`、`initial`（省略可）、および `moves` の 3 つのプロパティで構成される。
 
 ```json
 {
   "header": {
-    "先手": "先手の対局者名",
-    "後手": "後手の対局者名",
-    "棋戦": "第68期順位戦A級",
-    "戦型": "矢倉",
-    "開始日時": "1999/07/15(木) 19:07:12",
-    "終了日時": "1999/07/15(木) 19:07:17",
-    "表題": "注目の一局",
-    "持ち時間": "各6時間",
-    "場所": "東京・将棋会館",
-    "掲載": "将棋世界 2019年7月号",
-    "備考": "備考欄"
-  }
-}
-```
-
-### 標準的なヘッダーフィールド
-
-| フィールド名 | 説明 | 型 |
-|--------------|------|-----|
-| `先手` | 先手（下手）の対局者名 | string |
-| `後手` | 後手（上手）の対局者名 | string |
-| `棋戦` | 棋戦名 | string |
-| `戦型` | 戦型 | string |
-| `開始日時` | 対局開始日時 | string |
-| `終了日時` | 対局終了日時 | string |
-| `表題` | 棋譜の表題 | string |
-| `持ち時間` | 持ち時間 | string |
-| `場所` | 対局場所 | string |
-| `掲載` | 掲載誌 | string |
-| `備考` | 備考 | string |
-| `手合割` | 手合割 | string |
-
-ヘッダーには任意のフィールドを追加できます。
-
-## 開始局面（initial）
-
-対局の開始局面を定義します：
-
-```json
-{
-  "initial": {
-    "preset": "HIRATE"
-  }
-}
-```
-
-### 平手局面
-
-```json
-{
-  "initial": {
-    "preset": "HIRATE"
-  }
-}
-```
-
-### 駒落ち局面
-
-```json
-{
-  "initial": {
-    "preset": "2"  // 二枚落ち
-  }
-}
-```
-
-#### 駒落ちのプリセット
-
-| preset値 | 手合割 |
-|----------|--------|
-| `"HIRATE"` | 平手 |
-| `"KY"` | 香落ち |
-| `"KY_R"` | 右香落ち |
-| `"KA"` | 角落ち |
-| `"HI"` | 飛車落ち |
-| `"HIKY"` | 飛香落ち |
-| `"2"` | 二枚落ち |
-| `"3"` | 三枚落ち |
-| `"4"` | 四枚落ち |
-| `"5"` | 五枚落ち |
-| `"5_L"` | 左五枚落ち |
-| `"6"` | 六枚落ち |
-| `"7_L"` | 左七枚落ち |
-| `"7_R"` | 右七枚落ち |
-| `"8"` | 八枚落ち |
-| `"10"` | 十枚落ち |
-| `"OTHER"` | その他 |
-
-### 任意の局面
-
-```json
-{
-  "initial": {
-    "data": {
-      "color": 0,  // 0: 先手番, 1: 後手番
-      "board": [
-        [{"color":1,"kind":"KY"}, {"color":1,"kind":"KE"}, ...],
-        [...],
-        ...
-      ],
-      "hands": [
-        {"FU": 0, "KY": 0, ...},  // 先手の持駒
-        {"FU": 3, "KA": 1, ...}   // 後手の持駒
-      ]
-    }
-  }
-}
-```
-
-#### 駒の表記
-
-駒オブジェクトは `color`（手番）と `kind`（駒種）で表現します：
-
-```json
-{
-  "color": 0,  // 0: 先手, 1: 後手
-  "kind": "FU" // 駒種（後述）
-}
-```
-
-#### 駒種（kind）
-
-| 駒種 | 意味 | 成駒 | 意味 |
-|------|------|------|------|
-| `FU` | 歩 | `TO` | と |
-| `KY` | 香 | `NY` | 成香 |
-| `KE` | 桂 | `NK` | 成桂 |
-| `GI` | 銀 | `NG` | 成銀 |
-| `KI` | 金 | - | - |
-| `KA` | 角 | `UM` | 馬 |
-| `HI` | 飛 | `RY` | 龍 |
-| `OU` | 玉 | - | - |
-
-#### 盤面（board）
-
-- 9x9の二次元配列
-- `board[y][x]` で (x+1, y+1) の位置を表す
-- 駒がない場合は `{}`（空オブジェクト）
-
-#### 持駒（hands）
-
-- 2要素の配列 `[先手の持駒, 後手の持駒]`
-- 各駒種の枚数をオブジェクトで表現
-- 持っていない駒種は省略可能（0として扱う）
-
-## 指し手（moves）
-
-指し手のリストを配列で表現します：
-
-```json
-{
-  "moves": [
-    {},  // 初手前の状態（コメント用）
-    {
-      "move": {
-        "from": {"x": 7, "y": 7},
-        "to": {"x": 7, "y": 6},
-        "piece": "FU"
-      },
-      "time": {"now": {"m": 0, "s": 16}, "total": {"h": 0, "m": 0, "s": 16}},
-      "comments": ["初手は７六歩"]
-    },
-    {
-      "move": {
-        "from": {"x": 3, "y": 3},
-        "to": {"x": 3, "y": 4},
-        "piece": "FU"
-      },
-      "comments": ["△３四歩"]
-    },
-    // ...
-  ]
-}
-```
-
-`rsshogi` の exporter では、この先頭要素の `comments` に
-`Record.initial_comment` を出力します。`RecordMetadata.comment` は
-header の `備考` に出力されます。
-
-### 通常の移動
-
-```json
-{
-  "move": {
-    "from": {"x": 7, "y": 7},
-    "to": {"x": 7, "y": 6},
-    "piece": "FU"
-  }
-}
-```
-
-- `from`：移動元の座標 `{x: 1-9, y: 1-9}`
-- `to`：移動先の座標 `{x: 1-9, y: 1-9}`
-- `piece`：移動後の駒種（成る場合は成駒）
-
-### 駒打ち
-
-```json
-{
-  "move": {
-    "to": {"x": 2, "y": 3},
-    "piece": "FU"
-  }
-}
-```
-
-- `from` フィールドがない場合は駒打ち
-- `piece`：打つ駒種
-
-### 成り
-
-```json
-{
-  "move": {
-    "from": {"x": 2, "y": 2},
-    "to": {"x": 2, "y": 2},
-    "piece": "UM",
-    "promote": true
-  }
-}
-```
-
-- `piece`：成駒の駒種
-- `promote`：`true` の場合は成り
-
-### 同の指し手
-
-```json
-{
-  "move": {
-    "from": {"x": 2, "y": 3},
-    "to": {"x": 2, "y": 4},
-    "piece": "FU",
-    "same": true
-  }
-}
-```
-
-- `same`：`true` の場合、直前の手と同じ位置への移動
-
-### 相対指定
-
-```json
-{
-  "move": {
-    "from": {"x": 5, "y": 8},
-    "to": {"x": 5, "y": 8},
-    "piece": "KI",
-    "relative": "R"
-  }
-}
-```
-
-- `relative`：相対位置（`"L"`: 左, `"C"`: 直, `"R"`: 右, `"U"`: 上, `"M"`: 寄, `"D"`: 引, `"H"`: 行）
-
-## 時間情報（time）
-
-消費時間を記録します：
-
-```json
-{
-  "time": {
-    "now": {"m": 0, "s": 16},
-    "total": {"h": 0, "m": 0, "s": 16}
-  }
-}
-```
-
-- `now`：その手の消費時間
-- `total`：累積の消費時間
-
-時間は `h`（時）、`m`（分）、`s`（秒）で表現します。
-
-## コメント（comments）
-
-各手にコメントを付加できます：
-
-```json
-{
-  "move": { /* ... */ },
-  "comments": [
-    "この手が好手",
-    "形勢は互角"
-  ]
-}
-```
-
-コメントは文字列の配列として表現します。
-
-## 分岐（forks）
-
-変化手順を `forks` フィールドで表現します：
-
-```json
-{
-  "moves": [
-    {},
-    {"move": { /* 1手目 */ }},
-    {"move": { /* 2手目 */ }},
-    {
-      "move": { /* 3手目 */ },
-      "forks": [
-        [
-          {"move": { /* 変化1の3手目 */ }},
-          {"move": { /* 変化1の4手目 */ }}
-        ],
-        [
-          {"move": { /* 変化2の3手目 */ }},
-          {"move": { /* 変化2の4手目 */ }}
-        ]
-      ]
-    }
-  ]
-}
-```
-
-- `forks`：変化手順の配列
-- 各要素は、その局面からの別の手順を表す配列
-
-### 分岐の例
-
-```json
-{
-  "moves": [
-    {},
-    {
-      "move": {
-        "from": {"x": 7, "y": 7},
-        "to": {"x": 7, "y": 6},
-        "piece": "FU"
-      }
-    },
-    {
-      "move": {
-        "from": {"x": 3, "y": 3},
-        "to": {"x": 3, "y": 4},
-        "piece": "FU"
-      }
-    },
-    {
-      "move": {
-        "from": {"x": 2, "y": 7},
-        "to": {"x": 2, "y": 6},
-        "piece": "FU"
-      },
-      "comments": ["本譜"],
-      "forks": [
-        [
-          {
-            "move": {
-              "from": {"x": 7, "y": 8},
-              "to": {"x": 6, "y": 8},
-              "piece": "KI"
-            },
-            "comments": ["変化手順"]
-          }
-        ]
-      ]
-    }
-  ]
-}
-```
-
-## 特殊な指し手
-
-### 投了・中断など
-
-```json
-{
-  "special": "TORYO"  // 投了
-}
-```
-
-特殊な手の種類：
-
-| special値 | 意味 |
-|-----------|------|
-| `"TORYO"` | 投了 |
-| `"CHUDAN"` | 中断 |
-| `"SENNICHITE"` | 千日手 |
-| `"TIME_UP"` | 時間切れ |
-| `"ILLEGAL_MOVE"` | 反則負け |
-| `"JISHOGI"` | 持将棋 |
-| `"KACHI"` | 入玉宣言勝ち |
-| `"HIKIWAKE"` | 引き分け宣言 |
-| `"MATTA"` | 待った |
-| `"TSUMI"` | 詰み |
-| `"FUZUMI"` | 不詰 |
-| `"ERROR"` | エラー |
-
-## 完全な例
-
-```json
-{
-  "header": {
-    "先手": "先手の対局者名",
-    "後手": "後手の対局者名",
-    "棋戦": "第68期順位戦A級",
-    "開始日時": "1999/07/15(木) 19:07:12",
-    "終了日時": "1999/07/15(木) 19:07:17"
+    "先手": "先手太郎",
+    "後手": "後手次郎",
+    "棋戦": "テスト棋戦"
   },
   "initial": {
     "preset": "HIRATE"
   },
   "moves": [
-    {},
     {
-      "move": {
-        "from": {"x": 7, "y": 7},
-        "to": {"x": 7, "y": 6},
-        "piece": "FU"
-      },
-      "time": {
-        "now": {"m": 0, "s": 16},
-        "total": {"h": 0, "m": 0, "s": 16}
-      },
-      "comments": ["初手は７六歩"]
+      "comments": ["初期局面コメント"]
     },
     {
       "move": {
-        "from": {"x": 3, "y": 3},
-        "to": {"x": 3, "y": 4},
+        "color": 0,
+        "from": { "x": 7, "y": 7 },
+        "to": { "x": 7, "y": 6 },
         "piece": "FU"
       },
       "time": {
-        "now": {"m": 0, "s": 0},
-        "total": {"h": 0, "m": 0, "s": 0}
-      },
-      "comments": ["△３四歩"]
+        "now": { "m": 0, "s": 3 },
+        "total": { "m": 0, "s": 3 }
+      }
     },
     {
-      "special": "CHUDAN"
+      "move": {
+        "color": 1,
+        "from": { "x": 3, "y": 3 },
+        "to": { "x": 3, "y": 4 },
+        "piece": "FU"
+      }
+    },
+    {
+      "move": {
+        "color": 0,
+        "from": { "x": 8, "y": 8 },
+        "to": { "x": 2, "y": 2 },
+        "piece": "KA",
+        "promote": true,
+        "capture": "KA"
+      }
+    },
+    {
+      "special": "TORYO",
+      "time": {
+        "now": { "m": 0, "s": 5 }
+      }
     }
   ]
 }
 ```
 
-## rsshogi での対応状況
+## 1. `header` オブジェクト
 
-### サポート済み
+対局メタデータを格納する文字列辞書である。
+`rsshogi` は以下の日本語キーを `RecordMetadata` の標準フィールドと相互マッピングし、それ以外のキーをカスタム属性に格納する。
 
-- ✅ JKF形式への出力
-- ✅ JKF形式からのパース
-- ✅ 基本的な棋譜情報の出力
-- ✅ 指し手と時間情報の出力
-- ✅ コメントの出力
-- ✅ 分岐（forks）の出力
+| JKF `header` キー | `RecordMetadata` の対応先 |
+| :--- | :--- |
+| `"先手"` | `black_player` |
+| `"後手"` | `white_player` |
+| `"棋戦"` | `event` |
+| `"場所"` | `site` |
+| `"開始日時"` | `start_date` |
+| `"終了日時"` | `end_date` |
+| `"持ち時間"` | `time_control` |
+| `"先手持ち時間"` | `black_time_control` |
+| `"後手持ち時間"` | `white_time_control` |
+| `"最大手数"` | `max_moves` |
+| `"持将棋"` | `impasse_rule` |
+| `"備考"` | `comment` |
 
-writer は棋譜情報、指し手、時間、コメント、分岐を JKF の標準フィールドへ出力します。
+表に含まれないキー（`"戦型"`、`"手合割"` など）は、`RecordMetadata` のカスタム属性（Rust の `attributes()`、Python の `custom`）に格納される。
 
-### 使用例（Python）
+## 2. `initial` オブジェクト（初期局面）
+
+`initial` が省略された場合は平手初期局面（`"HIRATE"`）として扱われる。
+`rsshogi` がサポートする `preset` 文字列は、定型局面 14 種類と任意局面を表す `"OTHER"` の計 15 種類である。
+
+| `preset` 値 | 手合割 | `preset` 値 | 手合割 |
+| :--- | :--- | :--- | :--- |
+| `"HIRATE"` | 平手 | `"3"` | 三枚落ち |
+| `"KY"` | 香落ち | `"4"` | 四枚落ち |
+| `"KY_R"` | 右香落ち | `"5"` | 五枚落ち |
+| `"KA"` | 角落ち | `"5_L"` | 左五枚落ち |
+| `"HI"` | 飛車落ち | `"6"` | 六枚落ち |
+| `"HIKY"` | 飛香落ち | `"8"` | 八枚落ち |
+| `"2"` | 二枚落ち | `"10"` | 十枚落ち |
+| `"OTHER"` | 任意局面（`data` 必須） | | |
+
+### `preset: "OTHER"` と `data.board` のインデックス順序
+
+`"preset": "OTHER"` を指定する場合は、同階層に `"data"` オブジェクト（`color`、`board`、`hands`）を記述する。
+
+- **`color`**：開始手番（`0` が先手番、`1` が後手番）。
+- **`board`**：9 要素 $\times$ 9 要素の 2 次元配列であり、**外側の配列が筋（1 筋〜9 筋：`x = file - 1`）、内側の配列が段（一段〜九段：`y = rank - 1`）** を表す（`board[x][y]`）。すなわち `board[0]` は **1 筋**（`board[0][0]` が 1 一、`board[0][8]` が 1 九）であり、`board[8]` は **9 筋**（`board[8][0]` が 9 一、`board[8][8]` が 9 九）である。空きマスは空オブジェクト `{}` で表し、駒があるマスは `{"color": 0, "kind": "FU"}` のように記述する。
+- **`hands`**：要素数 2 の配列 `[先手の持駒, 後手の持駒]` で、各要素は `{"FU": 0, "KY": 0, "KE": 0, "GI": 0, "KI": 2, "KA": 0, "HI": 0}` の形式で枚数を指定する。
+
+```json
+"initial": {
+  "preset": "OTHER",
+  "data": {
+    "color": 0,
+    "board": [
+      [ { "color": 1, "kind": "OU" }, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ { "color": 1, "kind": "FU" }, { "color": 1, "kind": "GI" }, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ],
+      [ {}, {}, {}, {}, {}, {}, {}, {}, {} ]
+    ],
+    "hands": [
+      { "FU": 0, "KY": 0, "KE": 0, "GI": 0, "KI": 2, "KA": 0, "HI": 0 },
+      { "FU": 17, "KY": 4, "KE": 4, "GI": 3, "KI": 2, "KA": 2, "HI": 2 }
+    ]
+  }
+}
+```
+
+上記の例では、`board[0][0]`（1 一）に後手の玉、`board[1][0]`（2 一）に後手の歩、`board[1][1]`（2 二）に後手の銀が配置されている。
+
+## 3. `moves` 配列と指し手オブジェクト
+
+`moves` 配列はインデックス `0` の要素が常に初期局面を表し、インデックス `1` 以降が 1 手目、2 手目の指し手または終局特殊手を表す。
+`moves[0]` には `"move"` を含めず、初期局面コメントがある場合にのみ `"comments"`（および先頭手からの分岐がある場合は `"forks"`）を持たせる。
+
+### `move` オブジェクトのフィールド
+
+| フィールド | 型 | 必須 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `color` | `0` または `1` | ○ | 手番（`0`：先手、`1`：後手）。 |
+| `from` | `{"x": 1..9, "y": 1..9}` | 盤上移動時 | 移動元の筋 `x` と段 `y`。駒打ちの場合は `from` を省略（または `null`）する。 |
+| `to` | `{"x": 1..9, "y": 1..9}` | ○ | 移動先の筋 `x` と段 `y`。 |
+| `piece` | `string` | ○ | **移動前の駒種コード**（CSA 2 文字表記）。 |
+| `same` | `boolean` | 任意 | 直前の指し手と同一の移動先（同）である場合に `true`。 |
+| `promote` | `boolean` | 任意 | 移動時に成る場合は `true`、成れる移動で成らない（不成）場合は `false`。 |
+| `capture` | `string` | 任意 | 移動先にあった捕獲対象の駒種コード（成駒を取った場合は `"UM"` などの成駒コード）。 |
+| `relative` | `string` | 任意 | 同種駒が同じマスへ動ける場合の相対位置または動作修飾子（`"L"`, `"C"`, `"R"`, `"U"`, `"M"`, `"D"`, `"LU"`, `"LM"`, `"LD"`, `"RU"`, `"RM"`, `"RD"`, `"H"`）。 |
+
+### 成り手における `piece` フィールドの注意点
+
+CSA 形式の指し手文字列（`+8822UM`）とは異なり、JKF の `move.piece` には **成る前の駒種（移動元にある駒の種別）** を指定する。
+例えば、8 八の角を 2 二へ進めて馬に成る手では、`"piece": "KA"` かつ `"promote": true` と記述する（`"piece": "UM"` は既に馬に成っている駒を動かす場合のみ使われる）。
+
+```json
+{
+  "move": {
+    "color": 0,
+    "from": { "x": 8, "y": 8 },
+    "to": { "x": 2, "y": 2 },
+    "piece": "KA",
+    "promote": true,
+    "capture": "KA"
+  }
+}
+```
+
+## 4. 消費時間（`time`）とコメント（`comments`）
+
+各手オブジェクトには `"time"` と `"comments"` を付与できる。
+
+- **`time.now` と `time.total`**：それぞれ 1 手の消費時間と累計消費時間を `{"h": 時間, "m": 分, "s": 秒}` で表す。`"h"` は 0 時間の場合には省略される（1 時間以上のときのみ `"h"` が出力される）。
+- **終局特殊手における `time`**：`"special"` を持つ終局特殊手エントリでは `"time": {"now": ...}` のみが出力され、`"total"` は出力されない。
+- **`comments`**：文字列の配列 `["1行目", "2行目"]` として保持される。JKF には評価値専用フィールドがないため、`rsshogi` からのエクスポート時に `EngineInfo.eval` は出力されない。
+
+## 5. 終局特殊手（`special`）
+
+終局を表すエントリは `"move"` の代わりに `"special"` フィールドを持つ。
+
+| JKF `special` 値 | `SpecialMove` | 勝敗結果（`GameResult`） |
+| :--- | :--- | :--- |
+| `"TORYO"` | `SpecialMove::Resign` | 直前の指し手側の勝ち（`BlackWin` / `WhiteWin`）。 |
+| `"CHUDAN"` | `SpecialMove::Interrupt` | `GameResult::Paused` |
+| `"SENNICHITE"` | `SpecialMove::RepetitionDraw` | `GameResult::DrawByRepetition` |
+| `"TIME_UP"` | `SpecialMove::Timeout` | 直前の指し手側の時間切れ勝ち（`BlackWinByTimeout` / `WhiteWinByTimeout`）。 |
+| `"ILLEGAL_MOVE"` | `SpecialMove::WinByIllegalMove` | 直前の指し手側の反則勝ち（`BlackWinByIllegalMove` / `WhiteWinByIllegalMove`）。 |
+| `"JISHOGI"` | `SpecialMove::Impasse` | `GameResult::DrawByImpasse` |
+| `"KACHI"` | `SpecialMove::WinByDeclaration` | 宣言した手番側の入玉宣言勝ち（`BlackWinByDeclaration` / `WhiteWinByDeclaration`）。 |
+| `"HIKIWAKE"` | `SpecialMove::Draw` | `GameResult::DrawByImpasse` |
+| `"TSUMI"` | `SpecialMove::Mate` | 直前の指し手側の勝ち（`BlackWin` / `WhiteWin`）。 |
+| `"FUZUMI"` | `SpecialMove::NoMate` | `GameResult::Paused` |
+| `"MAX_MOVES"` | `SpecialMove::MaxMoves` | `GameResult::DrawByMaxPlies` |
+| `"ERROR"` | `SpecialMove::Interrupt` | `GameResult::Error` |
+
+上記以外の文字列（例えば `"MATTA"`、`"+ILLEGAL_ACTION"`、`"-ILLEGAL_ACTION"` など）が指定された場合は、`SpecialMove::Unknown` および `GameResult::Invalid` として保持される。
+
+## 6. 分岐手順（`forks`）
+
+ある手に対する別候補の分岐手順は、置き換え対象となる指し手の **1 つ前の要素**（すなわち分岐元の親局面に対応する要素）の `"forks"` フィールドに格納される。
+`"forks"` は「指し手オブジェクト配列」の配列（`Vec<Vec<MoveFormat>>`）であり、複数の変化手順および再帰的な入れ子分岐を表現できる。
+
+- **初手（1 手目）からの分岐**：`moves[0]` の `"forks"` に格納される。
+- **N 手目（$N \ge 2$）からの分岐**：`moves[N - 1]` の `"forks"` に格納される。
+
+## コード例
+
+### Python
 
 ```python
-import rsshogi as rs
 import json
+from rsshogi import Record
 
-# KIF を読み込む
-kif_text = """
-開始日時：1999/07/15
-手合割：平手
-先手：先手の名前
-後手：後手の名前
-手数----指手---------消費時間--
-   1 ７六歩(77)
-   2 ３四歩(33)
-   3 中断
-"""
+# JKF 文字列またはファイルからの読み込み
+record = Record.from_jkf_str(jkf_text)
+record_from_file = Record.from_jkf_file("sample.jkf")
 
-record = rs.record.Record.from_kif_str(kif_text)
-
-# JKF に変換
-jkf_text = record.to_jkf()
-
-# JSON として解析
-jkf_data = json.loads(jkf_text)
-
-print(json.dumps(jkf_data, indent=2, ensure_ascii=False))
-
-# JKF から Record へ戻す
-roundtrip = rs.record.Record.from_jkf_str(jkf_text)
-assert roundtrip.moves[0].move.to_usi() == "7g7f"
+# JKF 文字列へのエクスポートと JSON パース
+jkf_out = record.to_jkf()
+data = json.loads(jkf_out)
 ```
 
-## 利点と制約
+### Rust
 
-### 利点
+```rust
+use rsshogi::records::formats::jkf::{export_jkf, parse_jkf_bytes, parse_jkf_str};
 
-- **プログラムでの扱いが容易**：JSON形式で解析が簡単
-- **構造化されたデータ**：型安全な実装が可能
-- **Webアプリケーションとの親和性**：JavaScriptとの相性が良い
-- **分岐を完全にサポート**：変化手順を自然に表現
-- **拡張性が高い**：任意のフィールドを追加可能
-
-### 制約
-
-- **ファイルサイズがやや大きい**：JSON形式のため
-- **人間が直接読むには不向き**：構造が複雑
-- **既存のソフトとの互換性**：KIF/CSA形式の方が広くサポートされている
-
-## TypeScript 型定義（参考）
-
-```typescript
-interface JKF {
-  header: { [key: string]: string };
-  initial?: {
-    preset?: string;
-    data?: InitialData;
-  };
-  moves: Move[];
-}
-
-interface Move {
-  move?: MoveData;
-  time?: TimeData;
-  comments?: string[];
-  forks?: Move[][];
-  special?: string;
-}
-
-interface MoveData {
-  from?: { x: number; y: number };
-  to: { x: number; y: number };
-  piece: string;
-  same?: boolean;
-  promote?: boolean;
-  relative?: string;
-}
+let record = parse_jkf_str(jkf_str)?;
+let json_text = export_jkf(&record)?;
 ```
-
-## 関連リンク
-
-- [Kifu for JS - JSON Kifu Format（公式）](https://github.com/na2hiro/Kifu-for-JS/tree/master/packages/json-kifu-format)
-- [Kifu for JS](https://github.com/na2hiro/Kifu-for-JS)
 
 ## 関連項目
 
-- [KIF形式](kif.md)：人間が読みやすい棋譜形式
-- [CSA形式](csa.md)：コンピュータ将棋協会の標準形式
-- [KI2形式](ki2.md)：簡易棋譜形式
+- [Record と棋譜データモデル](../records.md)
+- [CSA フォーマット仕様](csa.md)

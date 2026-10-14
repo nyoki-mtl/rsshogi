@@ -1,90 +1,118 @@
-# 利きの計算
+# 利き計算とテーブル生成
 
-利きの計算は、占有に依存しない定数パターンと、最初の遮蔽駒までを求める飛び利きに分かれる。
+将棋の駒の利き（あるマスから移動できるマスの集合）は、周囲の駒の有無に依存しない **近接駒（Step Pieces）** と、途中の遮蔽物（ブロッカー）で利きが止まる **飛び駒（Sliding Pieces：香、角、飛、馬、龍）** の 2 種類に分かれる。
+`rsshogi` では、`build.rs` がコンパイル時に `$OUT_DIR/attack_tables.rs` へ出力する定数テーブルと、`crates/rsshogi/src/board/attack_tables.rs` の実行時ビット演算アルゴリズムを組み合わせて利きを算出している。
 
-どちらも `Bitboard` を返すため、利用側は自駒集合との積集合や差集合をそのまま続けられる。
+---
 
-## 非飛び駒
+## 1. 近接駒の利きテーブルと王手候補テーブル
 
-`build.rs` は歩、桂、銀、金、玉の擬似利きを各マスと色に対して生成する。
+歩、桂、銀、金（および成金 4 種）、玉の利きは、盤上の他駒の配置に一切依存しない。
+そのため、`build.rs` で全 81 マス分の `Bitboard` を事前計算し、`SquareTable<Bitboard, 81>` として静的に保持している。
 
-生成物は `PAWN_ATTACKS`、`KNIGHT_ATTACKS`、`SILVER_ATTACKS`、`GOLD_ATTACKS`、`KING_ATTACKS` として攻撃テーブルに含まれる。
+| テーブル定数 | 型 | 内容 |
+| :--- | :--- | :--- |
+| `PAWN_ATTACKS` | `[SquareTable<Bitboard, 81>; 2]` | 先手と後手それぞれの歩の利き（前方 1 マス）。 |
+| `KNIGHT_ATTACKS` | `[SquareTable<Bitboard, 81>; 2]` | 先手と後手それぞれの桂馬の利き（前方 2 段、左右 1 筋の最大 2 マス）。 |
+| `SILVER_ATTACKS` | `[SquareTable<Bitboard, 81>; 2]` | 先手と後手それぞれの銀の利き（前方 3 マス + 斜め後方 2 マス）。 |
+| `GOLD_ATTACKS` | `[SquareTable<Bitboard, 81>; 2]` | 先手と後手それぞれの金および成金（と金、成香、成桂、成銀）の利き（6 マス）。 |
+| `KING_ATTACKS` | `SquareTable<Bitboard, 81>` | 先後共通の玉の利き（周囲 8 マス）。 |
+| `CHECK_CANDIDATE_BB` | `[[[Bitboard; 2]; 7]; 81]` | 玉の位置 `king_sq` に対し、各駒種および手番が 1 手移動（成と不成を含む）で王手をかけられる移動元候補マスのマスク。 |
 
-盤端で盤外へ出る候補は生成されない。
+近接駒の利き取得関数（`pawn_attacks`、`knight_attacks`、`silver_attacks`、`gold_attacks`、`king_attacks`）は、すべて上記テーブルの 1 回の配列参照（O(1)）のみで完結する。
 
-安全な高水準 API は `Position` の利き照会と手生成で使われる。
+---
 
-`*_attacks_unchecked` はテーブルの 81 マス範囲を呼び出し側が保証する内部ホットパスである。
+## 2. 縦方向の飛び駒（香車と飛車縦）：`FILE_ATTACKS` による 9 ビット直接参照
 
-## ビームと飛び利き
+将棋の飛び駒のうち、**縦方向（同じ筋の上下移動）** は香車、飛車、龍のすべてで頻出する。
+ここで、`Bitboard` の [63+18 分割レイアウト](layout.md) が決定的な威力を発揮する。
 
-香、角、飛の各マスについて、`build.rs` は遮蔽を考慮しない方向別ビームを生成する。
+File-major 座標系（`sq = file * 9 + rank`）と 63+18 分割により、任意の筋 `file` の 9 マス（一段目〜九段目）は、`occupied.packed_bits()` のビット `file * 9 .. file * 9 + 9`（すなわち `p[0]` または `p[1]` 内の連続した 9 ビット）にそのまま並んでいる。
+したがって、PEXT 命令（BMI2）やマジックナンバー乗算を一切使わず、**1 回の右シフトと `0x1ff` マスクだけ** でその筋の占有状態 `file_occupied`（`0..512`）を取り出せる。
 
-公開される `LANCE_BEAMS`、`BISHOP_BEAMS`、`ROOK_BEAMS` は方向別の `Bitboard` であり、ステップ利きと検査に使える。
+```rust
+const FILE_ATTACKS: [[u16; 512]; 9] = [ ... ]; // 9 段 × 512 通り = 9 KB
 
-実際の飛び利きは、占有ビットとの交差から各方向の最寄り遮蔽駒を含む範囲だけを残す。
-
-```text
-始点 -- 空 -- 空 -- 遮蔽駒 -- その先
-利き :    1     1       1        0
+pub fn rook_file_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
+    let idx = sq.to_index();
+    let file_start = (idx / 9) * 9;
+    let rank = idx - file_start;
+    let file_occupied = ((occupied.packed_bits() >> file_start) & 0x1ff) as usize;
+    let file_mask = FILE_ATTACKS[rank][file_occupied] as u128;
+    Bitboard::from_u128(file_mask << file_start)
+}
 ```
 
-`lance_attacks` は筋の 9 ビット占有を用い、手番に対応する一方向へ結果を絞る。
+- **テーブルサイズ**：段の位置 `rank`（`0..9`）× 筋内の 9 ビット占有パターン（$2^9 = 512$ 通り）× `u16`（2 バイト）= **9,216 バイト（9 KB）** であり、CPU の L1 データキャッシュ（通常 32 KB〜48 KB）に余裕をもって常駐する。
+- **香車の利き（`lance_attacks`）**：`rook_file_attacks(sq, occupied)` で得た上下両方向の縦利きに対し、手番に応じた前方マスク `LANCE_FORWARD_MASKS[color][sq]` との論理積（AND）をとるだけで求まる。
 
-`rook_file_attacks` は同じ筋の両方向を、`rook_rank_attacks` は段の両方向を返す。
+---
 
-`rook_attacks` は二つを合わせ、`bishop_attacks` は四つの対角方向を合わせる。
+## 3. 斜めおよび横方向の飛び駒（角と飛車）：Qugiy（減算と XOR）と AVX2 双方向レイ計算
 
-## 内部のレイ表現
+角（斜め 4 方向）および飛車の横方向を含む全方向利きは、1 つの筋の中に収まらないため、レイ（光線）上の最初のブロッカー（遮蔽駒）をビット演算で特定する **Qugiy（Subtracting a Rook from a Blocking Piece / Hyperbola Quintessence 系）アルゴリズム** を用いている。
 
-攻撃テーブルには公開ビームとは別に、`LanceRayBits`、`BishopRayBits`、`RookRayBits` という private な `u128` のレイ表現がある。
+### 正方向レイ（インデックス増加方向）の基本原理
 
-これらは連続盤面用と、反転方向を前向きの走査として扱うためのレイを保持する。
+あるマスからインデックスが増加する方向へ伸びるレイのビットマスクを `ray_bits`、盤面全体の占有状態を `occupied_bits` とする。
+この方向にある遮蔽駒の集合は `blockers = ray_bits & occupied_bits` である。
 
-`BishopRayBits` と `RookRayBits` の内容は実装最適化であり、外部形式や public API の契約ではない。
+ここで `blockers` から `1` を減算（`blockers.wrapping_sub(1)`）すると、**最も手前にある遮蔽駒（最下位ビット LSB）が `1` から `0` に変わり、それより手前のビットがすべて `0` から `1` に反転する**。
+一方、最初の遮蔽駒より奥にあるビットは減算の影響を一切受けない。
 
-角と飛の前向き二方向は `paired_increasing_attacks` で一組として処理し、逆方向は占有とレイをビット反転して同じ計算に帰着させる。
+```
+ray_bits      : 0010_0100_1000_0000  (レイ上のマス)
+blockers      : 0010_0100_0000_0000  (2 箇所に駒がある)
+blockers - 1  : 0010_0011_1111_1111  (最初のブロッカー LSB から手前がすべて反転)
+blockers ^ (blockers - 1)
+              : 0000_0111_1111_1111  (最初のブロッカー自身を含み、それより手前がすべて 1)
+ray_bits & (blockers ^ (blockers - 1))
+              : 0000_0100_1000_0000  (最初のブロッカーのマスでピタリと止まる利き)
+```
 
-AVX2 が有効なビルドでは、その一組を 256 ビット演算で処理する。
+この性質を利用した `increasing_ray_attacks` は、条件分岐を一切含まない 3 つのビット演算で正方向の利きを確定させる。
 
-AVX2 がないビルドでは同じ関数が二回のスカラー `u128` 演算へ分岐する。
+```rust
+const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
+    let blockers = ray_bits & occupied_bits;
+    let diff = blockers ^ blockers.wrapping_sub(1);
+    ray_bits & diff
+}
+```
 
-この差は実行結果ではなく、同じレイ抽出をどう並列化するかだけの差である。
+### 負方向レイ（インデックス減少方向）と `reverse_bits`
 
-## 正確性の基準
+インデックスが減少する方向へ伸びるレイでは、最も手前にある遮蔽駒が最下位ビット（LSB）ではなく **最上位ビット（MSB）** になるため、そのままでは `blockers - 1` が使えない。
+そこで `rsshogi` は、128 ビット全体のビット順序を逆転させる `reverse_bits(u128) -> u128` を用いる。
 
-攻撃テーブルのテストは、各始点と方向について最寄り遮蔽駒の全候補を列挙し、単純な一マスずつの走査と比較する。
+1. `build.rs` において、負方向レイのマスク（角の `sw_reversed` / `nw_reversed`、飛車の `n_reversed` / `w_reversed`）をあらかじめ **`raw_bits()` レイアウト上で 128 ビット反転させた定数** として生成しておく。
+2. 実行時には、盤面の占有ビットボード `occupied.raw_bits()` を 1 回だけ `reverse_bits` でビット反転させた `reversed_occupied` を作る。
+3. ビット順序が逆転した空間では、負方向レイも「インデックスが増加する正方向レイ」と完全に同型になるため、同じ `increasing_ray_attacks` を適用できる。
+4. 得られた結果を再度 `reverse_bits` で元のビット順序に戻し、正方向の結果と OR 合成する。
 
-さらに疑似乱数の占有局面でも、香・角・飛の結果をスカラー走査と比較する。
+### AVX2 による 2 方向同時レイ計算（`paired_increasing_attacks`）
 
-したがって最適化経路を変更するときは、遮蔽駒そのものを結果に含め、直後のマスを含めないこの契約を保つ必要がある。
+`x86_64` で AVX2 および SSE2 が利用可能な環境では、`attack_tables.rs` 内の SIMD 高速パスが有効になる。
 
-## 利きと合法性
+1. **SSSE3 / AVX2 シャッフルによる高速 `reverse_bits`**：
+   128 ビットのビット反転は、`_mm_shuffle_epi8`（`pshufb`）で 16 バイトの並び順を逆転させると同時に、4 ビット（ニブル）単位の 16 要素ルックアップテーブル `[0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]` を `_mm_shuffle_epi8` で並列引きすることで、わずか数クロックで完了する。
+2. **256 ビット `__m256i` による 2 方向同時計算（`paired_increasing_attacks`）**：
+   角の正方向 2 本（`ne` と `se`）や負方向 2 本（`sw_reversed` と `nw_reversed`）、あるいは飛車の正方向 2 本（`e_raw` と `s_raw`）と負方向 2 本（`n_reversed` と `w_reversed`）は、それぞれ 2 本の 128 ビットレイを 1 個の 256 ビット AVX2 レジスタ（`__m256i`）にパックして **2 方向同時に `ray & (blockers ^ (blockers - 1))` を計算** する。
+   このとき、AVX2 には 128 ビット整数単位の減算命令が存在しないため、64 ビット単位の加算 `_mm256_add_epi64(blockers, -1)` を行った上で、下位 64 ビットレーン（`p[0]`）が `0` だった場合にのみ上位 64 ビットレーン（`p[1]`）からボロー（桁借り）を引く処理を `_mm256_cmpeq_epi64(blockers, zero)` と `_mm256_slli_si256::<8>` の組み合わせで分岐なしに実現している。
 
-攻撃テーブルが返すのは駒の移動規則と占有だけから得る擬似利きである。
+---
 
-自駒のマスへ移動できない条件、王手を受ける玉の退避、ピンされた駒が動ける範囲、打ち歩詰めなどは別の層で処理する。
+## 4. 飛車、角、馬、龍の利き関数の使い分け
 
-例えば `rook_attacks` は遮蔽駒の色を区別しないため、自駒の遮蔽駒も敵駒の遮蔽駒も到達範囲の末尾として含む。
+`attack_tables.rs` が提供する飛び駒の利き関数は、呼び出し元の文脈に応じて最適なアルゴリズムを選択できるよう以下の通り構成されている。
 
-手生成側はその結果から自駒集合を除くことで、通常の移動先候補へ変換する。
-
-この分離により、同じ飛び利き関数を敵利きの計算、ピン検出、SEE の一時占有、候補手生成で再利用できる。
-
-## 王手候補テーブル
-
-`build.rs` は `CHECK_CANDIDATE_BB` も生成する。
-
-これは相手玉の位置、駒種、手番から、王手を作り得る配置候補を返すテーブルである。
-
-テーブルは候補を狭めるためのものであり、実際に王手になるかは移動後の占有と合法性で確認する。
-
-成りによる駒種変化や遮蔽の開閉を伴う手は、この候補集合だけで確定しない。
-
-## 実装を読む順序
-
-最初に `lance_attacks` の 9 ビット筋方向を読むと、遮蔽駒を含めて止まる契約が分かる。
-
-次に `rook_file_attacks` と `rook_rank_attacks` を見ると、飛車が二つの直交方向の和であることが分かる。
-
-最後に `bishop_attacks` と `rook_attacks` の前向き・反転方向の組を読むと、private レイがなぜ二種類の `u128` 表現を持つかを追える。
+| 関数名 | 計算アルゴリズム | 主な用途 |
+| :--- | :--- | :--- |
+| `lance_attacks(color, sq, occupied)` | `rook_file_attacks` + 前方マスク `LANCE_FORWARD_MASKS` | 香車の利き計算。 |
+| `bishop_attacks(sq, occupied)` | 正方向 2 本（`ne`, `se`）と負方向 2 本（`sw_reversed`, `nw_reversed`）を `paired_increasing_attacks` + `reverse_bits` で計算 | 角の 4 方向利き計算。 |
+| `rook_attacks(sq, occupied)` | 正方向 2 本（`e_raw`, `s_raw`）と負方向 2 本（`n_reversed`, `w_reversed`）を `paired_increasing_attacks` + `reverse_bits` で計算 | 飛車の 4 方向一括利き計算。 |
+| `rook_file_attacks(sq, occupied)` | `(occupied.packed_bits() >> file_start) & 0x1ff` による `FILE_ATTACKS` テーブル参照 | 飛車の縦方向のみの利き抽出（1 手詰めソルバの差分利き計算等）。 |
+| `rook_rank_attacks(sq, occupied)` | インデックス増加方向（`beams.e`）は `increasing_ray_attacks`、減少方向（`beams.w`）は最寄りブロッカー `blocker`（MSB）を求めて `beams.w ^ ROOK_RAY_BITS[blocker].w` で影の部分を打ち消す Classical アプローチ | 飛車の横方向のみの利き抽出。 |
+| `horse_attacks(sq, occupied)` | `bishop_attacks(sq, occupied) \| king_attacks(sq)` | 馬の利き計算。 |
+| `dragon_attacks(sq, occupied)` | `rook_attacks(sq, occupied) \| king_attacks(sq)` | 龍の利き計算。 |

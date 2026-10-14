@@ -1,202 +1,78 @@
-# Board クラス
+# 盤面管理（`Board` / `PositionState`）
+
+`rsshogi.core.Board` は将棋の盤面状態、指し手の適用と取り消し、合法手生成、対局状態の判定を担う中核クラスである。
+また、盤面の個別マスや持ち駒を直接編集する用途向けに、構造化データクラス `PositionState` と妥当性検証クラス `ValidationReport`、`ValidationIssue` を提供する。
 
 ```python
-rsshogi.core.Board(sfen=None)
+from rsshogi.core import (
+    Board,
+    PositionState,
+    ValidationIssue,
+    ValidationReport,
+)
 ```
 
-将棋の盤面を管理するメインクラスです。局面の状態、指し手の適用、合法手生成、
-ゲーム状態の判定などの機能を提供します。
+## クラス一覧と例外ポリシー
 
-Board クラスは以下の機能を持ちます：
+| クラス | 役割 |
+|---|---|
+| `Board` | 合法手生成、指し手の進退、王手や千日手の判定、各種シリアライズを行う盤面クラス。 |
+| `PositionState` | 盤上 81 マス、持ち駒、手番、手数を直接読み書きできる局面データクラス。 |
+| `ValidationReport` | `validate_all()` が返す妥当性検証結果の集計オブジェクト。 |
+| `ValidationIssue` | 局面の妥当性検証で検出された個別の問題項目。 |
 
-- 局面の初期化と SFEN 形式での読み書き
-- `PositionState` を介した raw-state の export / import
-- 指し手の適用と取り消し（`apply_move` / `undo_move`）
-- 合法手と擬似合法手の生成
-- ゲーム状態の判定（王手、詰み、千日手など）
-- 手番や手数などのメタ情報の取得
+`Board` および `PositionState` のメソッドは以下の例外ポリシーに従う。
 
-## 引数
+- **型エラー（`TypeError`）**：引数の型がシグネチャと一致しない場合に送出する。
+- **値エラー（`ValueError`）**：不正な SFEN 文字列、非合法手、表現範囲外の数値、盤面上で解決できない指し手などを渡した場合に送出する。
+- **未存在の表現（`None`）**：`last_move()` や `pop()` で着手履歴が空の場合、または `solve_mate_in_one()` で 1 手詰めが存在しない場合は例外を送出せず `None` を返す。
 
-- **sfen**: `str | None` (デフォルト: `None`)
-  初期局面を SFEN 形式で指定します。`None` の場合は平手初期局面になります。
+## メソッドとプロパティの早見表
 
-## メソッド一覧
-
-| カテゴリ | 主なメソッド・プロパティ |
-|----------|-------------------------|
-| [局面の設定と取得](#局面の設定と取得) | `to_sfen` / `set_sfen` / `copy` / `reset` / `to_position_state` / `set_position_state` / `set_usi_position` / `to_csa` / `to_bod` / `validate` / `is_valid` / `validate_all` |
-| [局面の設定と取得（シリアライズ）](#局面の設定と取得) | `to_packed_sfen` / `set_packed_sfen` / `to_hcp` / `set_hcp` / `to_psv` / `to_hcpe` / `apery_move32_from_move` / `apery_move32_from_move32` |
-| [指し手の適用と取り消し](#指し手の適用と取り消し) | `apply_move` / `apply_move32` / `apply_usi` / `apply_csa` / `push_move` / `push_move32` / `push_usi` / `push_usi_with_delta` / `undo_move` / `undo_move32` / `pop` / `last_move` |
-| [盤上の駒の取得](#盤上の駒の取得) | `piece_on` / `is_square_empty` / `empties` |
-| [持ち駒と玉の位置](#持ち駒と玉の位置) | `hand` / `hand_counts` / `king_square` / `iter_pieces` |
-| [駒のビットボード](#駒のビットボード) | `pieces` / `pieces_by_type` / `pieces_by_color` / `pieces_for` / `golds` / `bishop_horse` / `rook_dragon` |
-| [攻撃判定](#攻撃判定) | `attackers_to` / `attackers_to_color` / `attackers_to_color_current` / `attacks_by` / `is_attacked_by` |
-| [合法手の生成と判定](#合法手の生成と判定) | `legal_moves` / `legal_moves_move32` / `pseudo_legal_moves` / `pseudo_legal_moves_move32` / `is_legal_move` / `is_legal_move32` |
-| [ゲーム状態の判定](#ゲーム状態の判定) | `turn` / `game_ply` / `is_in_check` / `is_mated` / `repetition_state` / `is_repetition` / `can_declare_win` / `evaluate_declaration` / `solve_mate_in_one` / `zobrist_hash` / `move32_from_move` / `move_from_csa` / `to_svg` |
-
-### 例外ポリシー
-
-- **型が不正**: `TypeError`
-- **値は型として正しいが内容が不正**（不正な文字列・違法手など）: `ValueError`
-- **履歴が空など「未存在」**: `None` を返す（例: `last_move()`, `pop()`）
-
-### 局面の設定と取得
-
-#### `to_sfen()`
-
-```python
-board.to_sfen() -> str
-```
-
-現在局面を SFEN 形式の文字列で返します。
-
-**戻り値:**
-- `str`: SFEN 形式の局面文字列
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-print(board.to_sfen())
-# => "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
-```
+| カテゴリ | メソッドとプロパティ |
+|---|---|
+| [局面の初期化と入出力](#局面の初期化と入出力) | `Board(sfen=None)`, `copy()`, `reset()`, `to_sfen()`, `set_sfen()`, `set_usi_position()`, `to_position_state()`, `set_position_state()`, `to_csa()`, `to_bod()`, `to_svg()` |
+| [局面の妥当性検証](#局面の妥当性検証) | `validate()`, `is_valid()`, `validate_all()` |
+| [バイナリシリアライズと Apery 互換変換](#バイナリシリアライズと-apery-互換変換) | `to_packed_sfen()`, `set_packed_sfen()`, `to_psv()`, `to_hcp()`, `set_hcp()`, `to_hcpe()`, `apery_move32_from_move()`, `apery_move32_from_move32()` |
+| [指し手の適用と取り消し](#指し手の適用と取り消し) | `apply_move()`, `apply_move32()`, `apply_usi()`, `apply_csa()`, `push_move()`, `push_move32()`, `push_usi()`, `push_usi_with_delta()`, `undo_move()`, `undo_move32()`, `pop()`, `last_move()`, `move32_from_move()`, `move_from_csa()` |
+| [盤上の駒、持ち駒、ビットボードの参照](#盤上の駒持ち駒ビットボードの参照) | `piece_on()`, `is_square_empty()`, `empties()`, `hand()`, `hand_counts()`, `king_square()`, `iter_pieces()`, `pieces()`, `pieces_by_type()`, `pieces_by_color()`, `pieces_for()`, `golds()`, `bishop_horse()`, `rook_dragon()` |
+| [利きと攻撃の判定](#利きと攻撃の判定) | `attackers_to()`, `attackers_to_color()`, `attackers_to_color_current()`, `attacks_by()`, `is_attacked_by()` |
+| [合法手と擬似合法手の生成および判定](#合法手と擬似合法手の生成および判定) | `legal_moves()`, `legal_moves_move32()`, `pseudo_legal_moves()`, `pseudo_legal_moves_move32()`, `is_legal_move()`, `is_legal_move32()` |
+| [対局状態、入玉宣言、1 手詰めの判定](#対局状態入玉宣言1-手詰めの判定) | `turn`, `game_ply`, `zobrist_hash()`, `is_in_check()`, `is_mated()`, `repetition_state()`, `is_repetition()`, `can_declare_win()`, `evaluate_declaration()`, `solve_mate_in_one()` |
 
 ---
 
-#### `copy()`
+## 局面の初期化と入出力
 
 ```python
-board.copy() -> Board
+Board(sfen: str | None = None) -> Board
 ```
 
-現在局面のコピーを返します。
+`sfen` に `None` を渡すと平手初期局面で初期化する。
+任意の初期局面から開始する場合は SFEN 文字列を指定する。
 
-**戻り値:**
-- `Board`: コピーされた盤面
+> [!NOTE]
+> `Board()` は引数省略時に平手初期局面になるが、後述する [`PositionState()`](#positionstate) は引数省略時に駒が置かれていない空盤面（`"9/9/9/9/9/9/9/9/9 b - 1"`）になる。
 
-**使用例:**
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `copy()` / `__copy__()` | なし | `Board` | 現在の盤面と着手履歴を複製した新しい `Board` を返す。 |
+| `reset()` | なし | `None` | 盤面を平手初期局面に戻し、着手履歴をクリアする。 |
+| `to_sfen()` | なし | `str` | 現在局面を SFEN 文字列として返す。 |
+| `set_sfen(sfen)` | `sfen: str` | `None` | 指定した SFEN 文字列で盤面を上書きする。不正な SFEN は `ValueError` を送出する。 |
+| `set_usi_position(position)` | `position: str` | `None` | USI の `position` コマンド文字列から初期局面と手順を読み込んで適用する。 |
+| `to_position_state()` | なし | `PositionState` | 現在局面を編集可能な `PositionState` として書き出す。 |
+| `set_position_state(state)` | `state: PositionState` | `None` | `PositionState` から盤面を再構築する。 |
+| `to_csa()` | なし | `str` | 現在局面を CSA 形式の局面行（`P1` から `P9`、`P+`、`P-`、手番行）として返す。 |
+| `to_bod()` | なし | `str` | 現在局面を BOD 形式の文字列として返す。直前の着手がある場合は最終手表記も含める。 |
+| `to_svg(last_move=None, scale=1.0, *, highlight_squares=True, bold_destination=False, board_background=None)` | 描画オプション | `Svg` | 現在局面を SVG オブジェクトとして出力する（詳細は [SVG 出力](svg.md) を参照）。 |
+| `str(board)` | なし | `str` | `to_sfen()` と同じ SFEN 文字列を返す。 |
 
-```python
-board = rsshogi.core.Board()
-board.apply_usi("7g7f")
-clone = board.copy()
-print(clone.to_sfen() == board.to_sfen())  # => True
-```
+`set_usi_position(position)` は以下の形式を受理し、`moves` 以降の手順を合法手として順番に適用する。
 
----
-
-#### `reset()`
-
-```python
-board.reset() -> None
-```
-
-盤面を平手初期局面に戻します。
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.apply_usi("7g7f")
-board.reset()
-print(board.to_sfen())
-```
-
----
-
-#### `set_sfen(sfen)`
-
-```python
-board.set_sfen(sfen: str) -> None
-```
-
-盤面を指定した SFEN で上書きします。
-
-**引数:**
-- **sfen**: `str` - 設定する SFEN 文字列
-
-**例外:**
-- `ValueError`: SFEN のパースに失敗した場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
-```
-
----
-
-#### `to_position_state()`
-
-```python
-board.to_position_state() -> PositionState
-```
-
-現在局面を SFEN 文字列ではなく、編集可能な raw-state として取得します。
-
-**使用例:**
-
-```python
-from rsshogi.core import Board
-
-board = Board()
-state = board.to_position_state()
-print(state.to_sfen())
-```
-
----
-
-#### `set_position_state(state)`
-
-```python
-board.set_position_state(state: PositionState) -> None
-```
-
-`PositionState` から局面を再構築します。SFEN 文字列を経由しない import 用 API です。
-この import は unchecked なので、必要に応じて `validate()` / `validate_all()` を呼んでください。
-
-**使用例:**
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color, Piece, PieceType, Square
-
-board = Board()
-state = board.to_position_state()
-state.set_piece(Square.from_usi("7g"), Piece(0))
-state.set_piece(Square.from_usi("7f"), Piece.from_color_type(Color.BLACK, PieceType.PAWN))
-state.side_to_move = Color.WHITE
-board.set_position_state(state)
-```
-
----
-
-#### `set_usi_position(position)`
-
-```python
-board.set_usi_position(position: str) -> None
-```
-
-USI の `position` 形式文字列から局面を設定します。
-
-受け付ける形式:
-- `startpos`
-- `position startpos`
-- `sfen <board> <turn> <hand> <ply>`
-- `position sfen <board> <turn> <hand> <ply>`
-- 上記に `moves <usi1> <usi2> ...` を付加した形式
-
-`moves` がある場合は手順を順に適用します（不正手・非合法手は `ValueError`）。
-
-**引数:**
-- **position**: `str` - USI position 文字列
-
-**例外:**
-- `ValueError`: position 文字列が不正、または手順に不正手/非合法手が含まれる場合
-
-**使用例:**
+- `"startpos"` または `"position startpos"`
+- `"sfen <board> <turn> <hand> <ply>"` または `"position sfen <board> <turn> <hand> <ply>"`
+- 上記に `"moves <usi1> <usi2> ..."` を続けた文字列
 
 ```python
 from rsshogi.core import Board
@@ -205,1335 +81,362 @@ board = Board()
 board.set_usi_position("position startpos moves 7g7f 3c3d")
 print(board.to_sfen())
 # => "lnsgkgsnl/1r5b1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL b - 3"
-```
 
----
-
-#### `to_packed_sfen(out=None)`
-
-```python
-board.to_packed_sfen(out=None) -> bytes | None
-```
-
-現在局面を PackedSfen (psfen) 形式で取得します。
-片玉、玉なし、標準枚数を超える駒を含む局面は PackedSfen では表現できず、`ValueError` を送出します。
-
-**引数:**
-- **out**: `bytearray | numpy.ndarray | None`
-  出力先バッファ。`None` の場合は `bytes` を返します。
-  指定する場合は以下のいずれか:
-  - 長さ 32 の writable `uint8` 配列
-  - `dtype=[("sfen", uint8, 32)]` の `numpy.ndarray`（shape `(1,)`）
-
-**戻り値:**
-- `bytes | None`: `out is None` なら `bytes`、`out` を渡した場合は `None`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-psfen = board.to_packed_sfen()
-print(len(psfen))  # => 32
-
-out = bytearray(32)
-board.to_packed_sfen(out)
-```
-
----
-
-#### `to_hcp(out=None)`
-
-```python
-board.to_hcp(out=None) -> bytes | None
-```
-
-現在局面を `cshogi` / Apery 互換の `HuffmanCodedPos`（32 バイト）で取得します。
-
-- `out`: writable `uint8[32]` または `HuffmanCodedPos` ndarray（shape `(1,)`）
-
-```python
-import numpy as np
-from rsshogi.core import Board
-from rsshogi.numpy import HuffmanCodedPos
-
-board = Board()
-hcp = board.to_hcp()
-print(len(hcp))  # => 32
-
-out = np.zeros(1, dtype=HuffmanCodedPos)
-board.to_hcp(out)
-```
-
----
-
-#### `to_psv(mv=None, score=0, game_result=None, game_ply=None, out=None)`
-
-```python
-board.to_psv(mv=None, score=0, game_result=None, game_ply=None, out=None) -> bytes | None
-```
-
-現在局面から `PackedSfenValue` 1件分（40バイト）を直接生成します。
-`out=None` の場合は `bytes` を返し、`out` 指定時は `None` を返します。
-内部の PackedSfen で表現できない局面では `ValueError` を送出します。
-
-- `mv`: `Move | Move32 | int | str | None`（未指定時は `MOVE_NONE`）
-- `score`: `int16`
-- `game_result`: `GameResult | int | str | None`（未指定時は `INVALID`）
-- `game_ply`: `int | None`（未指定時は `board.game_ply`）
-- `out`: writable `uint8[40]` または `PackedSfenValue` ndarray（shape `(1,)`）
-
----
-
-#### `to_hcpe(best_move=None, score=0, game_result=None, out=None)`
-
-```python
-board.to_hcpe(best_move=None, score=0, game_result=None, out=None) -> bytes | None
-```
-
-現在局面から `HuffmanCodedPosAndEval` 1件分（38 バイト）を生成します。
-
-- `best_move`: `AperyMove | AperyMove32 | Move | Move32 | int | str | None`
-- `score`: `int16`
-- `game_result`: `GameResult | int | str`
-  - `Draw` / `BlackWin` / `WhiteWin` に変換できる値のみ受理します。
-- `out`: writable `uint8[38]` または `HuffmanCodedPosAndEval` ndarray（shape `(1,)`）
-
-`best_move` は最終的に Apery 16bit (`bestMove16`) へ正規化されます。
-`Move32` や USI 文字列を渡した場合も、局面に応じて `AperyMove` に変換してから書き出します。
-`game_result` には `Draw`、`BlackWin`、`WhiteWin` のいずれかを指定します。
-
-```python
-import numpy as np
-from rsshogi.core import Board
-from rsshogi.numpy import HuffmanCodedPosAndEval
-
-board = Board()
-hcpe = board.to_hcpe(best_move="7g7f", score=84, game_result="BLACK_WIN")
-print(len(hcpe))  # => 38
-
-out = np.zeros(1, dtype=HuffmanCodedPosAndEval)
-board.to_hcpe(best_move="7g7f", score=84, game_result=1, out=out)
-```
-
----
-
-#### `set_packed_sfen(psfen)`
-
-```python
-board.set_packed_sfen(psfen) -> None
-```
-
-PackedSfen (psfen) 形式の 32 バイト列から局面を設定します。
-psfen は 互換の PackedSfen 形式（32 バイト）です。
-
-**引数:**
-- **psfen**: 次のいずれか
-  - `bytes` / `bytearray`
-  - 長さ 32 の `Sequence[int]`
-  - 長さ 32 の `numpy.ndarray`（`uint8`）
-  - `dtype=[("sfen", uint8, 32)]` の `numpy.ndarray`（shape `(1,)`）
-
-**例外:**
-- `ValueError`: 長さが 32 バイトでない場合
-- `TypeError`: 受け取り型が不正な場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-psfen = board.to_packed_sfen()
-board.set_packed_sfen(psfen)
-```
-
----
-
-#### `set_hcp(hcp, game_ply=1)`
-
-```python
-board.set_hcp(hcp, game_ply=1) -> None
-```
-
-`HuffmanCodedPos` 形式の 32 バイト列から局面を設定します。
-
-**引数:**
-- **hcp**: 次のいずれか
-  - `bytes` / `bytearray`
-  - 長さ 32 の `Sequence[int]`
-  - 長さ 32 の `numpy.ndarray`（`uint8`）
-  - `dtype=[("hcp", uint8, 32)]` の `numpy.ndarray`（shape `(1,)`）
-- **game_ply**: `int` - 設定後の手数
-
-```python
-board = rsshogi.core.Board()
-hcp = board.to_hcp()
-board.set_hcp(hcp, game_ply=17)
-```
-
----
-
-#### `apery_move32_from_move(mv)`
-
-```python
-board.apery_move32_from_move(mv: Move) -> AperyMove32
-```
-
-現在局面の駒情報（取得駒種など）を補完して `Move` を `AperyMove32` に変換します。
-
----
-
-#### `apery_move32_from_move32(mv)`
-
-```python
-board.apery_move32_from_move32(mv: Move32) -> AperyMove32
-```
-
-現在局面を使って `Move32` を `AperyMove32` に変換します。
-取得駒種の補完が必要なため、`Board` の文脈を使います。
-
----
-
-#### `validate()`
-
-```python
-board.validate() -> None
-```
-
-現在局面を検証し、最初に見つかった問題を `ValueError` として送出します。
-
----
-
-#### `is_valid()`
-
-```python
-board.is_valid() -> bool
-```
-
-`validate()` と同じ条件で局面が妥当かどうかを返します。
-
----
-
-#### `validate_all()`
-
-```python
-board.validate_all() -> ValidationReport
-```
-
-現在局面の問題をすべて収集して返します。raw-state 編集後の全件確認に向いています。
-
-**使用例:**
-
-```python
-from rsshogi.core import Board
-
-board = Board()
-report = board.validate_all()
-print(report.is_valid())
-```
-
----
-
-#### `to_csa()`
-
-```python
-board.to_csa() -> str
-```
-
-現在局面を CSA 形式の局面行（`P1..P9`, `P+`, `P-`, `+/-`）として返します。
-
-**戻り値:**
-- `str`: CSA 形式の局面行
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
+clone = board.copy()
 print(board.to_csa())
-```
-
----
-
-#### `to_bod()`
-
-```python
-board.to_bod() -> str
-```
-
-現在局面を BOD 形式（将棋ウォーズなどで使われる形式）の文字列として返します。
-直前の指し手がある場合は、局面と合わせて「手数＝N　○○　まで」の形式で出力します。
-
-**戻り値:**
-- `str`: BOD 形式の文字列
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.apply_usi("7g7f")
 print(board.to_bod())
 ```
 
 ---
 
-### 指し手の適用と取り消し
+## 局面の妥当性検証
 
-#### `apply_move(move)`
+`set_position_state()` などで構築した盤面が将棋のルール上妥当な配置を満たしているかを検証する。
 
-```python
-board.apply_move(move) -> None
-```
-
-指し手を適用して局面を進めます。`move` は `Move` を指定します。
-`Move32` を適用する場合は `apply_move32()` を使います。
-
-**引数:**
-- **move**: `Move`
-  適用する指し手。
-
-**例外:**
-- `ValueError`: 違法手を適用しようとした場合
-- `TypeError`: サポートされていない型を渡した場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-
-# USI 文字列で指す
-board.apply_usi("7g7f")
-
-# Move で指す
-move = rsshogi.core.Move.from_usi("3c3d")
-board.apply_move(move)
-
-# 合法手リストから指す
-board.apply_move(board.legal_moves()[0])
-```
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `validate()` | `None` | 現在局面を検証し、最初に見つかった問題を `ValueError` として送出する。問題がなければ `None` を返す。 |
+| `is_valid()` | `bool` | `validate()` と同一の条件で局面が妥当であれば `True`、問題があれば `False` を返す。 |
+| `validate_all()` | `ValidationReport` | 現在局面で検出されたすべての問題を `ValidationReport` にまとめて返す。 |
 
 ---
 
-#### `apply_move32(move)`
+## バイナリシリアライズと Apery 互換変換
+
+学習データや教師局面ファイルの入出力向けに、YaneuraOu 系の `PackedSfen` / `PackedSfenValue`（PSV）および Apery / `cshogi` 系の `HuffmanCodedPos`（HCP）/ `HuffmanCodedPosAndEval`（HCPE）への直接変換を提供する。
+NumPy の構造化配列との連携手順は [NumPy 連携](numpy.md) を参照。
+
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `to_packed_sfen(out=None)` | `out`: 出力先バッファまたは `None` | `bytes \| None` | 現在局面を 32 バイトの `PackedSfen` に変換する。`out=None` なら `bytes` を返し、`out` 指定時はインプレース書き込みを行い `None` を返す。 |
+| `set_packed_sfen(psfen)` | `psfen`: 32 バイトデータ | `None` | 32 バイトの `PackedSfen` から盤面を復元する。 |
+| `to_psv(mv=None, score=0, game_result=None, game_ply=None, out=None)` | 教師データ各項目と `out` | `bytes \| None` | 現在局面から 40 バイトの `PackedSfenValue` を生成する。 |
+| `to_hcp(out=None)` | `out`: 出力先バッファまたは `None` | `bytes \| None` | 現在局面を 32 バイトの `HuffmanCodedPos` に変換する。 |
+| `set_hcp(hcp, game_ply=1)` | `hcp`: 32 バイトデータ, `game_ply: int = 1` | `None` | 32 バイトの `HuffmanCodedPos` と指定手数から盤面を復元する。 |
+| `to_hcpe(best_move=None, score=0, game_result=None, out=None)` | 教師データ各項目と `out` | `bytes \| None` | 現在局面から 38 バイトの `HuffmanCodedPosAndEval` を生成する。 |
+| `apery_move32_from_move(mv)` | `mv: Move` | `AperyMove32` | 現在局面の駒情報を参照して `Move` を 32 ビットの `AperyMove32` に変換する。 |
+| `apery_move32_from_move32(mv)` | `mv: Move32` | `AperyMove32` | 現在局面の取得駒情報を補完して `Move32` を `AperyMove32` に変換する。 |
+
+### 出力先バッファ `out` と入力引数の仕様
+
+- **`out` バッファの受け入れ型**：
+  - `to_packed_sfen` / `to_hcp`：書き込み可能な長さ 32 の `bytearray` や `uint8` 1 次元 `ndarray`、または要素数 1 の `PackedSfen` / `HuffmanCodedPos` 構造化 `ndarray`（shape `(1,)` または 0 次元スライス `arr[i]`）。
+  - `to_psv`：書き込み可能な長さ 40 の `bytearray` や `uint8` 1 次元 `ndarray`、または `PackedSfenValue` 構造化 `ndarray`（shape `(1,)` または 0 次元スライス `arr[i]`）。
+  - `to_hcpe`：書き込み可能な長さ 38 の `bytearray` や `uint8` 1 次元 `ndarray`、または `HuffmanCodedPosAndEval` 構造化 `ndarray`（shape `(1,)` または 0 次元スライス `arr[i]`）。
+- **`set_packed_sfen` / `set_hcp` の入力型**：
+  - 長さ 32 の `bytes`、`bytearray`、`Sequence[int]`、`uint8` 1 次元 `ndarray`、または要素数 1 の構造化 `ndarray`（shape `(1,)` または 0 次元スライス `arr[i]`）を受理する。
+- **`to_psv` の引数**：
+  - `mv`：`Move`、`Move32`、`int`（`0..=65535`）、USI 文字列、または `None`（省略時は `Move.NONE`）。
+  - `score`：`int`（`int16` 範囲のセンチポーン評価値、既定値 `0`）。
+  - `game_result`：`GameResult`、`int`、結果名文字列、または `None`（省略時は `GameResult.INVALID`）。
+  - `game_ply`：`int | None`（`uint16` 範囲の手数、省略時は `board.game_ply`）。
+- **`to_hcpe` の引数**：
+  - `best_move`：`AperyMove`、`AperyMove32`、`Move`、`Move32`、`int`（`0..=65535` の `AperyMove` 値）、USI 文字列、または `None`（省略時は `AperyMove(0)`）。渡された指し手は盤面参照なしで 16 ビットの `AperyMove` に直接変換される。
+  - `score`：`int`（`int16` 範囲のセンチポーン評価値、既定値 `0`）。
+  - `game_result`：必須引数（`None` は `ValueError`）。`GameResult`（引き分け系、先手勝ち系、後手勝ち系の各定数）、文字列（`"DRAW"`、`"BLACK_WIN"`、`"WHITE_WIN"`、大文字小文字不問）、または HCPE 数値コード（`0`：引き分け、`1`：先手勝ち、`2`：後手勝ち）を指定する。
+
+> [!WARNING]
+> 片玉、玉なし、または標準枚数を超える駒を含む局面は `PackedSfen` および `HuffmanCodedPos` では表現できず、変換時に `ValueError` を送出する。
 
 ```python
-board.apply_move32(move) -> None
-```
-
-`Move32` を受け取り、指し手を適用して局面を進めます。
-
-**引数:**
-- **move**: `Move32` - 適用する指し手
-
-**例外:**
-- `ValueError`: 違法手を適用しようとした場合
-
----
-
-#### `push_move(move)`
-
-```python
-board.push_move(move) -> Move32
-```
-
-`apply_move()` と同様に指し手を適用し、適用した `Move32`（32bit）を返します。
-
----
-
-#### `push_move32(move)`
-
-```python
-board.push_move32(move) -> Move32
-```
-
-`apply_move32()` と同様に `Move32` を適用し、適用した `Move32` を返します。
-
----
-
-#### `push_usi(usi)`
-
-```python
-board.push_usi(usi: str) -> Move32
-```
-
-USI 文字列で手を進め、適用した `Move32`（32bit）を返します。
-
----
-
-#### `push_usi_with_delta(usi)`
-
-```python
-board.push_usi_with_delta(usi: str) -> dict
-```
-
-USI 文字列で手を進め、適用した `Move32` と盤面更新の差分を辞書で返します。
-通常の盤上移動では移動元・移動先・移動前後の駒・取得駒を、駒打ちでは打った駒種と適用前の持ち駒枚数を取得できます。
-
-**例外:**
-- `ValueError`: USI 文字列のパースに失敗した場合、または違法手の場合
-
----
-
-#### `apply_usi(usi)`
-
-```python
-board.apply_usi(usi: str) -> None
-```
-
-USI 文字列を受け取り、指し手を適用します。文字列入力が必要な場合に使います。
-
-**引数:**
-- **usi**: `str` - USI 形式の指し手文字列（例: `"7g7f"`, `"P*5e"`）
-
-**例外:**
-- `ValueError`: 文字列のパースに失敗した場合、または違法手の場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.apply_usi("7g7f")
-```
-
----
-
-#### `apply_csa(csa)`
-
-```python
-board.apply_csa(csa: str) -> None
-```
-
-CSA 文字列を受け取り、指し手を適用します。先頭の手番記号（`+` / `-`）があっても受け付けます。
-
-**引数:**
-- **csa**: `str` - CSA 形式の指し手文字列（例: `"7776FU"`, `"+7776FU"`）
-
-**例外:**
-- `ValueError`: 文字列のパースに失敗した場合、または違法手の場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.apply_csa("7776FU")
-```
-
----
-
-#### `undo_move(move)`
-
-```python
-board.undo_move(move) -> None
-```
-
-指定した指し手を取り消し、1手戻します。
-
-**引数:**
-- **move**: `Move` - 取り消す指し手（`Move32` の場合は `undo_move32()` を使用）
-
-**例外:**
-- `ValueError`: 指し手の取り消しに失敗した場合
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-move = rsshogi.core.Move.from_usi("7g7f")
-board.apply_move(move)
-board.undo_move(move)  # 適用したのと同じ Move を渡す
-```
-
----
-
-#### `undo_move32(move)`
-
-```python
-board.undo_move32(move) -> None
-```
-
-`Move32` を指定して取り消し、1手戻します。直前の指し手と一致する必要があります。
-
-**引数:**
-- **move**: `Move32` - 取り消す指し手
-
-**例外:**
-- `ValueError`: 直前の指し手と一致しない場合
-
----
-
-#### `pop()`
-
-```python
-board.pop() -> Move32 | None
-```
-
-直前の指し手を取り消して返します。履歴が空なら `None`。
-
----
-
-#### `last_move()`
-
-```python
-board.last_move() -> Move32 | None
-```
-
-直前の指し手を取得します（盤面は変更されません）。
-
-**戻り値:**
-- `Move32 | None`: 直前の指し手。履歴が空の場合は `None`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-board.apply_usi("7g7f")
-last_move = board.last_move()
-if last_move:
-    print(last_move.to_usi())  # => "7g7f"
-```
-
----
-
-### 盤上の駒の取得
-
-#### `piece_on(square)`
-
-```python
-board.piece_on(square: Square) -> Piece
-```
-
-指定したマスにある駒を取得します。
-
-**引数:**
-- **square**: `Square` - 対象のマス
-
-**戻り値:**
-- `Piece`: マスにある駒。空きマスの場合は `piece_type` が `PieceType.NO_PIECE_TYPE` を返す
-
-**使用例:**
-
-```python
+import numpy as np
 from rsshogi.core import Board
-from rsshogi.types import Square
+from rsshogi.numpy import HuffmanCodedPosAndEval, PackedSfenValue
+from rsshogi.record import GameResult
 
 board = Board()
-sq = Square.from_usi("7g")
-piece = board.piece_on(sq)
-print(piece.piece_type)  # => PieceType.PAWN
-print(piece.color)       # => Color.BLACK
+
+# PSV 配列への直接書き込み（0 次元スライスへの書き込みにも対応）
+psv_arr = np.zeros(2, dtype=PackedSfenValue)
+board.to_psv(mv="7g7f", score=50, game_result=GameResult.BLACK_WIN, out=psv_arr[0])
+
+# HCPE 配列への直接書き込み
+hcpe_arr = np.zeros(1, dtype=HuffmanCodedPosAndEval)
+board.to_hcpe(best_move="7g7f", score=50, game_result="BLACK_WIN", out=hcpe_arr)
 ```
 
 ---
 
-#### `is_square_empty(square)`
+## 指し手の適用と取り消し
 
-```python
-board.is_square_empty(square: Square) -> bool
-```
+盤面に対して指し手を適用して手を進めるメソッドと、直前の手を取り消して戻すメソッドを提供する。
 
-指定したマスが空かどうかを判定します。
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `apply_move(mv)` | `mv: Move` | `None` | 16 ビットの `Move` を適用して局面を進める。非合法手は `ValueError` を送出する。 |
+| `apply_move32(mv)` | `mv: Move32` | `None` | 32 ビットの `Move32` を適用して局面を進める。非合法手は `ValueError` を送出する。 |
+| `apply_usi(usi)` | `usi: str` | `None` | USI 文字列（例：`"7g7f"`、`"P*5e"`）を解析して適用する。 |
+| `apply_csa(csa)` | `csa: str` | `None` | CSA 文字列（例：`"7776FU"`、`"+7776FU"`）を解析して適用する。 |
+| `push_move(mv)` | `mv: Move` | `Move32` | `Move` を適用し、駒情報が付与された完全な `Move32` を返す。 |
+| `push_move32(mv)` | `mv: Move32` | `Move32` | `Move32` を適用し、適用された完全な `Move32` を返す。 |
+| `push_usi(usi)` | `usi: str` | `Move32` | USI 文字列で手を進め、適用された完全な `Move32` を返す。 |
+| `push_usi_with_delta(usi)` | `usi: str` | `dict[str, Any]` | USI 文字列で手を進め、適用された指し手と盤面更新差分を辞書で返す。 |
+| `undo_move(mv)` | `mv: Move` | `None` | 直前に適用した `Move` を取り消して 1 手戻す。直前の手と一致しない場合は `ValueError` を送出する。 |
+| `undo_move32(mv)` | `mv: Move32` | `None` | 直前に適用した `Move32` を取り消して 1 手戻す。直前の手と一致しない場合は `ValueError` を送出する。 |
+| `pop()` | なし | `Move32 \| None` | 直前の指し手を取り消して `Move32` を返す。履歴が空の場合は `None` を返す。 |
+| `last_move()` | なし | `Move32 \| None` | 盤面を変更せずに直前の指し手を `Move32` で返す。履歴が空の場合は `None` を返す。 |
+| `move32_from_move(mv)` | `mv: Move` | `Move32` | 盤面を変更せずに、現在局面の駒情報を補完して `Move` を完全な `Move32` に変換する。通常の盤上手または駒打ちとして解決できない場合は `ValueError` を送出する。 |
+| `move_from_csa(csa)` | `csa: str` | `Move32` | 盤面を変更せずに、CSA 指し手文字列を現在局面上の完全な `Move32` に変換する。 |
 
-**引数:**
-- **square**: `Square` - 対象のマス
+### `push_usi_with_delta(usi)` の戻り値スキーマ
 
-**戻り値:**
-- `bool`: 空きマスの場合 `True`
+`push_usi_with_delta(usi)` が返す辞書は、すべての手で共通のキーと、`kind`（`"BOARD"` または `"DROP"`）に応じた固有キーを持つ。
 
-**使用例:**
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Square
-
-board = Board()
-sq = Square.from_usi("5e")
-print(board.is_square_empty(sq))  # => True（初期局面で5五は空）
-```
-
----
-
-#### `empties()`
-
-```python
-board.empties() -> Bitboard
-```
-
-空きマスの集合をビットボードで取得します。
-
-**戻り値:**
-- `Bitboard`: 空きマスのビットボード
-
-**使用例:**
-
-```python
-board = Board()
-empties = board.empties()
-print(empties.count())  # => 61（初期局面の空きマス数）
-```
-
----
-
-### 持ち駒と玉の位置
-
-#### `hand(color)`
-
-```python
-board.hand(color: Color) -> Hand
-```
-
-指定した手番の持ち駒を取得します。
-
-**引数:**
-- **color**: `Color` - 手番（`Color.BLACK` または `Color.WHITE`）
-
-**戻り値:**
-- `Hand`: 持ち駒オブジェクト
-
-**使用例:**
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color, PieceType
-
-board = Board()
-# 持ち駒のある局面を設定
-board.set_sfen("lnsgkgsnl/1r5b1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL b P 1")
-
-hand = board.hand(Color.BLACK)
-print(hand.count(PieceType.PAWN))  # => 1
-```
-
----
-
-#### `hand_counts(color)`
-
-```python
-board.hand_counts(color: Color) -> dict[str, int]
-```
-
-指定した手番の持ち駒枚数を USI 駒文字をキーとする辞書で返します。
-常に `"P"`, `"L"`, `"N"`, `"S"`, `"B"`, `"R"`, `"G"` の 7 キーを含み、持っていない駒は `0` です。
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color
-
-board = Board()
-counts = board.hand_counts(Color.BLACK)
-print(counts["P"])  # => 0（初期局面）
-```
-
----
-
-#### `king_square(color)`
-
-```python
-board.king_square(color: Color) -> Square
-```
-
-指定した手番の玉の位置を取得します。
-
-**引数:**
-- **color**: `Color` - 手番
-
-**戻り値:**
-- `Square`: 玉のマス
-
-**使用例:**
-
-```python
-from rsshogi.core import Board
-from rsshogi.types import Color
-
-board = Board()
-sq = board.king_square(Color.BLACK)
-print(sq.to_usi())  # => "5i"
-```
-
----
-
-#### `iter_pieces()`
-
-```python
-board.iter_pieces() -> list[tuple[Square, Piece]]
-```
-
-盤上にある駒だけを `(Square, Piece)` のリストで返します。空マスは含みません。
-順序は内部 square index の昇順（`1a`, `1b`, ..., `9i`）です。
+| キー | 条件 | 値の型 | 説明 |
+|---|---|---|---|
+| `"move"` | 共通 | `Move32` | 適用された完全な 32 ビット指し手。 |
+| `"move_usi"` | 共通 | `str` | 指し手の USI 文字列。 |
+| `"kind"` | 共通 | `str` | 盤上の移動なら `"BOARD"`、駒打ちなら `"DROP"`。 |
+| `"color"` | 共通 | `Color` | 着手した手番。 |
+| `"to"` | 共通 | `Square` | 移動先または打ったマス。 |
+| `"from"` | `"kind" == "BOARD"` | `Square` | 移動元のマス。 |
+| `"moved_piece_before"` | `"kind" == "BOARD"` | `Piece` | 移動前の駒（成る前の状態）。 |
+| `"moved_piece_after"` | `"kind" == "BOARD"` | `Piece` | 移動後の駒（成った場合は成駒）。 |
+| `"captured"` | `"kind" == "BOARD"` | `dict \| None` | 駒を取らない手では `None`。駒を取った手では `{"piece": Piece, "hand_count_before": int}`（取った盤上駒と、取得前の手番側の同種持ち駒枚数）。 |
+| `"piece_type"` | `"kind" == "DROP"` | `PieceType` | 打った駒の駒種。 |
+| `"hand_count_before"` | `"kind" == "DROP"` | `int` | 駒を打つ前の、手番側の同種持ち駒枚数。 |
 
 ```python
 from rsshogi.core import Board
 
 board = Board()
-for square, piece in board.iter_pieces():
-    print(square.to_usi(), piece)
+delta = board.push_usi_with_delta("7g7f")
+assert delta["kind"] == "BOARD"
+assert delta["captured"] is None
+
+popped = board.pop()
+assert popped is not None and popped.to_usi() == "7g7f"
 ```
 
 ---
 
-### 駒のビットボード
+## 盤上の駒、持ち駒、ビットボードの参照
 
-盤上の駒をビットボードで取得するメソッド群です。
+盤上のマスごとの駒配置、手番ごとの持ち駒、および条件別のビットボードを取得する。
 
-#### `pieces()`
-
-```python
-board.pieces() -> Bitboard
-```
-
-全ての駒があるマスをビットボードで取得します。
-
----
-
-#### `pieces_by_type(piece_type)`
-
-```python
-board.pieces_by_type(piece_type: PieceType) -> Bitboard
-```
-
-指定した駒種のマスをビットボードで取得します（先後両方）。
-
-**使用例:**
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `piece_on(square)` | `square: Square` | `Piece` | 指定したマスにある駒を返す。空きマスの場合は `Piece(0)`（`PieceType.NO_PIECE_TYPE`）を返す。`Square.NONE` は `ValueError` を送出する。 |
+| `is_square_empty(square)` | `square: Square` | `bool` | 指定したマスが空であれば `True` を返す。`Square.NONE` は `ValueError` を送出する。 |
+| `empties()` | なし | `Bitboard` | 盤上のすべての空きマスを表す `Bitboard` を返す。 |
+| `hand(color)` | `color: Color` | `Hand` | 指定した手番の持ち駒を `Hand` オブジェクトとして返す。 |
+| `hand_counts(color)` | `color: Color` | `dict[str, int]` | 指定した手番の持ち駒枚数を `"P"`, `"L"`, `"N"`, `"S"`, `"B"`, `"R"`, `"G"` の 7 キーを持つ辞書で返す。 |
+| `king_square(color)` | `color: Color` | `Square` | 指定した手番の玉の位置を返す。盤上に玉が存在しない場合は `Square.NONE` を返す。 |
+| `iter_pieces()` | なし | `list[tuple[Square, Piece]]` | 盤上に存在するすべての駒を `(Square, Piece)` のリストとしてマス番号の昇順（`1a`, `1b`, ..., `9i`）で返す。 |
+| `pieces()` | なし | `Bitboard` | 先後両方のすべての盤上駒が存在するマスの `Bitboard` を返す。 |
+| `pieces_by_type(piece_type)` | `piece_type: PieceType` | `Bitboard` | 先後両方の指定した駒種が存在するマスの `Bitboard` を返す。`PieceType.NO_PIECE_TYPE` は `ValueError` を送出する。 |
+| `pieces_by_color(color)` | `color: Color` | `Bitboard` | 指定した手番のすべての盤上駒が存在するマスの `Bitboard` を返す。 |
+| `pieces_for(piece_type, color)` | `piece_type: PieceType`, `color: Color` | `Bitboard` | 指定した手番かつ指定した駒種が存在するマスの `Bitboard` を返す。 |
+| `golds()` | なし | `Bitboard` | 先後両方の金と同じ動きをする駒（金、と金、成香、成桂、成銀）の `Bitboard` を返す。 |
+| `bishop_horse()` | なし | `Bitboard` | 先後両方の角と馬の `Bitboard` を返す。 |
+| `rook_dragon()` | なし | `Bitboard` | 先後両方の飛と龍の `Bitboard` を返す。 |
 
 ```python
 from rsshogi.core import Board
-from rsshogi.types import PieceType
+from rsshogi.types import Color, PieceType, Square
 
 board = Board()
-pawns = board.pieces_by_type(PieceType.PAWN)
-print(pawns.count())  # => 18（先後合計）
+print(board.piece_on(Square.from_usi("7g")))  # => P
+print(board.king_square(Color.BLACK).to_usi())  # => "5i"
+print(board.pieces_for(PieceType.PAWN, Color.BLACK).count())  # => 9
+print(board.hand_counts(Color.BLACK))  # => {'P': 0, 'L': 0, 'N': 0, 'S': 0, 'B': 0, 'R': 0, 'G': 0}
 ```
 
 ---
 
-#### `pieces_by_color(color)`
+## 利きと攻撃の判定
 
-```python
-board.pieces_by_color(color: Color) -> Bitboard
-```
+特定のマスに対する攻撃駒（アタッカー）の列挙や、特定の手番と駒種による利き範囲の計算を行う。
 
-指定した手番の全駒をビットボードで取得します。
-
----
-
-#### `pieces_for(piece_type, color)`
-
-```python
-board.pieces_for(piece_type: PieceType, color: Color) -> Bitboard
-```
-
-指定した駒種と手番の駒をビットボードで取得します。
-
----
-
-#### その他のビットボード取得
-
-```python
-board.golds() -> Bitboard         # 金相当の駒（金、と、成香、成桂、成銀）
-board.bishop_horse() -> Bitboard  # 角と馬
-board.rook_dragon() -> Bitboard   # 飛と龍
-```
-
----
-
-### 攻撃判定
-
-#### `attackers_to(square, occupied)`
-
-```python
-board.attackers_to(square: Square, occupied: Bitboard) -> Bitboard
-```
-
-指定したマスを攻撃している駒のビットボードを取得します。
-
-**引数:**
-- **square**: `Square` - 対象のマス
-- **occupied**: `Bitboard` - 駒がある位置（通常は `board.pieces()`）
-
-**戻り値:**
-- `Bitboard`: 攻撃している駒の位置
-
----
-
-#### `attackers_to_color(color, square, occupied)`
-
-```python
-board.attackers_to_color(color: Color, square: Square, occupied: Bitboard) -> Bitboard
-```
-
-指定した手番の駒で、マスを攻撃しているものを取得します。
-
----
-
-#### `attackers_to_color_current(color, square)`
-
-```python
-board.attackers_to_color_current(color: Color, square: Square) -> Bitboard
-```
-
-現在の盤面で、指定した手番の駒がマスを攻撃しているものを取得します。
-
----
-
-#### `attacks_by(color, piece_type)`
-
-```python
-board.attacks_by(color: Color, piece_type: PieceType) -> Bitboard
-```
-
-指定した手番・駒種の攻撃範囲をビットボードで取得します。
-
----
-
-#### `is_attacked_by(square, by_color)`
-
-```python
-board.is_attacked_by(square: Square, by_color: Color) -> bool
-```
-
-指定したマスが、指定した手番の駒に攻撃されているかを判定します。
-
-**使用例:**
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `attackers_to(square, occupied)` | `square: Square`, `occupied: Bitboard` | `Bitboard` | 指定した占有ビットボード `occupied` を前提として、`square` に利いている先後両方の駒の位置を返す。 |
+| `attackers_to_color(color, square, occupied)` | `color: Color`, `square: Square`, `occupied: Bitboard` | `Bitboard` | 指定した `occupied` を前提として、`square` に利いている `color` 側の駒の位置を返す。 |
+| `attackers_to_color_current(color, square)` | `color: Color`, `square: Square` | `Bitboard` | 現在の盤面の占有状態を前提として、`square` に利いている `color` 側の駒の位置を返す。 |
+| `attacks_by(color, piece_type)` | `color: Color`, `piece_type: PieceType` | `Bitboard` | 現在の盤面における、`color` 側の `piece_type` の駒による利き先の集合を返す。 |
+| `is_attacked_by(square, by_color)` | `square: Square`, `by_color: Color` | `bool` | 現在の盤面で `square` に `by_color` 側の駒の利きが 1 つ以上あれば `True` を返す。 |
 
 ```python
 from rsshogi.core import Board
-from rsshogi.types import Color, Square
+from rsshogi.types import Color, PieceType, Square
 
 board = Board()
 board.apply_usi("7g7f")
 
-sq = Square.from_usi("7e")
-# 7六の歩が7五を攻撃しているか
-print(board.is_attacked_by(sq, Color.BLACK))  # => True
+target = Square.from_usi("7e")
+print(board.is_attacked_by(target, Color.BLACK))  # => True
+print(board.attacks_by(Color.BLACK, PieceType.BISHOP).contains(Square.from_usi("3c")))  # => True
 ```
 
 ---
 
-### 合法手の生成と判定
+## 合法手と擬似合法手の生成および判定
 
-#### `legal_moves()`
-
-```python
-board.legal_moves() -> list[Move]
-```
-
-現在局面の全合法手をリストで返します。歩・香・角・飛の不成も含めて生成します。
-
-**戻り値:**
-- `list[Move]`: 合法手のリスト
-
-**使用例:**
+| メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `legal_moves()` | なし | `list[Move]` | 現在局面の全合法手を `Move`（16 ビット）のリストとして返す。歩、香、角、飛の不成も含めて生成する。 |
+| `legal_moves_move32()` | なし | `list[Move32]` | 現在局面の全合法手を駒情報付きの `Move32`（32 ビット）のリストとして返す。 |
+| `pseudo_legal_moves()` | なし | `list[Move]` | 現在局面の擬似合法手（自玉の王手放置を含む可能性のある手）を `Move` のリストとして返す。 |
+| `pseudo_legal_moves_move32()` | なし | `list[Move32]` | 現在局面の擬似合法手を `Move32` のリストとして返す。 |
+| `is_legal_move(mv)` | `mv: Move` | `bool` | 指定した `Move` が現在局面で合法手であれば `True` を返す。 |
+| `is_legal_move32(mv)` | `mv: Move32` | `bool` | 指定した `Move32` が現在局面で合法手であれば `True` を返す。 |
 
 ```python
-board = rsshogi.core.Board()
-for move in board.legal_moves():
-    print(move.to_usi())
-```
+from rsshogi.core import Board, Move
 
----
+board = Board()
+moves = board.legal_moves()
+print(len(moves))  # => 30
 
-#### `legal_moves_move32()`
-
-```python
-board.legal_moves_move32() -> list[Move32]
-```
-
-現在局面の全合法手を `Move32`（32bit）で返します。詳細な駒情報が必要な場合に使用します。
-
-**戻り値:**
-- `list[Move32]`: 合法手のリスト
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-for move in board.legal_moves_move32():
-    print(move.to_usi())
+candidate = Move.from_usi("7g7f")
+if board.is_legal_move(candidate):
+    board.apply_move(candidate)
 ```
 
 ---
 
-#### `pseudo_legal_moves()`
-
-```python
-board.pseudo_legal_moves() -> list[Move]
-```
-
-擬似合法手（王手放置を含む可能性のある手）をリストで返します。
-王手中の場合は回避手も含まれます。
-
-**戻り値:**
-- `list[Move]`: 擬似合法手のリスト
-
-**注意:**
-探索や局面生成でローカルにフィルタリングする用途向けです。
-通常の用途では `legal_moves()` を使用してください。
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-for move in board.pseudo_legal_moves():
-    if board.is_legal_move(move):
-        print(move.to_usi())
-```
-
----
-
-#### `pseudo_legal_moves_move32()`
-
-```python
-board.pseudo_legal_moves_move32() -> list[Move32]
-```
-
-擬似合法手（王手放置を含む可能性のある手）を `Move32`（32bit）で返します。
-
-**戻り値:**
-- `list[Move32]`: 擬似合法手のリスト
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-for move in board.pseudo_legal_moves_move32():
-    if board.is_legal_move32(move):
-        print(move.to_usi())
-```
-
----
-
-#### `is_legal_move(move)`
-
-```python
-board.is_legal_move(move) -> bool
-```
-
-指定した指し手が合法手かどうかを判定します。`Move32` の場合は `is_legal_move32()` を使います。
-
-**引数:**
-- **move**: `Move` - 判定する指し手
-
-**戻り値:**
-- `bool`: 合法手なら `True`、そうでなければ `False`
-
-`move` は `Move` を受け付けます。
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-move = rsshogi.core.Move.from_usi("7g7f")
-if board.is_legal_move(move):
-    board.apply_move(move)
-```
-
----
-
-#### `is_legal_move32(move)`
-
-```python
-board.is_legal_move32(move) -> bool
-```
-
-`Move32` が合法手かどうかを判定します。
-
-**引数:**
-- **move**: `Move32` - 判定する指し手
-
-**戻り値:**
-- `bool`: 合法手なら `True`、そうでなければ `False`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-for move in board.pseudo_legal_moves_move32():
-    if board.is_legal_move32(move):
-        board.apply_move32(move)
-        break
-```
-
----
-
-### ゲーム状態の判定
-
-#### `turn`
-
-```python
-board.turn: Color
-```
-
-現在の手番を `Color` 型で取得します。`Color.BLACK`/`Color.WHITE` がそのまま返るので型安全な比較が可能です。
-
----
-
-#### `zobrist_hash()`
-
-```python
-board.zobrist_hash() -> int
-```
-
-現在局面の Zobrist ハッシュ値を返します（局面キー用途）。
-
----
-
-#### `can_declare_win()`
-
-```python
-board.can_declare_win() -> bool
-```
-
-現在手番で入玉宣言勝ち可能かを判定します。
-
----
-
-#### `evaluate_declaration()`
-
-```python
-board.evaluate_declaration() -> dict
-```
-
-入玉宣言の詳細評価を辞書形式で返します。
-すべての結果に `rule`、`can_declare`、`detail_type` を含みます。
-点数規定では `points`、`required_points`、敵陣の駒数などを、トライ規定では玉と到達先の条件を追加で含みます。
-
----
-
-#### `solve_mate_in_one()`
-
-```python
-board.solve_mate_in_one() -> Move32 | None
-```
-
-現在局面で1手詰めが存在すれば、詰め手を `Move32` で返します。存在しない場合は `None`。
-
-```python
-board = rsshogi.core.Board()
-# ... 1手詰め局面を設定 ...
-mate = board.solve_mate_in_one()
-if mate:
-    print(mate.to_usi())
-```
-
----
-
-#### `move32_from_move(mv)`
-
-```python
-board.move32_from_move(mv: Move) -> Move32
-```
-
-`Move`（16bit）を現在の局面を参照して完全な `Move32`（32bit、駒情報付き）に変換します。
-返される Move32 は `piece_after_move` や CSA/KI2 変換に使用できます。
-
-`Move32.from_usi()` で生成した Move32 には駒情報が含まれない（部分 Move32）ため、
-駒情報が必要な場合はこのメソッドで完全化してください。
-
----
-
-#### `move_from_csa(csa)`
-
-```python
-board.move_from_csa(csa: str) -> Move32
-```
-
-CSA 文字列から現在局面に対応する `Move32` を復元します。
-
----
-
-#### `game_ply`
-
-```python
-board.game_ply: int
-```
-
-初期局面からの手数（ply）を返します。USI 標準に準拠しています。
-
-**戻り値:**
-- `int`: 手数
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-print(board.game_ply)  # => 1
-board.apply_usi("7g7f")
-print(board.game_ply)  # => 2
-```
-
----
-
-#### `is_in_check()`
-
-```python
-board.is_in_check() -> bool
-```
-
-現在の手番の玉が王手にさらされているかを判定します。
-
-**戻り値:**
-- `bool`: 王手されている場合 `True`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-if board.is_in_check():
-    print("王手!")
-```
-
----
-
-#### `is_mated()`
-
-```python
-board.is_mated() -> bool
-```
-
-現在局面が詰み（王手かつ合法手なし）かどうかを判定します。
-
-**戻り値:**
-- `bool`: 詰みの場合 `True`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-if board.is_mated():
-    print("詰み!")
-```
-
----
-
-#### `repetition_state()`
-
-```python
-board.repetition_state() -> RepetitionState
-```
-
-千日手の状態を返します。
-
-**戻り値:**
-- `RepetitionState`: `NONE`, `WIN`, `LOSE`, `DRAW`, `SUPERIOR`, `INFERIOR`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-state = board.repetition_state()
-if state.to_usi() == "rep_draw":
-    print("千日手引き分け")
-```
-
----
-
-#### `is_repetition(threshold=3)`
-
-```python
-board.is_repetition(threshold: int = 3) -> bool
-```
-
-千日手が発生しているかを返します。
-
-**引数:**
-- **threshold**: `int` - 千日手と判定する繰り返し回数（通常は 3）
-
-**戻り値:**
-- `bool`: 千日手の場合 `True`
-
-**使用例:**
-
-```python
-board = rsshogi.core.Board()
-if board.is_repetition():
-    print("千日手発生")
-```
-
----
-
-#### `to_svg(last_move=None, scale=1.0)`
-
-```python
-board.to_svg(last_move=None, scale=1.0) -> Svg
-```
-
-現在の局面を SVG 画像として生成します。
-
-**引数:**
-- **last_move**: `Move | Move32 | None` - 最後の指し手（ハイライト表示）。`Move` または `Move32` のみ受け付けます。`Move` は現在の局面と照合して駒を復元するため、指した後の局面でハイライトするときは `board.last_move()`（`Move32`）を渡してください。
-- **scale**: `float` - 拡大率（デフォルト `1.0`）
-
-**戻り値:**
-- `Svg`: SVG 画像オブジェクト（Jupyter Notebook では自動的に画像表示）
-
-**使用例:**
+## 対局状態、入玉宣言、1 手詰めの判定
+
+手番、手数、Zobrist ハッシュ、王手、詰み、千日手、入玉宣言勝ち、1 手詰めの各判定を行う。
+
+| プロパティ / メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `turn` | プロパティ（読取専用） | `Color` | 現在の手番（`Color.BLACK` または `Color.WHITE`）。 |
+| `game_ply` | プロパティ（読取専用） | `int` | 初期局面からの手数（平手初期局面では `1`）。 |
+| `zobrist_hash()` | なし | `int` | 現在局面の 64 ビット Zobrist ハッシュ値を返す。 |
+| `is_in_check()` | なし | `bool` | 現在手番の玉に王手がかかっていれば `True` を返す。 |
+| `is_mated()` | なし | `bool` | 現在局面が詰み（王手がかかっており合法手が 0 件）であれば `True` を返す。 |
+| `repetition_state()` | なし | `RepetitionState` | 現在局面の千日手および優劣局面判定を `RepetitionState` で返す。 |
+| `is_repetition(threshold=3)` | `threshold: int = 3` | `bool` | 同一局面の出現回数が `threshold` 回以上であれば `True` を返す。 |
+| `can_declare_win()` | なし | `bool` | 現在手番が入玉宣言勝ちの条件を満たしていれば `True` を返す。 |
+| `evaluate_declaration()` | なし | `dict[str, Any]` | 入玉宣言勝ちの判定結果と内訳を辞書で返す。 |
+| `solve_mate_in_one()` | なし | `Move32 \| None` | 現在局面に 1 手詰めが存在すればその詰め手を `Move32` で返し、存在しなければ `None` を返す。 |
+
+### `evaluate_declaration()` の戻り値スキーマ
+
+`evaluate_declaration()` が返す辞書は、共通キーと `detail_type` に応じた詳細キーを持つ。
+
+| キー | 条件 | 値の型 | 説明 |
+|---|---|---|---|
+| `"rule"` | 共通 | `str` | 適用された入玉ルール名（`"Point27"`、`"Point24"`、`"TryRule"`、`"None"`、`"Unset"` など）。 |
+| `"can_declare"` | 共通 | `bool` | 入玉宣言勝ちが可能であれば `True`。 |
+| `"detail_type"` | 共通 | `str` | `"POINT_RULE"`、`"TRY_RULE"`、`"NO_RULE"` のいずれか。 |
+| `"not_in_check"` | `"detail_type" == "POINT_RULE"` | `bool` | 手番側の玉に王手がかかっていないか。 |
+| `"king_in_enemy_camp"` | `"detail_type" == "POINT_RULE"` | `bool` | 手番側の玉が敵陣三段目以内に入っているか。 |
+| `"pieces_in_camp"` | `"detail_type" == "POINT_RULE"` | `int` | 敵陣三段目以内にある玉以外の自駒の枚数。 |
+| `"enough_pieces"` | `"detail_type" == "POINT_RULE"` | `bool` | 敵陣内の玉以外の自駒が 10 枚以上あるか。 |
+| `"points"` | `"detail_type" == "POINT_RULE"` | `int` | 宣言規定に基づく合計点数（大駒 5 点、小駒 1 点）。 |
+| `"required_points"` | `"detail_type" == "POINT_RULE"` | `int` | 宣言に必要な点数（先手 28 点、後手 27 点など）。 |
+| `"king_square"` | `"detail_type" == "TRY_RULE"` | `Square \| None` | 手番側の玉の現在位置（盤上に玉がない場合は `None`）。 |
+| `"try_square"` | `"detail_type" == "TRY_RULE"` | `Square` | トライ規定の目標マス（先手なら `5a`、後手なら `5i`）。 |
+| `"can_reach"` | `"detail_type" == "TRY_RULE"` | `bool` | 玉が目標マスへ移動できる位置にいるか。 |
+| `"can_occupy"` | `"detail_type" == "TRY_RULE"` | `bool` | 目標マスに自駒が置かれていないか。 |
+| `"is_safe"` | `"detail_type" == "TRY_RULE"` | `bool` | 目標マスに相手駒の利きがないか。 |
 
 ```python
 from rsshogi.core import Board
 
 board = Board()
-board.apply_usi("7g7f")
-svg = board.to_svg(last_move=board.last_move())
+info = board.evaluate_declaration()
+print(info["rule"], info["can_declare"], info["points"], info["required_points"])
+# => Point27 False 27 28
 ```
 
 ---
 
-## 使用例
+## `PositionState` と妥当性検証クラス
 
-### 基本的な対局の流れ
-
-```python
-import rsshogi
-
-# 平手初期局面
-board = rsshogi.core.Board()
-
-# 指し手を適用
-board.apply_usi("7g7f")
-board.apply_usi("3c3d")
-board.apply_usi("2g2f")
-
-# 局面情報を表示
-print(f"手番: {board.turn}")
-print(f"手数: {board.game_ply}")
-print(f"SFEN: {board.to_sfen()}")
-
-# 王手判定
-if board.is_in_check():
-    print("王手!")
-
-# 合法手を列挙
-print("合法手:")
-for move in board.legal_moves():
-    print(f"  {move.to_usi()}")
-```
-
----
-
-### SFEN から局面を読み込む
+### `PositionState`
 
 ```python
-import rsshogi
-
-# 特定の局面を SFEN で設定
-sfen = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
-board = rsshogi.core.Board(sfen=sfen)
-
-print(board.to_sfen())
+PositionState(sfen: str | None = None) -> PositionState
+PositionState.from_sfen(sfen: str) -> PositionState
 ```
 
----
+`PositionState` は盤上 81 マス、先後の持ち駒、手番、手数を保持する構造化データクラスである。
+`sfen=None` で生成した場合は、すべてのマスが空で持ち駒なしの空盤面（`"9/9/9/9/9/9/9/9/9 b - 1"`、`side_to_move=Color.BLACK`、`ply=1`）となる。
 
-### 指し手の履歴を管理（アプリ側で保持）
+| プロパティ / メソッド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `side_to_move` | プロパティ（読取および書込） | `Color` | 手番（`Color.BLACK` または `Color.WHITE`）。 |
+| `ply` | プロパティ（読取および書込） | `int` | 手数（`0..=65535`、範囲外の代入は `ValueError`）。 |
+| `board` | プロパティ（読取専用） | `list[Piece]` | 盤上 81 マスの駒を格納した長さ 81 のリスト。 |
+| `hands` | プロパティ（読取専用） | `tuple[Hand, Hand]` | `(先手の持ち駒, 後手の持ち駒)` のタプル。 |
+| `piece_on(square)` | `square: Square` | `Piece` | 指定マスの駒を返す。`Square.NONE` は `ValueError` を送出する。 |
+| `set_piece(square, piece)` | `square: Square`, `piece: Piece` | `None` | 指定マスに駒を配置する。空きマスにする場合は `Piece(0)` を渡す。 |
+| `hand(color)` | `color: Color` | `Hand` | 指定手番の持ち駒を返す。 |
+| `set_hand(color, hand)` | `color: Color`, `hand: Hand` | `None` | 指定手番の持ち駒を設定する。 |
+| `to_sfen(include_ply=True)` | `include_ply: bool = True` | `str` | SFEN 文字列へ変換する。`include_ply=False` の場合は末尾の手数を省略する。 |
+| `copy()` / `__copy__()` | なし | `PositionState` | `PositionState` の複製を返す。 |
+| `validate()` | なし | `None` | 局面を検証し、問題があれば `ValueError` を送出する。 |
+| `is_valid()` | なし | `bool` | 局面が妥当であれば `True` を返す。 |
+| `validate_all()` | なし | `ValidationReport` | 検出されたすべての問題を `ValidationReport` として返す。 |
+| `state == other` | `other: object` | `bool` | 盤面、持ち駒、手番、手数がすべて等しいかを判定する。 |
+
+### `ValidationReport`
+
+`validate_all()` が返す `ValidationReport` は以下のメンバーを持つ。
+
+| プロパティ / メソッド | 型 | 説明 |
+|---|---|---|
+| `is_valid()` | `bool` | 問題が 0 件であれば `True` を返す。 |
+| `issues` | `list[ValidationIssue]` | 検出された `ValidationIssue` のリスト。 |
+| `len(report)` | `int` | 検出された問題の件数。 |
+| `report == other` | `bool` | 保持する問題リストが等しいかを判定する。 |
+
+### `ValidationIssue`
+
+`ValidationIssue` は検出された個別の問題を表し、以下のプロパティを持つ。
+
+| プロパティ | 型 | 説明 |
+|---|---|---|
+| `kind` | `str` | 問題種別（下表参照）。 |
+| `color` | `Color \| None` | 対象の手番（`"EXCESSIVE_PIECE_COUNT"` 以外の種別で設定される）。 |
+| `file_usi` | `str \| None` | 二歩が検出された筋の USI 表記（`"1"` から `"9"`、`"DOUBLE_PAWN"` のみ）。 |
+| `square` | `Square \| None` | 配置違反が検出されたマス（`"INVALID_PLACEMENT"` のみ）。 |
+| `piece_type` | `PieceType \| None` | 対象の駒種（`"INVALID_HAND_COUNT"`、`"EXCESSIVE_PIECE_COUNT"`、`"INVALID_PLACEMENT"` で設定される）。 |
+| `count` | `int \| None` | 検出された枚数（`"INVALID_HAND_COUNT"`、`"EXCESSIVE_PIECE_COUNT"` で設定される）。 |
+| `limit` | `int \| None` | 許容される上限枚数（`"EXCESSIVE_PIECE_COUNT"` のみ）。 |
+| `message` | `str` | 問題内容の説明文字列（`str(issue)` と同一）。 |
+
+`ValidationIssue.kind` の取り得る値は以下の 6 種類である。
+
+| `kind` の値 | 発生条件 |
+|---|---|
+| `"NO_KING"` | 指定手番の玉が盤上に存在しない。 |
+| `"TWO_KINGS"` | 指定手番の玉が盤上に 2 枚以上存在する。 |
+| `"DOUBLE_PAWN"` | 同じ筋に指定手番の未成の歩が 2 枚以上存在する（二歩）。 |
+| `"INVALID_HAND_COUNT"` | 指定手番の持ち駒枚数がその駒種の最大枚数を超えている。 |
+| `"EXCESSIVE_PIECE_COUNT"` | 盤上と先後の持ち駒を合わせた特定駒種の総数が標準枚数（歩 18 枚、香と桂と銀と金は各 4 枚、角と飛は各 2 枚）を超えている。 |
+| `"INVALID_PLACEMENT"` | 行き所のない駒（1 段目の歩と香、1 段目および 2 段目の桂）が配置されている。 |
 
 ```python
-import rsshogi
+from rsshogi.core import Board, PositionState
+from rsshogi.types import Color, Piece, PieceType, Square
 
-board = rsshogi.core.Board()
+state = PositionState()
+state.set_piece(Square.from_usi("5i"), Piece.from_color_type(Color.BLACK, PieceType.KING))
+state.set_piece(Square.from_usi("5a"), Piece.from_color_type(Color.WHITE, PieceType.KING))
+state.set_piece(Square.from_usi("7g"), Piece.from_color_type(Color.BLACK, PieceType.PAWN))
+state.set_piece(Square.from_usi("7f"), Piece.from_color_type(Color.BLACK, PieceType.PAWN))
 
-# 複数手指す（履歴は自分で保持）
-history = []
-moves = ["7g7f", "3c3d", "2g2f", "4c4d"]
-for usi in moves:
-    mv = rsshogi.core.Move.from_usi(usi)
-    board.apply_move(mv)
-    history.append(mv)
+report = state.validate_all()
+assert not report.is_valid()
+for issue in report.issues:
+    print(issue.kind, issue.file_usi, issue.message)
+# => DOUBLE_PAWN 7 Double pawn for Black on file 7
 
-# 履歴を表示
-print("指し手履歴:")
-for move in history:
-    print(f"  {move.to_usi()}")
-
-# 2手戻す
-for _ in range(2):
-    last_move = board.last_move()
-    if last_move:
-        board.undo_move32(last_move)
-
-print(f"\n2手戻した後の手数: {board.game_ply}")
+# 修正して Board に反映する
+state.set_piece(Square.from_usi("7f"), Piece(0))
+assert state.is_valid()
+board = Board()
+board.set_position_state(state)
 ```
-
----
-
-### ゲーム終了判定
-
-```python
-import rsshogi
-
-board = rsshogi.core.Board()
-
-# 対局を進める（実際には多くの手が必要）
-while True:
-    moves = board.legal_moves()
-    if not moves:
-        break
-    # 最初の合法手を選択（実際にはもっと賢い選択が必要）
-    board.apply_move(moves[0])
-
-    if board.game_ply > 100:  # 無限ループ防止
-        break
-    if board.repetition_state().to_usi() != "rep_none":
-        break
-
-# 終局状態を判定
-if board.is_mated():
-    print("詰み")
-elif board.is_repetition():
-    state = board.repetition_state()
-    print(f"千日手: {state.to_usi()}")
-```
-
----
-
-## PositionState
-
-```python
-rsshogi.core.PositionState(sfen=None)
-```
-
-`Board.to_position_state()` が返す raw-state オブジェクトです。盤面 81 マス、持ち駒、手番、手数を
-構造化して保持します。
-
-- `piece_on(square)` / `set_piece(square, piece)` で盤上駒を編集
-- `hand(color)` / `set_hand(color, hand)` で持ち駒を編集
-- `side_to_move`, `ply` を直接変更
-- `to_sfen(include_ply=True)` で SFEN へ戻す
-- `validate()` / `is_valid()` / `validate_all()` で検証
-
-`board` プロパティは 81 要素の `list[Piece]`、`hands` プロパティは
-`(black_hand, white_hand)` の `tuple[Hand, Hand]` を返します。
-
-## ValidationReport
-
-```python
-rsshogi.core.ValidationReport
-```
-
-`validate_all()` の戻り値です。
-
-- `is_valid()` で問題がないか確認
-- `issues` プロパティで `ValidationIssue` の一覧を取得
-
-## ValidationIssue
-
-```python
-rsshogi.core.ValidationIssue
-```
-
-個別の validation 問題です。主なプロパティ:
-
-- `kind`: `NO_KING`, `TWO_KINGS`, `DOUBLE_PAWN`, `INVALID_HAND_COUNT`, `INVALID_PLACEMENT`
-- `color`: 色に紐づく問題なら `Color`
-- `file_usi`: 二歩なら `"1"`..`"9"`
-- `square`: 配置違反なら対象マス
-- `piece_type`: 配置違反や持ち駒上限違反の対象駒種
-- `count`: 持ち駒上限違反時の枚数
-- `message`: 人間向けメッセージ
-
----
 
 ## 関連項目
 
-- [`Move32`](move32.md) - 32bit 指し手型
-- [`Move`](move.md) - 16bit 指し手型
-- [`GameResult`](game_result.md) - 終局結果
-- [`Record`](record.md) - 棋譜レコード
-- [クイックスタート](../getting-started/quickstart.md)
-- [例とパターン](../getting-started/examples.md)
+- [基本型（`Square` / `Piece` / `Hand` / `Bitboard`）](types.md)
+- [指し手クラス（`Move` / `Move32` / `AperyMove`）](move.md)
+- [SVG 出力](svg.md)
+- [NumPy 連携](numpy.md)
+- [棋譜管理（`Record`）](record.md)

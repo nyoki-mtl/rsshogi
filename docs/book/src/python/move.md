@@ -1,395 +1,310 @@
-# Move クラス
+# 指し手クラス（Move / Move32 / AperyMove / AperyMove32）
+
+`rsshogi.core` は用途と互換性に応じて 4 種類の指し手クラスと変換関数 `to_move()` を提供する。
+通常の盤面操作や棋譜管理では 16 ビットの `Move` または 32 ビットの `Move32` を使い、`cshogi` や Apery 系の学習データ（HCPE など）と連携する境界では `AperyMove` と `AperyMove32` を使う。
 
 ```python
-rsshogi.core.Move(value)
+from rsshogi.core import AperyMove, AperyMove32, Board, Move, Move32, to_move
 ```
 
-将棋の指し手を表す、内部エンコーディングが 16bit の型です。
-移動元・移動先、成り、駒打ちを表します。
+## 4 つの指し手型の比較
 
-## 概要
+`rsshogi` では 16 ビット指し手を基本型として `Move` と呼び、32 ビット指し手を `Move32` と呼ぶ。
+やねうら王と `cshogi`（Apery 系）では 16 ビット型を `Move16`、32 ビット型を `Move` と呼ぶため、名称とビットレイアウトの対応に注意が必要である。
 
-Move クラスは以下の機能を提供します：
+| 型 | ビット幅 | ビットレイアウト互換 | 保持する駒情報 | 主な用途 |
+|---|---|---|---|---|
+| `Move` | 16 ビット | やねうら王 `Move16` 互換 | なし（駒打ちの打つ駒種のみ） | `Board.legal_moves()`、`Record`、定跡、探索木の保存など一般的な用途全般に使う。 |
+| `Move32` | 32 ビット | `rsshogi` 拡張（下位 16 ビットは `Move` と同一） | 移動後の色付き駒（`Piece`） | `Board.legal_moves_move32()`、`Board.last_move()`、CSA 文字列出力（`to_csa()`）に使う。 |
+| `AperyMove` | 16 ビット | `cshogi` / Apery `Move16` 互換 | なし（駒打ちの打つ駒種のみ） | HCPE の `bestMove16` や `cshogi.move16()` との相互変換に使う。 |
+| `AperyMove32` | 32 ビット | `cshogi` / Apery `Move` 互換 | 移動前の駒種（`PieceType`）と取得駒種（`PieceType`） | `cshogi` の 32 ビット指し手との相互変換や取得駒種の参照に使う。 |
 
-- USI 形式の文字列への変換・からの生成
-- `AperyMove` との相互変換
-- 駒打ち、成りなどの判定
-- KI2 形式への変換（`Board` を渡す必要あり）
-- 16bit の内部エンコーディング
+`Move` と `AperyMove` は同じ 16 ビット幅だが、成りフラグの位置と駒打ちの表現方法が異なるため、整数値を直接比較してはならない。
+相互変換には必ず `Move.to_apery()` と `AperyMove.to_move()` を使用する。
 
-**用途:** 通常は `Move` を使用してください。大量の棋譜データや探索木でもそのまま使えます。
-`Move32` は CSA 変換や駒情報の直接取得が必要な場合に使用します。
+### ビット構造の違い
 
-## 基本的な使い方
-
-```python
-from rsshogi.core import Board, Move
-
-# USI 文字列から生成
-move = Move.from_usi("7g7f")
-print(move.to_usi())  # => "7g7f"
-
-# Board で使用
-board = Board()
-board.apply_move(move)  # Move で指せる
-```
-
----
-
-## クラスメソッド
-
-### `from_usi(usi)`
-
-```python
-Move.from_usi(usi: str) -> Move
-```
-
-USI 文字列から `Move` インスタンスを生成します。
-通常手に加えて `0000`（null move）を受け付けます。
-`resign`、`win`、`none` を含む特殊手は `rsshogi.usi.move_from_usi()` を使います。
-
-**引数:**
-- **usi**: `str` - USI 形式の指し手文字列（例: `"7g7f"`, `"P*5e"`）
-
-**戻り値:**
-- `Move`: 生成された Move インスタンス
-
-**例外:**
-- `ValueError`: USI 文字列のパースに失敗した場合
-
-**使用例:**
-
-```python
-from rsshogi.core import Move
-
-move = Move.from_usi("7g7f")
-print(move.to_usi())  # => "7g7f"
-
-# 駒打ち
-drop_move = Move.from_usi("P*5e")
-print(drop_move.is_drop())  # => True
-```
-
----
-
-## インスタンスメソッド
-
-### 文字列変換
-
-#### `to_usi()`
-
-```python
-mv.to_usi() -> str
-```
-
-Move を USI 形式の文字列に変換します。
-
-**戻り値:**
-- `str`: USI 形式の指し手文字列
-
----
-
-#### `to_ki2(board)`
-
-```python
-mv.to_ki2(board: Board) -> str | None
-```
-
-Move を現在局面に基づいて補完し、KI2 形式の文字列に変換します。
-KI2 の左右・直・寄・引・上などの表記判定には局面情報が必要なため、`board` を渡します。
-
-**戻り値:**
-- `str | None`: KI2 形式の指し手。変換できない場合は `None`
-
-```python
-from rsshogi.core import Board, Move
-
-board = Board()
-move = Move.from_usi("7g7f")
-print(move.to_ki2(board))  # => "▲７六歩"
-```
-
----
-
-#### `to_apery()`
-
-```python
-mv.to_apery() -> AperyMove
-```
-
-`cshogi` / Apery 互換の 16bit 指し手へ変換します。
-
-```python
-from rsshogi.core import Move
-
-mv = Move.from_usi("7g7f")
-amv = mv.to_apery()
-
-print(int(amv))
-print(amv.to_move().to_usi())
-```
-
----
-
-### 特殊手定数（クラス属性）
-
-- `Move.MOVE_NONE`
-- `Move.MOVE_NULL`
-- `Move.MOVE_RESIGN`
-- `Move.MOVE_WIN`
-- `Move.MOVE_END`
-
-```python
-from rsshogi.core import Move
-
-assert Move.MOVE_NONE.to_usi() == "none"
-assert Move.MOVE_RESIGN.to_usi() == "resign"
-```
-
----
-
-### 指し手の判定
-
-#### `is_drop()`
-
-```python
-mv.is_drop() -> bool
-```
-
-この指し手が駒打ちかどうかを判定します。
-
-**戻り値:**
-- `bool`: 駒打ちの場合 `True`
-
----
-
-#### `is_promotion()`
-
-```python
-mv.is_promotion() -> bool
-```
-
-この指し手が成りかどうかを判定します。
-
-**戻り値:**
-- `bool`: 成りの場合 `True`
-
----
-
-#### `is_normal()`
-
-```python
-mv.is_normal() -> bool
-```
-
-この指し手が通常の指し手（特殊手定数ではない）かどうかを判定します。
-
-**戻り値:**
-- `bool`: 有効な手の場合 `True`
-
----
-
-### 移動情報の取得
-
-#### `from_sq` / `to_sq`
-
-```python
-mv.from_sq -> Square
-mv.to_sq -> Square
-```
-
-移動元・移動先のマスを取得します。
-
----
-
-#### `dropped_piece_type`
-
-```python
-mv.dropped_piece_type -> PieceType | None
-```
-
-駒打ちの場合、打った駒種を返します。駒打ちでない場合は `None`。
-
----
-
-#### `move_type`
-
-```python
-mv.move_type -> MoveType
-```
-
-指し手の種類を取得します。
-
-**戻り値:**
-- `MoveType`: `MoveType.NORMAL`、`MoveType.PROMOTION`、`MoveType.DROP` のいずれか
-
----
-
-## 特殊メソッド
-
-- `int(mv)` → 内部値（16bit 整数）を返す
-- `str(mv)` → USI 形式の文字列を返す（`to_usi()` と同値）
-
-## プロパティ
-
-### `value`
-
-```python
-mv.value -> int
-```
-
-Move の内部表現（16bit 整数）にアクセスします。
-
----
-
-## 使用例
-
-### Board と組み合わせる
-
-```python
-import rsshogi
-
-board = rsshogi.core.Board()
-
-# Move で指す
-move = rsshogi.core.Move.from_usi("7g7f")
-board.apply_move(move)
-
-print(board.to_sfen())
-```
-
----
-
-### 指し手列を保持する
-
-`Move` は駒情報を持たないため、USI 形式の手順や通常の盤面操作に適します。
-Python オブジェクトとしての実際のメモリ使用量は、16bit という内部エンコーディングだけでは決まりません。
-
-```python
-from rsshogi.core import Move
-
-# 棋譜データなど大量の指し手を扱う場合
-game_moves = [
-    Move.from_usi("7g7f"),
-    Move.from_usi("3c3d"),
-    Move.from_usi("2g2f"),
-    # ... 数百手
-]
-
-print(f"保存した指し手数: {len(game_moves)}")
-```
-
----
-
-### 内部値による再構築
-
-```python
-from rsshogi.core import Move
-
-move = Move.from_usi("7g7f")
-
-# 内部値を取得
-internal_value = int(move)
-
-# 内部値から再構築
-reconstructed = Move(internal_value)
-print(reconstructed.to_usi())  # => "7g7f"
-```
-
----
-
-## Move と Move32 の比較
-
-| 特性 | Move (16bit) | Move32 (32bit) |
-|------|----------------|--------------|
-| 内部エンコーディング | 16bit | 32bit |
-| 移動元・移動先 | ✓ | ✓ |
-| 成り / 駒打ちフラグ | ✓ | ✓ |
-| 移動後の駒情報 | × | ✓ |
-| USI 変換 | ✓ | ✓ |
-| CSA 変換 | × | ✓ |
-| KI2 変換 | ✓（board 必要） | ✓（board 必要） |
-| 保持する駒情報 | なし | 移動後の駒を保持 |
-
-### 駒情報を使う操作
-
-`Move` は移動元、移動先、成り、駒打ちを 16 bit で保持します。
-CSA 変換や駒種の参照には、移動後の駒情報を持つ `Move32` を使います。
-
-`to_ki2(board)` は `Board` から駒情報を取得するため、`Move` からも KI2 文字列を生成できます。
-
-### 使い分け
-
-**Move を推奨する場合:**
-- 一般的な用途（`Board.legal_moves()` の戻り値）
-- USI 形式のみで十分
-- 大量の棋譜データや探索木で指し手を保存
-
-**Move32 を検討する場合:**
-- CSA 形式への変換が必要
-- 駒情報を直接取得したい
-
-### 型に対応するメソッド
-
-`Board.apply_move()` は Move を、`Board.apply_move32()` は Move32 を受け付けます。
-
-```python
-import rsshogi
-
-board = rsshogi.core.Board()
-
-# Move は apply_move で適用する
-mv = rsshogi.core.Move.from_usi("7g7f")
-board.apply_move(mv)  # OK
-
-# Move32 は apply_move32 で適用する
-move32 = board.legal_moves_move32()[0]
-board.apply_move32(move32)  # OK
-```
-
----
-
-## 他エンジンとの命名対応
-
-rsshogi では 16bit 指し手を **基本型** として `Move` と命名しています。
-やねうら王と cshogi では 16bit 型を `Move16`、32bit 型を `Move` と呼びます。
-ただし、rsshogi の `Move` と cshogi の `Move16` はビットレイアウトが異なります。
-
-| エンジン/ライブラリ | 16bit 型 | 32bit 型 |
-|---------------------|----------|----------|
-| **rsshogi** | `Move` | `Move32` |
-| **やねうら王** | `Move16` | `Move` |
-| **cshogi** (Apery 系) | `Move16` | `Move` |
-
-- rsshogi の `Move` はやねうら王の `Move16` と同一のビットレイアウトです。
-- cshogi の `Move16` とはビットレイアウトが異なります（駒打ち判定方法・成りフラグ位置が違う）。
-  cshogi との間で指し手の整数値を直接比較してはなりません。
-  rsshogi 側では `Move.to_apery()`、Apery 形式側では `AperyMove.to_move()` を使って変換します。
-
----
-
-## 技術詳細: ビット構造
-
-Move はやねうら王の `Move16` と同じ指し手エンコーディングを採用しています。
+`Move` と `Move32` はやねうら王の `Move16` レイアウトを基礎とし、`Move32` は上位ビットに移動後の `Piece`（手番と成り状態を含む）を格納する。
 
 ```text
-bit位置:  15  14 | 13 ... 7 | 6 ... 0
-          ─────────────────────────────
-          │ P │ D │移動元(7)│移動先(7)│
-          ─────────────────────────────
-          P: 成りフラグ (bit 15)
-          D: 駒打ちフラグ (bit 14)
+Move (16 ビット):
+  bit 15    : 成りフラグ (1 = 成り)
+  bit 14    : 駒打ちフラグ (1 = 駒打ち)
+  bit 7..13 : 移動元マス (0..80) または打つ駒種
+  bit 0..6  : 移動先マス (0..80)
+
+Move32 (32 ビット):
+  bit 21..31: 未使用 (0)
+  bit 16..20: 移動後の色付き駒 (Piece)
+  bit 0..15 : Move と同一
 ```
 
-- **bit 0-6**: 移動先の座標
-- **bit 7-13**: 移動元の座標または打つ駒種
-- **bit 14**: 駒打ちフラグ
-- **bit 15**: 成りフラグ
+一方、`AperyMove` と `AperyMove32` は Apery および `cshogi` のビットレイアウトに従う。
 
----
+```text
+AperyMove (16 ビット):
+  bit 15    : 未使用 (0)
+  bit 14    : 成りフラグ (1 = 成り)
+  bit 7..13 : 移動元マス (0..80) または駒打ちコード (81 + HandPiece)
+  bit 0..6  : 移動先マス (0..80)
+
+AperyMove32 (32 ビット):
+  bit 20..27: 取得した駒種 (PieceType)
+  bit 16..19: 移動前の駒種 (PieceType、駒打ち時は 0)
+  bit 0..15 : AperyMove と同一
+```
+
+## 相互変換マトリクス
+
+4 つの指し手型と USI 文字列の間の変換方法を下表に示す。
+32 ビット型への昇格や取得駒情報の補完には現在局面の `board`（`Board` インスタンス）が必要になる。
+
+| 変換元 \ 変換先 | `Move` | `Move32` | `AperyMove` | `AperyMove32` | USI 文字列 (`str`) |
+|---|---|---|---|---|---|
+| **`Move` (`mv`)** | - | `board.move32_from_move(mv)` | `mv.to_apery()` | `board.apery_move32_from_move(mv)` | `mv.to_usi()` |
+| **`Move32` (`mv32`)** | `mv32.to_move()` | - | `mv32.to_move().to_apery()` | `mv32.to_apery(board)` または `board.apery_move32_from_move32(mv32)` | `mv32.to_usi()` |
+| **`AperyMove` (`amv`)** | `amv.to_move()` | `board.move32_from_move(amv.to_move())` | - | `board.apery_move32_from_move(amv.to_move())` | `amv.to_usi()` |
+| **`AperyMove32` (`amv32`)** | `amv32.to_move()` | `amv32.to_move32(board)` | `amv32.to_apery_move()` | - | `amv32.to_usi()` |
+| **USI 文字列 (`usi`)** | `Move.from_usi(usi)` | `Move32.from_usi(usi)`（駒情報なし） | `AperyMove.from_usi(usi)` | `board.apery_move32_from_move(Move.from_usi(usi))` | - |
+
+```python
+from rsshogi.core import Board, Move
+
+board = Board()
+mv = Move.from_usi("7g7f")
+
+# Move から各型への変換
+mv32 = board.move32_from_move(mv)
+amv = mv.to_apery()
+amv32 = board.apery_move32_from_move(mv)
+
+# 逆方向の変換
+assert mv32.to_move() == mv
+assert amv.to_move() == mv
+assert amv32.to_move() == mv
+assert amv32.to_move32(board) == mv32
+assert amv32.to_apery_move() == amv
+```
+
+## 4 クラス共通の API
+
+`Move`、`Move32`、`AperyMove`、`AperyMove32` は、座標や手種別を参照する共通のプロパティとメソッドを備えている。
+
+### 共通コンストラクタと USI 変換
+
+| メソッド / 操作 | 対象クラス | 戻り値 | 説明 |
+|---|---|---|---|
+| `Cls(value: int)` | 全 4 クラス | 各インスタンス | 内部表現の符号なし整数（16 ビット型は `0..=65535`、32 ビット型は `0..=4294967295`）から生成する。範囲外は `OverflowError` を送出する。 |
+| `Cls.from_usi(usi: str)` | `Move`, `Move32`, `AperyMove` | 各インスタンス | USI 文字列から生成する。不正な文字列では `ValueError` を送出する。 |
+| `mv.to_usi()` | 全 4 クラス | `str` | USI 形式の文字列（`"7g7f"`、`"P*5e"`、`"2b2a+"` など）を返す。 |
+
+`Move.from_usi(usi)` と `Move32.from_usi(usi)` は通常の指し手に加えてパス手を表す `"0000"` を受け付け、`MOVE_NULL` を返す。
+`"resign"`、`"win"`、`"none"` は `Move.from_usi()` では `ValueError` となるため、特殊手トークンも含めて変換したい場合は [`rsshogi.usi.move_from_usi()`](usi.md#定数と指し手変換rsshogiusi) を使用する。
+また `AperyMove.from_usi(usi)` は通常の指し手のみを受け付け、特殊手文字列に対しては `ValueError` を送出する。
+
+### 共通プロパティと判定メソッド
+
+| プロパティ / メソッド | 型 / 戻り値 | 説明 |
+|---|---|---|
+| `from_sq` | `Square` | 移動元のマスを返す。駒打ちや特殊手の場合は移動先や内部コードに依存するため、通常移動時（`not is_drop()` かつ `is_normal()`）に参照する。 |
+| `to_sq` | `Square` | 移動先のマスを返す。 |
+| `dropped_piece_type` | `PieceType \| None` | 駒打ちの場合に打つ駒種を返し、駒打ちでない場合は `None` を返す。 |
+| `move_type` | `MoveType` | `MoveType.NORMAL`、`MoveType.PROMOTION`、`MoveType.DROP` のいずれかを返す。 |
+| `value` | `int` | 内部エンコーディングの整数値を返す。 |
+| `is_drop()` | `bool` | 駒打ちであれば `True` を返す。 |
+| `is_promotion()` | `bool` | 成る手であれば `True` を返す。 |
+| `is_normal()` | `bool` | 特殊手定数（`MOVE_NONE` や `MOVE_NULL` など）ではない通常の指し手であれば `True` を返す。 |
+
+### 特殊手クラス定数（`Move` と `Move32`）
+
+`Move` と `Move32` は特殊手を表す 5 つのクラス定数を持つ。
+いずれも `is_normal()` は `False` を返す。
+
+| 定数 | `to_usi()` の値 | 説明 |
+|---|---|---|
+| `MOVE_NONE` | `"none"` | 無効手または未指定を表す定数である。 |
+| `MOVE_NULL` | `"null"` | パス手（null move）を表す定数である。 |
+| `MOVE_RESIGN` | `"resign"` | 投了を表す定数である。 |
+| `MOVE_WIN` | `"win"` | 入玉宣言勝ちを表す定数である。 |
+| `MOVE_END` | `"end"` | 指し手終端を表す番兵定数である。 |
+
+### 共通の特殊メソッド
+
+- `int(mv)`：`mv.value` と同じ内部整数値を返す。
+- `str(mv)`：`mv.to_usi()` と同じ USI 文字列を返す。
+- `repr(mv)`：`Move(7g7f)` のようなデバッグ用文字列を返す。
+- `hash(mv)`：内部整数値に基づくハッシュ値を返し、`dict` のキーや `set` の要素として使用できる。
+- `mv == other` / `mv != other`：同じクラスのインスタンス、またはビット幅に収まる非負 `int` と等価比較できる。異なる指し手クラス同士の比較や `<` などの順序比較は `TypeError` となる。
+
+## Move
+
+```python
+rsshogi.core.Move(value: int)
+```
+
+`rsshogi` 標準の 16 ビット指し手クラスである。
+`Board.legal_moves()` の戻り値や `MoveEntry.move`、`BookMove.mv` など、ライブラリ全体で標準の指し手表現として使われる。
+
+### Move 固有のメソッド
+
+| メソッド | シグネチャ | 説明 |
+|---|---|---|
+| `to_ki2` | `mv.to_ki2(board: Board) -> str \| None` | 現在局面 `board` を参照して KI2 形式の文字列（例：`"▲７六歩"`）に変換する。 |
+| `to_apery` | `mv.to_apery() -> AperyMove` | `cshogi` / Apery 互換の 16 ビット指し手 `AperyMove` に変換する。 |
+
+`Move.to_ki2(board)` は内部で `board.move32_from_move(mv)` と同様に現在局面から移動駒を特定する。
+`mv` が特殊手である場合や、現在局面の移動元に自分の駒がないなど正常な指し手へ解決できない場合は `ValueError` を送出する。
+
+```python
+from rsshogi.core import Board, Move
+
+board = Board()
+mv = Move.from_usi("7g7f")
+print(mv.to_ki2(board))  # => "▲７六歩"
+
+amv = mv.to_apery()
+print(amv.to_usi())      # => "7g7f"
+```
+
+## Move32
+
+```python
+rsshogi.core.Move32(value: int)
+```
+
+16 ビットの指し手情報に加えて、移動後の色付き駒（`Piece`）を上位ビットに保持する 32 ビット指し手クラスである。
+`Board.legal_moves_move32()`、`Board.push_move()`、`Board.last_move()`、`Board.move32_from_move()` などから取得できる。
+
+### Move32 固有のプロパティとメソッド
+
+| プロパティ / メソッド | シグネチャ | 説明 |
+|---|---|---|
+| `piece_after_move` | `mv32.piece_after_move -> Piece` | 着手後に移動先マスに置かれる色付き駒（成り手なら成り駒、駒打ちなら打った駒）を返す。 |
+| `to_move` | `mv32.to_move() -> Move` | 上位ビットの駒情報を落として 16 ビットの `Move` に変換する。 |
+| `to_csa` | `mv32.to_csa() -> str \| None` | 手番符号付きの CSA 指し手文字列（例：`"+7776FU"`）を返す。特殊手や駒情報を持たない場合は `None` を返す。 |
+| `to_ki2` | `mv32.to_ki2(board: Board) -> str \| None` | 現在局面 `board` を参照して KI2 形式の文字列を返す。変換できない場合は例外を送出せず `None` を返す。 |
+| `to_apery` | `mv32.to_apery(board: Board) -> AperyMove32` | 現在局面 `board` から取得駒種を補完して `AperyMove32` に変換する。 |
+
+`Move32.from_usi("7g7f")` で生成したインスタンスは局面情報を経由していないため、上位ビットの `piece_after_move` が空（`Piece(0)`）の「部分 `Move32`」となる。
+部分 `Move32` に対して `to_csa()` や `to_ki2(board)` を呼ぶと `None` が返るため、CSA や KI2 への変換や `piece_after_move` の参照には `board.legal_moves_move32()` または `board.move32_from_move(mv)` で取得した完全な `Move32` を使用する。
+
+```python
+from rsshogi.core import Board, Move, Move32
+
+board = Board()
+mv32 = board.move32_from_move(Move.from_usi("7g7f"))
+
+print(mv32.piece_after_move)  # => P
+print(mv32.to_csa())          # => "+7776FU"
+print(mv32.to_ki2(board))     # => "▲７六歩"
+
+# Move32.from_usi() は駒情報を持たないため to_csa() は None を返す
+partial = Move32.from_usi("7g7f")
+assert partial.to_csa() is None
+```
+
+## AperyMove
+
+```python
+rsshogi.core.AperyMove(value: int)
+```
+
+`cshogi` の `move16` や HCPE の `bestMove16` フィールドと同一のビットレイアウトを持つ 16 ビット指し手クラスである。
+
+### AperyMove のコンストラクタとメソッド一覧
+
+| メソッド / プロパティ | シグネチャ | 説明 |
+|---|---|---|
+| コンストラクタ | `AperyMove(value: int) -> AperyMove` | Apery 16 ビット整数値（`0..=65535`）から生成する。 |
+| `from_usi` | `AperyMove.from_usi(usi: str) -> AperyMove` | USI 文字列から `AperyMove` を生成する。 |
+| `to_usi` | `amv.to_usi() -> str` | USI 文字列に変換する。 |
+| `to_move` | `amv.to_move() -> Move` | `rsshogi` 標準の `Move` に変換する。 |
+| `is_drop` | `amv.is_drop() -> bool` | 駒打ちであれば `True` を返す。 |
+| `is_promotion` | `amv.is_promotion() -> bool` | 成る手であれば `True` を返す。 |
+| `is_normal` | `amv.is_normal() -> bool` | 通常の指し手であれば `True` を返す。 |
+| `from_sq` / `to_sq` | `Square` | 移動元と移動先のマスを返す。 |
+| `dropped_piece_type` | `PieceType \| None` | 駒打ちの場合に打つ駒種を返す。 |
+| `move_type` | `MoveType` | 指し手の種類を返す。 |
+| `value` | `int` | 16 ビット整数値を返す。 |
+
+## AperyMove32
+
+```python
+rsshogi.core.AperyMove32(value: int)
+```
+
+`cshogi` の 32 ビット指し手と互換のクラスであり、下位 16 ビットの `AperyMove` に加えて移動前の駒種と取得駒種を保持する。
+現在局面からの生成には `board.apery_move32_from_move(mv)`、`board.apery_move32_from_move32(mv32)`、または `mv32.to_apery(board)` を使用する。
+
+### AperyMove32 のコンストラクタとメソッド一覧
+
+| メソッド / プロパティ | シグネチャ | 説明 |
+|---|---|---|
+| コンストラクタ | `AperyMove32(value: int) -> AperyMove32` | Apery 32 ビット整数値（`0..=4294967295`）から生成する。 |
+| `to_usi` | `amv32.to_usi() -> str` | USI 文字列に変換する。 |
+| `to_move` | `amv32.to_move() -> Move` | `rsshogi` 標準の 16 ビット `Move` に変換する。 |
+| `to_move32` | `amv32.to_move32(board: Board) -> Move32` | 現在局面 `board` の手番情報を使って `Move32` に変換する。 |
+| `to_apery_move` | `amv32.to_apery_move() -> AperyMove` | 下位 16 ビットを取り出して `AperyMove` に変換する。 |
+| `is_drop` | `amv32.is_drop() -> bool` | 駒打ちであれば `True` を返す。 |
+| `is_promotion` | `amv32.is_promotion() -> bool` | 成る手であれば `True` を返す。 |
+| `is_capture` | `amv32.is_capture() -> bool` | 相手の駒を取る手であれば `True` を返す。 |
+| `is_normal` | `amv32.is_normal() -> bool` | 通常の指し手であれば `True` を返す。 |
+| `piece_type_before` | `PieceType` | 移動前の駒種を返す（駒打ちの場合は `PieceType.NO_PIECE_TYPE`）。 |
+| `piece_type_after` | `PieceType` | 着手後に移動先にある駒種を返す。 |
+| `captured_piece_type` | `PieceType` | 取得した駒の駒種を返す（駒を取らない手では `PieceType.NO_PIECE_TYPE`）。 |
+| `from_sq` / `to_sq` | `Square` | 移動元と移動先のマスを返す。 |
+| `dropped_piece_type` | `PieceType \| None` | 駒打ちの場合に打つ駒種を返す。 |
+| `move_type` | `MoveType` | 指し手の種類を返す。 |
+| `value` | `int` | 32 ビット整数値を返す。 |
+
+`AperyMove32` が保持する駒情報は手番を持たない `PieceType` であり、`Move32` が必要とする色付き駒 `Piece` ではない。
+そのため `amv32.to_move32(board)` で `Move32` へ変換する際には現在局面の `board` を渡す必要がある。
+
+```python
+from rsshogi.core import Board, Move
+
+board = Board()
+board.apply_usi("7g7f")
+board.apply_usi("3c3d")
+
+# 2 二角成（駒取り＋成り）を AperyMove32 に変換
+mv = Move.from_usi("8h2b+")
+amv32 = board.apery_move32_from_move(mv)
+
+print(amv32.is_capture())          # => True
+print(amv32.piece_type_before)     # => B (BISHOP)
+print(amv32.piece_type_after)      # => +B (HORSE)
+print(amv32.captured_piece_type)   # => B (BISHOP)
+```
+
+## `to_move`
+
+```python
+rsshogi.core.to_move(move: Move | Move32 | int) -> Move
+```
+
+`Move`、`Move32`、または 16 ビット符号なし整数を `Move` に正規化するヘルパー関数である。
+
+- `Move` を渡した場合は同じ値を持つ `Move` を返す。
+- `Move32` を渡した場合は上位ビットの駒情報を落とした `Move`（`mv32.to_move()` と同等）を返す。
+- `int` を渡した場合は `0..=65535`（`0..=0xFFFF`）の範囲内であれば `Move(move)` として変換する。下位 16 ビットのマスク切り詰めは行わず、負数や `65536` 以上の整数を渡した場合は `ValueError` を送出する。
+- 上記以外の型（`str` など）を渡した場合は `TypeError` を送出する。
+
+```python
+from rsshogi.core import Board, Move, to_move
+
+board = Board()
+mv32 = board.legal_moves_move32()[0]
+
+m1 = to_move(mv32)
+m2 = to_move(int(m1))
+assert m1 == m2
+assert isinstance(m1, Move)
+```
 
 ## 関連項目
 
-- [`Board`](board.md) - 盤面管理クラス
-- [`Move32`](move32.md) - 32bit 指し手型
-- [クイックスタート](../getting-started/quickstart.md)
+- [`Board`](board.md)
+- [基本型（`Square` / `PieceType` / `Piece` / `MoveType`）](types.md)
+- [NumPy 連携（HCP / HCPE）](numpy.md)
+- [USI プロトコル（`move_from_usi`）](usi.md)

@@ -2,7 +2,7 @@
 title = "rsshogi マニュアル"
 authors = ["rsshogi Developers"]
 language = "ja"
-description = "rsshogi ライブラリの内部アーキテクチャと将棋プログラミングの基礎技術をまとめたドキュメント。"
+description = "rsshogi の導入ガイド、Python API リファレンス、棋譜と定跡のフォーマット仕様、および内部アルゴリズムを解説する公式マニュアル。"
 
 [build]
 build-dir = "build"

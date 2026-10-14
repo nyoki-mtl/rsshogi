@@ -1,110 +1,61 @@
-# 局面
+# Position と状態管理
 
-> **前提知識**: [基本型](../types/index.md)
+`Position`（`crates/rsshogi/src/board/position/mod.rs`）は、将棋の盤面状態、持ち駒、手番、手数、および局面履歴を統合管理する中心的な構造体である。
+探索エンジンが毎秒数百万ノードの速度で指し手の適用（`apply_move32`）と巻き戻し（`undo_move32`）を繰り返せるよう、内部データは用途別に特化した 5 つのレイヤーで多重管理されている。
 
-`Position` は盤面、持ち駒、手番、手数、および make/unmake に必要な状態を保持する。
-公開 API は局面の構築、照会、合法性判定、更新、ハッシュを提供する。
+---
 
-## 局面がまとめる情報
+## `Position` の 5 層データモデル
 
-盤面は各升の `Piece` と駒集合用の bitboard で表現される。
-持ち駒は先後ごとの `Hand`、手番は `Color`、手数は `Ply` として保持される。
-更新に伴う直前手、捕獲駒、反復、キー、王手・ピンなどは current state と履歴に結び付く。
+`Position` は単一の盤面配列だけを持つのではなく、クエリの種類ごとに計算量が O(1) となるよう以下の 5 つのデータ構造を同期させている。
 
-この分割により、盤上の一点を読む `piece_on` と、駒集合を使う `pieces_for` のどちらも公開 API から選べる。
-呼び出し側は内部ストレージを直接同期する必要がない。
-
-## 局面を作る
-
-`Position::from_sfen` は SFEN を解析して局面を作る。
-`Position::empty` は空の局面を作り、`set_sfen`、`set_position_state`、`set_hirate` は既存局面を置き換える。
-これらの構築 API はビットボード、ハッシュ、戦術キャッシュを現在の盤面から再構築する。
-
-```rust,ignore
-use rsshogi::board::Position;
-
-let position = Position::from_sfen(
-    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
-)?;
-assert_eq!(position.to_sfen(None),
-    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1");
-# Ok::<(), rsshogi::board::parser::SfenError>(())
+```
+Position
+ ├── 1. board: SquareTable<Piece, 81>        (マス sq から駒 Piece を引く O(1) 配列)
+ ├── 2. bitboards: BitboardSet               (駒種・陣営・複合キャッシュからマス集合を引く O(1) 集合)
+ ├── 3. hands: [Hand; 2]                     (先後の持ち駒枚数を 32 ビット整数 2 個で管理)
+ ├── 4. king_squares: [Option<Square>; 2]    (先後の玉の位置をキャッシュ、玉不在の詰将棋にも対応)
+ └── 5. state_stack: StateStack              (ハッシュ値、王手・ピン情報、巻き戻し情報を保持する履歴スタック)
+      (+ side_to_move: Color, ply: u16)
 ```
 
-`set_position_state` は構造化済みの `PositionState` を受け入れるが、将棋のルール上の妥当性は検証しない。
-入力局面を検査する用途では `validate()` または `validate_all()` を使う。
+| レイヤー | フィールド名と型 | 解決するクエリと役割 |
+| :--- | :--- | :--- |
+| **1. 盤面配列** | `board: SquareTable<Piece, 81>` | 「指定したマス `sq` にどの駒があるか（`piece_on(sq)`）」を 1 回のメモリアクセスで取得する。 |
+| **2. ビットボード集合** | `bitboards: BitboardSet` | 「どのマスに指定の駒種や陣営の駒があるか」を 128 ビット集合として保持し、6 種類の複合キャッシュで利き計算を高速化する。 |
+| **3. 持ち駒配列** | `hands: [Hand; 2]` | 先手と後手の全持ち駒を各 32 ビット整数にパックし、加減算と SWAR 優劣比較を行う。 |
+| **4. 玉位置キャッシュ** | `king_squares: [Option<Square>; 2]` | 王手判定やピン検出の基点となる両玉の座標を常時キャッシュする。片玉の詰将棋局面も表現できるよう `Option<Square>` としている。 |
+| **5. 状態履歴スタック** | `state_stack: StateStack` | 現局面の Zobrist ハッシュ、戦術キャッシュ（王手駒、ピン情報、王手可能マス）、および `undo_move32` 用の捕獲駒情報を保持する。 |
 
-`validate()` は最初に見つけた問題を `ValidationError` として返す。
-`validate_all()` は玉の枚数、二歩、持ち駒の上限、行き所のない歩・香・桂をすべて `ValidationReport` に集める。
-詰将棋や駒落ちのように玉が欠ける局面を許すかどうかは、用途に応じて report の `ValidationIssue::NoKing` を扱う側で決める。
+これら 5 つのレイヤーは、`put_piece`、`remove_piece`、`move_piece` の内部プリミティブを通じてアトミックに更新される。
 
-SFEN の構文エラーと盤面規則のエラーは別の層である。
-`from_sfen` の成功は SFEN を読めたことを表し、二歩や行き所のない駒まで受け入れる用途では別途 `validate` を呼ぶ。
+---
 
-## 読み取り API
+## 指し手適用の 2 系統：`apply_move32` と `try_apply_move32`
 
-盤上の駒は `piece_on(square)`、持ち駒は `hand(color)`、手番は `turn()`、手数は `game_ply()` で取得する。
-ビットボードを必要とする処理には `bitboards()`、特定の駒集合には `pieces_for` や `pieces_for_types` を使う。
-玉の位置、王手駒、ピン候補は `king_square`、`checkers`、`blockers_for_king`、`pinners` で取得する。
+`Position` 上で指し手を進める API には、呼び出し元の信頼境界に応じてパニック系と `Result` 返却系の 2 系統が用意されている。
 
-```rust,ignore
-use rsshogi::types::{Color, Piece, SQ_77};
+| メソッド名 | 戻り値 | 特徴と用途 |
+| :--- | :--- | :--- |
+| `apply_move(mv)` / `apply_move32(mv)` | `()` | 指し手が合法であることを前提とする探索ループ向け API。内部で `try_apply_move32` を呼び、不正な指し手に対しては `.expect(...)` でパニックする。 |
+| `try_apply_move(mv)` / `try_apply_move32(mv)` | `Result<(), MoveError>` | 外部入力や棋譜再生など、不正な指し手が混入し得る境界向け API。盤面を変更する前に移動元、移動先、持ち駒、上位駒ビットの整合性を検証し、違反時は `Err(MoveError)` を返す。 |
+| `try_apply_move32_with_facts(mv)` | `Result<MoveFacts, MoveError>` | 局面更新と同時に、探索の枝刈りや延長判定で必要となる事実情報（捕獲駒、王手フラグ、成りフラグ等）をまとめた `MoveFacts` を返す。 |
+| `apply_move32_with_gives_check(mv, gives_check)` | `()` | 呼び出し側（指し手生成や `gives_check` 事前判定）でその手が王手になるか否かがすでに判明している場合に、局面更新時の王手再計算を省略する高速パス。 |
 
-assert_eq!(position.piece_on(SQ_77), Piece::B_PAWN);
-assert_eq!(position.turn(), Color::BLACK);
-assert!(!position.is_in_check());
-```
+---
 
-`current_state_cache()` は `checkers`、`check_squares`、`blockers_for_king`、`pinners` を同じ current state からまとめて読むための view を返す。
-この view は `Position` への borrow なので、局面を更新した後に使わず、必要なら再取得する。
+## 内部整合性の検証（`validation` feature）
 
-`gives_check_move` と `gives_check_move32` は候補が相手玉へ王手するかを局面を変えずに調べる。
-`is_capture_move`、`is_capture_or_promotion`、`is_pawn_promotion` は手の並べ替えや評価差分の入口になる。
+5 つのデータレイヤーと `StateStack` のキャッシュが完全に同期しているかを検査するため、`validation` Cargo feature が有効なときには以下の検証メソッドが公開される。
 
-| 問いたいもの | API | 返り値 |
-|---|---|---|
-| 手番側の玉への王手 | `is_in_check()` | `bool`。 |
-| 王手している駒 | `checkers()` | `Bitboard`。 |
-| 指定色の玉の遮蔽駒 | `blockers_for_king(color)` | `Bitboard`。 |
-| 指定駒種の王手候補升 | `check_square(piece_type)` | `Bitboard`。 |
-| 直前の手と捕獲駒 | `last_move()`、`captured_piece()` | `Move32`、`Piece`。 |
-| 現在局面のキー | `key()`、`board_key()` | `ZobristKey`。 |
+- **`Position::validate(&self) -> Result<(), ValidationError>`**：現在の局面について、`board` 配列と `bitboards` の一致、玉の枚数と `king_squares` の一致、持ち駒枚数の上限とボロービット異常の有無、行き所のない駒や二歩の有無、手番でない側の玉に王手がかかっていないこと、および Zobrist ハッシュや戦術キャッシュの再計算結果との一致を検証する。
+- **`Position::validate_all(&self) -> Result<(), ValidationError>`**：現局面だけでなく、`StateStack` に積まれている過去の全履歴を巻き戻しながら各局面の整合性と反復情報（千日手カウンタ）の正確性を網羅検査する。
+- **`Position::is_valid(&self) -> bool`**：`validate().is_ok()` の真偽値を返す。
 
-## 合法性とルール
+---
 
-`is_pseudo_legal_move` と `is_pseudo_legal_move32` は駒の動き、成り、駒打ちなどの局所条件を調べる。
-`is_legal_move` と `is_legal_move32` は玉を危険にさらす手と打ち歩詰めも除外する。
-通常は生成された `Legal` または `LegalAll` の手をそのまま適用し、個別入力の検証にだけ合法性 API を使う。
+## 本セクションの構成
 
-`repetition_state()` は千日手、連続王手千日手、優劣局面を `RepetitionState` で返す。
-`evaluate_declaration()` は入玉宣言の現在の規則、可否、条件の詳細を返す。
-`declaration_win_move()` は、ポイント制で宣言できるときは `MOVE_WIN` を返す。
-トライルールで成立するときは、トライ升への玉の移動を表す `Move32` を返す。
-
-## 更新の入口
-
-通常手は `apply_move` または `apply_move32` で適用し、対応する `undo_move` または `undo_move32` で戻す。
-これらの apply API は指し手を再検証しないため、呼び出し側は合法な手を渡す。
-探索で事前に王手判定を済ませた場合は `apply_move32_with_gives_check` を使える。
-
-`try_apply_search_move32_with_facts` は検索用 capacity を使う fallible な更新入口である。
-この API は capacity が足りない場合に `MoveError` を返すが、渡した指し手の合法性を検査する API ではない。
-
-`apply_move32_with_delta` と `apply_move32_with_facts` は、更新で得た差分または検索連携用の事実を返す。
-詳細は [差分更新と状態管理](./state-management.md) を参照する。
-
-`to_sfen(None)` は Position に記録された手数を出力する。
-`to_sfen(Some(negative_value))` は手数フィールドを出力せず、`to_sfen_flipped` は盤面を 180 度回転して色と手番を反転した SFEN を出力する。
-
-## 守るべき不変条件
-
-公開更新 API は盤面、bitboard、玉位置、キー、current state をまとめて更新する。
-一部だけを更新する setter は公開せず、入力局面の一括置換は構築 API に限定する。
-探索側は `Position` の clone を枝ごとに共有せず、枝内では apply/undo の LIFO 対応を守る。
-
-`undo_move32` の引数は直前に apply した手と同じでなければならない。
-通常手の undo と null move の undo を混ぜると履歴の意味が崩れるため、各枝で操作種別を対応させる。
-
-## 次に読む
-
-→ [差分更新と状態管理](./state-management.md) で apply/undo の境界と履歴の読み方を確認する。
+- **[StateStack と StateInfo の設計](state-management.md)**：64 要素チャンクによる `StateStack` のヒープ再確保回避、`StateHot` と `StateColdPayload` の分離、`TacticalCache` と `CheckSquares` の 9 スロット圧縮、および Null Move の 2 経路を解説する。
+- **[Zobrist ハッシュと差分更新](zobrist.md)**：`StateHot` を唯一の真実の源（Single Source of Truth）とする O(1) 巻き戻し、128 ビットハッシュとの乱数列互換性を保つ 4 回抽選 PRNG、および 72 スロット持ち駒テーブルを解説する。
+- **[探索エンジン連携プリミティブ](search-integration.md)**：`MoveFacts`、`StateCacheView`、`key_after_move` と投機的プリフェッチ、千日手や連続王手の千日手判定、および `clone_for_search_bounded` を解説する。

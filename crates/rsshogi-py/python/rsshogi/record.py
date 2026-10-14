@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from rsshogi.core import Move, Move32
 
 from rsshogi._rsshogi import (
     EngineInfo,
@@ -47,7 +50,7 @@ class EngineInfoDict(TypedDict, total=False):
 
 
 class MoveEntryDict(TypedDict, total=False):
-    move: MoveEntry | int | str
+    move: MoveEntry | Move32 | Move | int | str
     time_ms: int | None
     comment: str | None
     engine_info: EngineInfo | EngineInfoDict | None

@@ -1,153 +1,111 @@
 # cshogi との API 対応表
 
-rsshogi と cshogi の API 対応をまとめたリファレンスです。
+`rsshogi` と `cshogi` の機能対応、指し手ビットレイアウトの違い、および移行時に注意すべき API 差分をまとめる。
 
-## 実装状況
+## 1. 機能カテゴリ別の対応一覧
 
-| カテゴリ | 状況 | 主な API |
-|----------|------|----------|
-| 盤面管理 | ✅ | `Board` |
-| 合法手生成 | ✅ | `legal_moves`, `pseudo_legal_moves` |
-| 状態判定 | ✅ | `is_in_check`, `is_mated`, `is_repetition`, `can_declare_win` |
-| SFEN/USI | ✅ | `to_sfen`, `set_sfen`, `apply_usi` |
-| PackedSfen | ✅ | `to_packed_sfen(out=None)`, `set_packed_sfen` |
-| HCP / HCPE | ✅ | `to_hcp`, `set_hcp`, `to_hcpe`, `AperyMove`, `AperyMove32` |
-| 局面キー | ✅ | `zobrist_hash` |
-| Move32 復元 | ✅ | `move32_from_move`, `move_from_csa` |
-| policy ラベル変換 | ✅ | `rsshogi.policy`, `rsshogi::labels::policy` |
-| 棋譜 I/O | ✅ | `from_kif_str`, `from_ki2_str`, `from_csa_str`, `from_csa_games_str`, `to_kif`, `to_ki2`, `to_csa` |
-| USI 文字列解析 | ✅ | `rsshogi.usi`（`info` / `bestmove` の値オブジェクト変換）|
+| カテゴリ | 対応状況 | `rsshogi` の主な API | 参照ページ |
+| :--- | :--- | :--- | :--- |
+| 盤面管理と着手 | ○ | `Board`, `push_move`, `push_move32`, `push_usi`, `pop`, `last_move` | [Board API](../python/board.md) |
+| 合法手生成 | ○ | `Board.legal_moves()`, `Board.pseudo_legal_moves()` | [Board API](../python/board.md) |
+| 終局と宣言判定 | ○ | `is_in_check()`, `is_mated()`, `is_repetition()`, `can_declare_win()` | [Board API](../python/board.md) |
+| SFEN / USI 変換 | ○ | `to_sfen()`, `set_sfen()`, `apply_usi()`, `Move.from_usi()`, `Move.to_usi()` | [Move API](../python/move.md) |
+| 局面特徴量出力 | ○ | `Board.to_position_state()`, `PositionState` | [Board API](../python/board.md) |
+| 局面圧縮と学習データ | ○ | `to_packed_sfen()`, `set_packed_sfen()`, `to_psv()`, `to_hcp()`, `set_hcp()`, `to_hcpe()` | [学習用バイナリ仕様](formats/training-binaries.md) |
+| Apery 互換指し手 | ○ | `AperyMove`, `AperyMove32`, `Move.to_apery()`, `Board.apery_move32_from_move()` | [Move API](../python/move.md) |
+| Policy ラベル変換 | ○ | `rsshogi.policy.move_label()`, `compact_move_label()` | [Policy ラベル](../internals/types/policy-labels.md) |
+| 棋譜入出力 | ○ | `Record.from_kif_str()`, `from_ki2_str()`, `from_csa_str()`, `from_jkf_str()`, `to_kif()`, `to_ki2()`, `to_csa()`, `to_jkf()` | [Record API](../python/record.md) |
+| USI プロトコル解析 | ○ | `rsshogi.usi.parse_info()`, `parse_bestmove()`, `UsiGoCommand` | [USI パーサ](../python/usi.md) |
 
-## API 差分（主要）
+## 2. 16-bit 指し手（`Move` vs `AperyMove`）のビットレイアウトの違い
 
-### メソッド設計
+`cshogi` から `rsshogi` へ移行する際、最も重要な違いは **16-bit 指し手の内部ビット表現** である。
+
+- **`rsshogi.Move`（YaneuraOu `Move16` 互換）**：ビット 14 が駒打ちフラグ、ビット 15 が成りフラグである。`StaticBook`、`PackedSfenValue`（PSV）、`sbinpack`、`sazpack`、`YbbBook` はすべてこの表現を使用する。
+- **`rsshogi.AperyMove`（Apery / `cshogi.move16` 互換）**：移動元フィールド `from` に `81..=87` を格納して駒打ちを表し、ビット 14 が成りフラグである。`HuffmanCodedPosAndEval`（HCPE）および `PACK` 形式はこの表現を使用する。
+
+| ビット領域 | `rsshogi.Move`（YaneuraOu 方式） | `rsshogi.AperyMove`（Apery / cshogi 方式） |
+| :--- | :--- | :--- |
+| bits `0..=6` (7 bits) | 移動先マス番号 `to` (`0..=80`) | 移動先マス番号 `to` (`0..=80`) |
+| bits `7..=13` (7 bits) | 移動元マス番号 `from` (`0..=80`)、または打つ駒種 `PieceType` (`1..=7`) | 移動元マス番号 `from` (`0..=80`)、または駒打ちコード (`81..=87`) |
+| bit `14` (1 bit) | **駒打ちフラグ**（`1` のとき駒打ち） | **成りフラグ**（`1` のとき成り。駒打ち時は常に `0`） |
+| bit `15` (1 bit) | **成りフラグ**（`1` のとき成り） | 常に `0` |
+
+> [!WARNING]
+> `rsshogi.Move` の raw 整数値（`int(move)`）と `cshogi` の 16-bit 指し手整数値は、成り手と駒打ち手で異なる値になる。Apery / cshogi 系のバイナリデータと整数値をやり取りする際は、必ず `move.to_apery()` および `AperyMove(raw).to_move()` を介して変換すること。
+
+### 指し手型の命名対応
+
+| ビット幅 | `rsshogi` の型名 | YaneuraOu の型名 | `cshogi` / Apery の型名 |
+| :--- | :--- | :--- | :--- |
+| 16-bit | `Move` / `AperyMove` | `Move16` | `Move16`（`move16(m)`） |
+| 32-bit | `Move32` / `AperyMove32` | `Move` | `Move`（デフォルト指し手整数） |
+
+### `AperyMove32` と `Move32` の相互変換に `Board` が必要な理由
+
+`AperyMove32` は先後を持たない `PieceType`（移動前の駒種と捕獲駒種）を保持するのに対し、`rsshogi.Move32` は手番色付きの移動後 `Piece` を保持する。
+そのため、`Move32.to_apery(board)` および `AperyMove32.to_move32(board)` は、その手を指す直前の `Board` を引数に取る。
+
+## 3. `Board` と `Move` / `Move32` の主要メソッド対応
+
+### 盤面操作と状態取得
+
+| 操作内容 | `cshogi` | `rsshogi` | 備考 |
+| :--- | :--- | :--- | :--- |
+| 手番の取得 | `board.turn` (`int`) | `board.turn` (`Color`) | `Color.BLACK` (`0`) / `Color.WHITE` (`1`)。 |
+| 合法手の列挙 | `board.legal_moves` | `board.legal_moves()` | `rsshogi` ではメソッド呼び出し。 |
+| 1 手進める（指し手） | `board.push(move)` | `board.push_move(move)` / `board.push_move32(mv32)` | 適用した手を `Move32` として返す。 |
+| 1 手進める（USI） | `board.push_usi("7g7f")` | `board.push_usi("7g7f")` | 適用した手を `Move32` として返す。 |
+| 1 手戻す | `board.pop()` | `board.pop()` | 取り消した手を `Move32`（履歴が空なら `None`）で返す。 |
+| 直前の手を取得 | `board.history[-1]` | `board.last_move()` | 直前の手を `Move32`（履歴が空なら `None`）で返す。 |
+| Zobrist ハッシュ | `board.key()` | `board.zobrist_hash()` | 64-bit 整数を返す。 |
+| 入玉宣言勝ち判定 | `board.is_nyugyoku()` | `board.can_declare_win()` | 宣言勝ち条件を満たすかを真偽値で返す。 |
+| 局面特徴量スナップショット | （個別配列操作） | `board.to_position_state()` | 盤面、持ち駒、王手情報等をまとめた `PositionState` を返す。 |
+
+### 学習データ出力（HCP / HCPE / PackedSfen / PSV）
+
+| 操作内容 | `cshogi` | `rsshogi` | 備考 |
+| :--- | :--- | :--- | :--- |
+| 32B HCP 出力 | `board.to_hcp(df)` | `board.to_hcp(out=None)` | `out=None` で `bytes` を返し、NumPy 配列指定時はインプレース書き込み。 |
+| 38B HCPE 出力 | （手動構築） | `board.to_hcpe(best_move, score, game_result, out=None)` | `best_move` には `Move`, `AperyMove`, `str`, `int` を指定可能。 |
+| 32B PackedSfen 出力 | （非対応） | `board.to_packed_sfen(out=None)` | YaneuraOu 互換の 32 バイト局面圧縮。 |
+| 40B PSV 出力 | （非対応） | `board.to_psv(score, move, game_ply=None, game_result=0, out=None)` | YaneuraOu 互換の 40 バイト教師データ出力。 |
+
+### CSA 表記（`Move32.to_csa()`）と KI2 表記（`Move.to_ki2(board)`）の違い
+
+指し手を文字列フォーマットへ変換する際、CSA 表記と KI2 表記では必要となる情報が異なる。
+
+- **CSA 表記（`Move32.to_csa()`）**：CSA 文字列（例：`+7776FU`、`+8822UM`）の生成には、手番、移動元、移動先、および移動後の駒種があれば十分であり、盤面上の他駒との曖昧性解消は不要である。32-bit の `Move32` は移動後の色付き駒種を保持しているため、`mv32.to_csa()` は `Board` 引数なしで単独で CSA 文字列を生成できる（16-bit の `Move` から作る場合は `board.move32_from_move(mv).to_csa()` を使う）。
+- **KI2 表記（`Move.to_ki2(board)` / `Move32.to_ki2(board)`）**：KI2 文字列（例：`▲７六歩`、`▲５八金右`）の生成には、同じマスへ移動可能な同種駒の有無（相対動作修飾子 `右`、`左`、`上`、`寄`、`引`、`打` の判定）や直前手との移動先一致（`同` の判定）が必要である。そのため、`Move.to_ki2(board)` と `Move32.to_ki2(board)` はいずれも指し手適用前の `Board` を引数に取る。
 
 ```python
-# cshogi
-board.turn          # property
-board.legal_moves   # property-like iterable
+from rsshogi import Board, Move
 
-# rsshogi
-board.turn          # property
-board.legal_moves() # method
+board = Board()
+mv = Move.from_usi("7g7f")
+
+# KI2 表記は盤面上の合法手集合と照合するため board を渡す
+print(mv.to_ki2(board))  # "▲７六歩"
+
+# Move32 に変換すれば単独で CSA 表記を取得できる
+mv32 = board.move32_from_move(mv)
+print(mv32.to_csa())     # "+7776FU"
 ```
 
-### 手番型
+## 4. Policy ラベル変換（`rsshogi.policy`）
 
-```python
-board.turn  # Color
-```
+dlshogi / cshogi 系で使われる 27 方向 $\times$ 81 マス（計 2187 クラス）の指し手ラベルと、構造的に出現し得ないクラスを除いた 1496 クラスの圧縮ラベルを提供する。
 
-手番は `Color` に統一されています。
+| 関数 | 入力 | 出力 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `rsshogi.policy.move_label(mv, turn)` | `Move` / `Move32` / `str` / `int`, `Color` | `int` (`0..2187`) | `direction * 81 + to_sq`（後手番は盤面を 180 度回転して先手視点化）。 |
+| `rsshogi.policy.compact_move_label(mv, turn)` | `Move` / `Move32` / `str` / `int`, `Color` | `int` (`0..1496`) | 構造的に有効な 1496 手種への圧縮ラベル。 |
+| `rsshogi.policy.move_label_to_compact(label)` | `int` (`0..2187`) | `int` (`0..1496`) | 2187 クラスから 1496 クラスへの変換。 |
+| `rsshogi.policy.compact_move_label_to_move_label(compact)` | `int` (`0..1496`) | `int` (`0..2187`) | 1496 クラスから 2187 クラスへの逆変換。 |
 
-### push/pop 系
+## 関連項目
 
-```python
-# rsshogi
-board.push_move(move)      # Move を受け取り Move32 を返す
-board.push_usi("7g7f")     # USI 文字列を受け取り Move32 を返す
-board.pop()                # 最後の手を取り消して Move32 を返す（履歴なければ None）
-board.last_move()          # 最後の手を Move32 で返す（なければ None）
-```
-
-### 指し手の操作
-
-```python
-# Move32 のメソッド例
-mv32 = board.push_move(move)   # push_move は Move32 を返す
-to_sq = mv32.to_sq
-from_sq = mv32.from_sq
-is_drop = mv32.is_drop()
-is_promo = mv32.is_promotion()
-```
-
-### cshogi / Apery 互換 API
-
-```python
-amv = move.to_apery()
-mv = amv.to_move()
-
-amv32 = board.apery_move32_from_move(move)
-amv32 = move32.to_apery(board)
-move32 = amv32.to_move32(board)
-```
-
-`AperyMove` は `cshogi.move16(...)` と同じ 16bit 形式です。
-`AperyMove32` は Apery 系 32bit move に対応しますが、`rsshogi.Move32` とは保持情報が異なります。
-
-### policy ラベル
-
-cshogi/dlshogi 系でよく使われる 27x81 の policy ラベルは、
-Python では `rsshogi.policy`、Rust では `labels::policy` で提供しています。
-
-| 用途 | cshogi 系 | rsshogi |
-|------|-----------|--------|
-| 2187 クラスの move label | `make_move_label(...)` 相当 | `rsshogi.policy.move_label(mv, turn)` |
-| 1496 クラスへの圧縮 | ライブラリごとに別実装 | `rsshogi.policy.compact_move_label(mv, turn)` |
-| 2187 → 1496 変換 | - | `rsshogi.policy.move_label_to_compact(label)` |
-| 1496 → 2187 変換 | - | `rsshogi.policy.compact_move_label_to_move_label(label)` |
-
-`MoveLabel` は `class * 81 + to_sq` の 2187 クラスです。
-後手番の手は 180 度回転してからラベル化するため、常に先手視点で比較できます。
-
-`CompactMoveLabel` は、移動、成り、駒打ちの構造的な制約から使用可能な 1496 クラスに連番を割り当てたラベルです。
-現在局面の駒配置や王手は参照しないため、そのラベルに対応する手が局面上で合法であることまでは保証しません。
-
-Python では `Move`, `Move32`, `int`, `USI` 文字列をそのまま `move` 引数に渡せます。
-
-### 指し手エンコーディング
-
-rsshogi と cshogi は異なる指し手エンコーディングを採用しています。
-`AperyMove` / `AperyMove32` は、Apery 形式の整数値を受け渡すための型です。
-`Move` / `Move32` との変換は指し手の意味を保ちますが、ビットレイアウトが異なるため整数値は一般に変わります。
-通常の手生成や盤面操作では `Move` / `Move32` を使い、外部データとの境界でのみ
-`AperyMove` 系を使うのを推奨します。
-
-| 項目 | rsshogi の `Move` / `Move32` | Apery 形式 |
-|------|----------------------|-------------------|
-| 駒打ち判定 | bit 14 フラグ | `from >= 81` |
-| 成りフラグ位置 | bit 15 | bit 14 |
-| 駒情報 | 移動後の Piece (5bit) | PieceType (4bit) × 2 |
-
-### `AperyMove32 -> Move32` が局面依存な理由
-
-`cshogi` の内部 32bit move は `pieceTypeFrom` と `capturedPieceType` を保持します。
-一方、`rsshogi.Move32` は「移動後の色付き駒 (`Piece`)」を保持します。
-
-そのため `AperyMove32` から `Move32` を復元するには、
-
-- 現在の手番
-- 移動元の盤上駒
-
-が必要です。`rsshogi` ではこれを `AperyMove32.to_move32(board)` として公開しています。
-
-### 指し手型の命名
-
-rsshogi と cshogi/参照実装では型名が異なります。
-
-| サイズ | rsshogi | YaneuraOu | cshogi |
-|--------|--------|-----------|--------|
-| 16bit | `Move` | `Move16` | `Move16` |
-| 32bit | `Move32` | `Move` | `Move` |
-
-rsshogi は 16bit 指し手を基本型と位置付け `Move` と命名しています。
-YaneuraOu/cshogi では 32bit が `Move` で、16bit が `Move16` です。
-
-通常手の rsshogi `Move` と Apery 形式の `Move16` は、成りや駒打ちのビット配置が異なります。
-相互変換には `Move.to_apery()` / `AperyMove.to_move()` を使ってください。
-整数をそのまま別の型の raw 値として扱うと、指し手の意味が変わります。
-
-### rsshogi.usi（USI 文字列パーサ）
-
-`rsshogi.usi` モジュールは USI プロトコルの `info` と `bestmove` を値オブジェクトへ変換します。
-
-| クラス / 関数 | 説明 |
-|---------------|------|
-| `UsiInfo` / `parse_info(line)` | `info depth ... score ...` 行のパース |
-| `UsiBestMove` / `parse_bestmove(line)` | `bestmove ... ponder ...` 行のパース |
-| `UsiScore` | cp / mate 距離のラッパー |
-| `UsiBound` | `lowerbound` / `upperbound` / `exact` |
-| `UsiGoCommand` | `go` コマンドのシリアライズ |
-| `move_from_usi(usi)` | `resign` / `win` / `0000` / `none` を含む USI 指し手変換 |
-
-詳細は [rsshogi.usi](../python/usi.md) を参照してください。
+- [Board API（Python）](../python/board.md)
+- [Move API（Python）](../python/move.md)
+- [Record API（Python）](../python/record.md)
+- [USI パーサ（Python）](../python/usi.md)

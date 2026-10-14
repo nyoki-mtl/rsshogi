@@ -1,138 +1,186 @@
-# DB2016 形式
+# YaneuraOu 定跡フォーマット仕様（DB2016 / YBB）
 
-DB2016（拡張子 `.db`、ヘッダ `#YANEURAOU-DB2016 1.00`）は
-[やねうら王](https://github.com/yaneurao/YaneuraOu) の標準定跡フォーマットです。
-**テキスト形式**で、1 局面ごとに SFEN 行とそれに続く定跡手行を並べます。
+`rsshogi` は、[やねうら王（YaneuraOu）](https://github.com/yaneurao/YaneuraOu) で採用されている 2 種類の定跡フォーマットをサポートする。
 
-rsshogi は [`YaneuraOuBook`](external-books.md#db2016) による読み取りと、`BookDatabase` からの書き出しを提供します。
-本ページはフォーマットそのものの構造と、rsshogi が解釈・出力する範囲を説明します。
+1. **DB2016（`.db`）**：`#YANEURAOU-DB2016 1.00` ヘッダを持つ標準テキスト定跡フォーマット。`YaneuraOuBook` による読み取りと、`BookDatabase` からの書き出しに対応する。
+2. **YBB（`.ybb`）**：`YANE-BINBOOK-V1\0` マジックを持つ固定長インデックス付きバイナリ定跡フォーマット。`YbbBook` による読み取りに対応する。
 
-> 出典: やねうら王ブログ
-> [「標準将棋定跡フォーマットについて」](https://yaneuraou.yaneu.com/2016/02/05/standard-shogi-book-format/)
-> および Wiki [「定跡の作成」](https://github.com/yaneurao/YaneuraOu/wiki/%E5%AE%9A%E8%B7%A1%E3%81%AE%E4%BD%9C%E6%88%90)。
-> パースの細部は rsshogi のリーダ（`crates/rsshogi/src/book/yaneuraou.rs`）が
-> 実際に解釈する範囲に基づきます。
+## 1. DB2016 テキストフォーマット（`.db`）
 
-## 形式の性質
-
-DB2016 は SFEN 文字列を局面キーにする可読なテキスト形式です。
-同じ局面を異なる手数で記録した場合も、rsshogi の検索では盤面・手番・持ち駒だけを比較します。
-
-## ファイル構造
+DB2016 は、1 局面ごとに `sfen` 行を置き、その直後に候補手行を並べる UTF-8 テキスト形式である。
 
 ```text
 #YANEURAOU-DB2016 1.00
 sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 7g7f 8c8d 0 32 1
 2g2f 3c3d 0 32 1
-sfen <次の局面の SFEN>
-<指し手行...>
+sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL w - 2
+3c3d 2g2f 0 30 5
 ```
 
-- 1 行目は任意のヘッダ `#YANEURAOU-DB2016 1.00`。
-- `sfen ` で始まる行: 局面（SFEN 文字列）。次の `sfen` 行までが 1 局面のブロック。
-- それ以外の行: 直前の局面に対する定跡手。
+### ヘッダとコメント行
 
-## 局面行（sfen 行）
+- **ヘッダ行**：1 行目に `#YANEURAOU-DB2016 1.00` を記述する（省略されたファイルも読み取り可能）。UTF-8 BOM、LF、CRLF のいずれの改行コードも受理する。
+- **独立コメント行**：`#` または `//` で始まる行はコメント行として扱われる。`sfen` 行の直後（最初の候補手行より前）にあるコメント行は局面コメント（`YaneuraOuBookEntry::comment`）に格納され、候補手行の直後にあるコメント行はその候補手のコメント（`YaneuraOuBookMove::comment`）に格納される。
+
+### 局面行（`sfen` 行）と手数正規化
+
+`sfen <盤面> <手番> <持駒> [手数]` の形式で局面を指定する。
+
+- **検索キーの正規化**：`YaneuraOuBook` は検索時に手数（ply）を無視し、常に手数を `1` に正規化した SFEN（`<盤面> <手番> <持駒> 1`）を局面キーとして比較する。
+- **元手数の保持**：ファイル上に記述された手数は `YaneuraOuBookEntry::min_ply()`（省略されていた場合は `0`）として保持される。
+
+### 候補手行（定跡手行）
+
+`sfen` 行に続く非コメント行は、半角スペース区切りの候補手行として解析される。
 
 ```text
-sfen lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
+move ponder score depth count [# インラインコメント]
 ```
 
-`sfen <盤面> <手番> <持駒> [手数]` の 3 要素と任意の手数で構成されます。
+| 列位置 | フィールド | 型（`YaneuraOuBookMove`） | 内容と省略規則 |
+| :--- | :--- | :--- | :--- |
+| 1 | `move` | `Move` | 現局面での指し手（USI 形式）。リーダは通常手に加えて `none` や `resign` も受理する。 |
+| 2 | `ponder` | `Move` | 予想される相手の応手（USI 形式）。存在しない場合は `none`（`Move::NONE`）。 |
+| 3 | `score` | `Option<i32>` | 評価値（単位：cp、手番視点）。`none` または省略時は `None`。 |
+| 4 | `depth` | `Option<u32>` | 探索深さ。`none` または省略時は `None`。 |
+| 5 | `count` | `Option<u64>` | 採択回数（出現回数）。`none` または省略時は `None`。 |
+| 6 以降 | `comment` | `String` | 第 5 列より後ろのトークン（`#` や `//` 以降を含む）は候補手コメントとして保持される。 |
 
-rsshogi はこの手数を検索キーに含めず、局面を手数 `1` の SFEN に正規化します。
-行に書かれた手数は `YaneuraOuBookEntry::min_ply()` として取得できます。
-手数列を省略した入力は `0` として公開します。
+後方カラムは省略可能であり、例えば `4e7h+ none 540 38 1` や `9f9e none none none` のような行も受理される。
 
-## 定跡手行
+### アクセスモード（`YaneuraOuAccessMode`）と二分探索
 
-各フィールドは半角スペース区切りで、次の順に並びます。
+`lookup_sfen` / `lookup_position` で二分探索を行うには、ファイル内の `sfen` 行が **正規化 SFEN のバイト辞書順（厳密な昇順、重複なし）** に並んでいる必要がある。
+`YaneuraOuBook::open_with_options` では、`YaneuraOuAccessMode` によってオープン時の検証範囲と検索方式を制御できる。
 
-```text
-move  ponder  value  depth  move_count
+| `YaneuraOuAccessMode` | オープン時の動作 | `lookup_sfen` の動作 |
+| :--- | :--- | :--- |
+| `SafeBinary { prefix_rows: 10_000 }`（既定） | 先頭 `prefix_rows` 局面行のみソート順を検証する。 | ファイル全体が検証済み（`complete == true`）であれば二分探索を行う。未完了の場合は `validate_full()` を呼ぶか `lookup_sfen_by_scan()` を使用する。 |
+| `ValidateFullBeforeLookup` | オープン時にファイル全体のソート順を検証する。 | ソート済みであれば即座に二分探索を行う。 |
+| `AssumeSortedAfterPrefix { prefix_rows }` | 先頭 `prefix_rows` 局面行のみ検証し、以降もソート済みとみなす。 | 即座に二分探索を行う（巨大ファイルを高速に開く GUI 等に向く）。 |
+| `AssumeSortedByCaller` | オープン時の検証を省略する（診断結果は `Unvalidated`）。 | 呼び出し側のソート保証のもとで即座に二分探索を行う。 |
+| `ScanOnly` | 診断用に先頭のみ検査し、検索は常に線形走査とする。 | 二分探索を使わず、ファイル先頭から線形走査を行う。 |
+
+未ソートのファイルを検索する場合は `lookup_sfen_by_scan()` を呼び出すことで、アクセスモードに関わらず線形走査で検索できる。
+また、全エントリを先頭からストリーミング処理する場合は `iter_entries()` を使用する。
+
+### `BookDatabase` からの DB2016 書き出し
+
+編集 IR である `BookDatabase` から `write_yaneuraou_db2016` または `to_yaneuraou_db2016_string` を呼び出すことで、DB2016 形式のテキストを出力できる。
+
+- **局面のソート順**：正規化 SFEN のバイト辞書順（厳密な昇順）で出力される。同一の正規化 SFEN が重複している場合は既定でエラーとなり、`YaneuraOuDb2016WriteOptions::with_keep_last_on_duplicate()` 指定時のみ最後のエントリを採用する。
+- **通常手の制約**：`YaneuraOuBook` リーダは `none` や `resign` を受理するが、`BookDatabase` の取り込みおよび書き出しでは **通常の合法手（`mv.is_normal()`）のみ** が許可される。
+- **候補手の並び順と出力列**：既定では `score` の降順（`score` が `None` の手は末尾）に並べ替えられ、`with_preserved_move_order()` 指定時は登録順を維持する。各行は `move ponder score depth` の 4 列を必ず出力し、`count` が `Some` のときのみ第 5 列を出力する。
+
+## 2. YBB バイナリフォーマット（`YANE-BINBOOK-V1`、`.ybb`）
+
+YBB（YaneuraOu Binary Book）は、32 バイトの `PackedSfen` をキーとする固定長インデックス配列と、コンパクトな指し手配列で構成されるバイナリ定跡フォーマットである。
+Rust の `rsshogi::book::YbbBook` で読み取り専用アクセスを提供する（Python バインディングには未公開）。
+
+### ファイル全体構造とワイヤーレイアウト
+
+YBB ファイルは、32 バイトのヘッダ、44 バイト $\times N$ 個のインデックス領域、および可変オフセットの指し手データ領域の 3 部で構成される。
+すべての整数フィールドはリトルエンディアン（LE）である。
+
+#### ヘッダ（32 バイト）
+
+| オフセット | サイズ | 型 | フィールド名 | 内容と検証規則 |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x00` | 16B | `[u8; 16]` | `magic` | `b"YANE-BINBOOK-V1\0"` 固定。不一致時は `BookError::InvalidFormat`。 |
+| `0x10` | 8B | `u64` | `count` | インデックス領域に格納されている局面レコード数 $N$。 |
+| `0x18` | 8B | `u64` | `flags` | ビット 0（`flags & 1`）が `1` のとき指し手レコードに `depth`（2B）を含む。未定義ビット（`flags & !1 != 0`）が立っている場合は `BookError::Unsupported`。 |
+
+#### インデックスエントリ（44 バイト $\times N$）
+
+オフセット `32` から始まり、32 バイトの `packed_sfen` に続けて 12 バイトのメタ情報（計 44 バイト）が並ぶ。
+インデックス配列全体は `PackedSfen::cmp_bytes`（32 バイト配列の辞書順）で非減少順にソートされていなければならない。
+
+| オフセット | サイズ | 型 | フィールド名 | 説明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x00` | 32B | `[u8; 32]` | `packed_sfen` | YaneuraOu 互換の 32 バイト `PackedSfen`。 |
+| `0x20` | 8B | `u64` | `moves_offset` | 指し手データ領域の先頭（`32 + 44 * count`）からのバイトオフセット。 |
+| `0x28` | 2B | `u16` | `ply` | 局面の手数。 |
+| `0x2A` | 2B | `u16` | `move_count` | この局面に属する候補手の個数 $k$。 |
+
+#### 指し手レコード（4 バイトまたは 6 バイト $\times k$、`YbbMove`）
+
+指し手データ領域（オフセット `32 + 44 * count` 以降）には、各局面の候補手が連続格納される。
+1 手あたりのサイズは `flags & 1 == 0` のとき 4 バイト、`flags & 1 == 1` のとき 6 バイトである。
+
+| オフセット | サイズ | 型 | フィールド名 | 説明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x00` | 2B | `u16` | `raw_move` | YaneuraOu `Move16` 形式の指し手（`Move::from_raw(raw_move)`）。通常の盤上移動または駒打ちである必要がある。 |
+| `0x02` | 2B | `i16` | `eval` | 評価値（手番視点）。 |
+| `0x04` | 2B | `u16` | `depth` | 探索深さ（ヘッダの `flags & 1 != 0` のときのみ存在する）。 |
+
+### `YbbBook` の検索オプション（`YbbBookOpenOptions`）
+
+- **`with_ignore_ply(bool)`**：`false`（既定）のときは `packed_sfen` と手数 `ply` の両方が一致する行を検索する。`true`（YaneuraOu の `IgnoreBookPly` 相当）のときは手数 `ply` の違いを無視し、同一 `packed_sfen` の先頭行を返す。
+- **`with_flipped(bool)`**：`false`（既定）のときは入力局面そのままの向きで検索する。`true`（YaneuraOu の `FlippedBook` 相当）のときは、通常検索でヒットしなかった場合に盤面を 180 度回転および先後反転した局面で再検索し、ヒットした候補手の座標も反転して返す（`YbbEntry::flipped()` が `true` になる）。
+
+## 3. コード例
+
+### Python（DB2016）
+
+```python
+from rsshogi import Board, YaneuraOuBook
+
+book = YaneuraOuBook.open("user_book1.db")
+diag = book.diagnostics()
+if diag.kind == "sorted" and not diag.complete:
+    book.validate_full()
+
+board = Board()
+entry = book.lookup_position(board)
+if entry is not None:
+    for m in entry.moves:
+        print(m.mv.to_usi(), m.ponder.to_usi(), m.score, m.depth, m.count)
 ```
 
-| 位置 | フィールド | 意味 |
-|------|-----------|------|
-| 1 | `move` | 現局面での着手（USI 形式） |
-| 2 | `ponder` | 予想される相手の応手（無い場合は `none`） |
-| 3 | `value` | 評価値（歩 = 100 点） |
-| 4 | `depth` | 探索深さ |
-| 5 | `move_count` | 出現回数、または評価値付き定跡ではエンジンバージョン（例: v3.21 → `321`） |
+### Rust（DB2016 および YBB）
 
-- 後方カラムは省略可能です。
-- 中間の数値列を省くときは `none` または `None` を使います。
-- `resign` は指し手トークンとして受理されます。
+```rust
+use rsshogi::board;
+use rsshogi::book::{
+    BookDatabase, YaneuraOuAccessMode, YaneuraOuBook, YaneuraOuBookOpenOptions,
+    YaneuraOuDb2016WriteOptions, YbbBook, YbbBookOpenOptions,
+};
 
-サンプル行（rsshogi のテストフィクスチャより）:
+board::init();
+let pos = board::hirate_position();
 
-```text
-4e7h+ none 540 38 1
-9f9e  none none none
-```
+// 1. DB2016 定跡のオープンと検索
+let db_book = YaneuraOuBook::open_with_options(
+    "user_book1.db",
+    YaneuraOuBookOpenOptions::with_access_mode(
+        YaneuraOuAccessMode::AssumeSortedAfterPrefix { prefix_rows: 10_000 },
+    ),
+)?;
+if let Some(entry) = db_book.lookup_position(&pos)? {
+    for mv in entry.moves() {
+        println!("{} score={:?} count={:?}", mv.mv().to_usi(), mv.score(), mv.count());
+    }
+}
 
-1 行目は「成りを伴う着手、ponder なし、評価値 540、depth 38、出現回数 1」。
-2 行目は評価値・depth・回数をすべて省略した形です。
-
-rsshogi の `YaneuraOuBookMove` は `mv` / `ponder` / `score` / `depth` / `count` /
-`comment` を保持します（`MemoryBook` の `BookMove` が `ponder` や `count` を
-落とすのに対し、外部リーダ層では lossless に公開します。
-→ [定跡アーキテクチャ](book-architecture.md)）。
-
-## コメント行
-
-- 独立した `# ...` 行と `// ...` 行はコメント扱い。
-- 指し手行の 5 カラム以降は、その指し手のコメントとして保持。
-- `sfen` で始まらないその他の非空行は、コメントではなく定跡手行として解析します。
-
-rsshogi は `#` 行・`//` 行を局面または直前の指し手コメントとして保持し、UTF-8 BOM・CRLF・LF を許容します。
-`iter_entries()` は局面ブロックごとに結果を返すため、不正な指し手行を含むブロックを `Err` として報告した後も、後続ブロックの反復を続けられます。
-
-## ソート順と二分探索
-
-`lookup_sfen()` の二分探索には、正規化後の SFEN がバイト列の比較で厳密な昇順（重複なし）に並んでいる必要があります。
-指し手の出現頻度や評価値の順序は、局面行のソート要件とは別です。
-
-rsshogi は、ソートが全件検証できた場合だけ `lookup_sfen()` で二分探索します。
-既定の `open()` は先頭 10,000 局面行を検証するため、診断が `complete == false` のときは
-`validate_full()` を実行するか、明示的な `lookup_sfen_by_scan()` を使います。
-詳細は [外部定跡（DB2016 / YBB / SBK）](external-books.md#db2016) を参照してください。
-
-## 書き出し（writer）
-
-`YaneuraOuBook` は読み取り専用ですが、編集 IR である [`BookDatabase`](book-architecture.md#編集-ir-層bookdatabase)
-から DB2016 テキストを**書き出す**ことができます。
-
-```rust,ignore
-use rsshogi::book::{BookDatabase, YaneuraOuDb2016WriteOptions};
-
-let mut file = std::fs::File::create("out.db")?;
-db.write_yaneuraou_db2016(&mut file, &YaneuraOuDb2016WriteOptions::new())?;
-
+// 2. BookDatabase からの DB2016 書き出し
+let db = BookDatabase::new();
 let text = db.to_yaneuraou_db2016_string(&YaneuraOuDb2016WriteOptions::new())?;
+
+// 3. YBB バイナリ定跡のオープンと検索
+let ybb = YbbBook::open_with_options(
+    "book.ybb",
+    YbbBookOpenOptions::new().with_ignore_ply(true).with_flipped(true),
+)?;
+if let Some(entry) = ybb.lookup_position(&pos)? {
+    for mv in entry.moves() {
+        println!("{} eval={} depth={:?}", mv.mv().to_usi(), mv.eval(), mv.depth());
+    }
+}
 ```
-
-`write_yaneuraou_db2016()` は同じ文字列表現を writer に書き込む API です。
-巨大な本を扱う際は、出力文字列がメモリに構築される点を考慮します。
-
-### 出力契約
-
-- 局面行は正規化 SFEN の bytewise strict 昇順で出力します。
-- 同じ正規化 SFEN が重複すると既定ではエラーになり、`with_keep_last_on_duplicate()` を指定した場合だけ最後の entry を出力します。
-- 候補手は既定で score の降順になり、score がない候補は末尾です。
-- `with_preserved_move_order()` は候補手を入力順に保ちます。
-- 各候補手行は `move ponder score depth` を常に出力し、`count` は値がある場合だけ第 5 列として出力します。
-- したがって count がない候補は count 列を出力せず、writer は架空の count を補いません。
-- `ponder`、score、depth がない場合は対応する列に `none` を出力します。
-- 局面の元手数が `0` の場合、既定の writer は手数列を出力しません。
-- `with_fixed_ply(n)` は元手数を `n` に置き換え、`with_omitted_ply()` はすべての局面で手数列を省略します。
-- 局面または候補手の複数行コメントは、対応する行の直後に複数の `# ...` 行として出力します。
-- `# NOE` 行は `with_noe(true)` を指定した場合だけ出力します。
 
 ## 関連項目
 
-- [定跡アーキテクチャ（3 層モデル）](book-architecture.md)：外部リーダの位置づけ
-- [外部定跡（DB2016 / YBB / SBK）](external-books.md)：`YaneuraOuBook` / `YbbBook` / `SbkBook` の Rust API
-- [SBK 形式](sbk.md)：もう一つの外部定跡フォーマット
-- [外部定跡（Python）](../../python/external-books.md)：Python からの利用
+- [定跡 3 層アーキテクチャ](book-architecture.md)
+- [StaticBook バイナリフォーマット仕様](book.md)
+- [ShogiHome SBK フォーマット仕様](sbk.md)

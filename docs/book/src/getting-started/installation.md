@@ -1,28 +1,25 @@
 # インストール
 
-## Python
+## Python パッケージの導入
 
-### PyPI からインストール
+Python 3.10 以降に対応する。
+通常の環境では標準パッケージ `rsshogi` をインストールする。
 
-```bash
+```console
 python -m pip install rsshogi
 ```
 
-Python 3.10 以降をサポートしています。
+### AVX2 最適化版（x86_64 CPU 向け）
 
-### AVX2 版（AVX2 対応 x86_64 CPU 専用）
+AVX2 および BMI1 命令に対応する x86_64 CPU 環境では、SIMD 命令を有効化してビルドされた `rsshogi-avx2` を選択できる。
 
-AVX2 対応 x86_64 CPU では AVX2 最適化版を利用できます。
-幅広い CPU で動かす環境には通常版が適しています。
-
-```bash
+```console
 python -m pip install rsshogi-avx2
 ```
 
-> `rsshogi` と `rsshogi-avx2` は同じ import 名を使うため、環境ごとにどちらか一方をインストールします。
-> 迷った場合は通常版の `rsshogi` を使ってください。
-
-同じ環境で版を切り替える場合は、両方の配布パッケージをアンインストールしてから、使う方を入れ直します。
+> [!IMPORTANT]
+> `rsshogi` と `rsshogi-avx2` はどちらも同じ `rsshogi` モジュール名で展開されるため、同一の仮想環境に両方を同時インストールしてはならない。
+> パッケージを切り替える際は、必ず既存のパッケージをアンインストールしてから入れ直す。
 
 ```console
 python -m pip uninstall -y rsshogi rsshogi-avx2
@@ -33,30 +30,49 @@ python -m pip install rsshogi-avx2
 
 ```python
 import rsshogi
+
 print(rsshogi.__version__)
 ```
 
-## Rust
+---
 
-`Cargo.toml` に以下を追加してください。
-Rust 1.95 以降が必要です。
+## Rust クレートの導入
+
+Rust 1.95 以降（Edition 2024）が必要である。
+`Cargo.toml` の `[dependencies]` に `rsshogi` を追加する。
 
 ```toml
 [dependencies]
 rsshogi = "1.3.0"
 ```
 
-### Git リポジトリから
+### 用途別の Feature フラグ指定
 
-公開リポジトリの既定ブランチを使用する場合は、Git 依存を指定します。
-再現可能なビルドには、使用するコミットを `rev` で固定してください。
+`rsshogi` はデフォルト（`default = []`）では盤面操作、合法手生成、1 手詰め判定のみを有効にし、外部依存を最小限に抑えている。
+用途に応じて必要な Feature フラグを有効化する。
+
+| 用途 | `Cargo.toml` の設定例 |
+|---|---|
+| **USI 将棋エンジン（64-bit ハッシュ）** | `rsshogi = "1.3.0"` |
+| **USI 将棋エンジン（128-bit ハッシュ + 定跡参照）** | `rsshogi = { version = "1.3.0", features = ["hash-128", "book"] }` |
+| **棋譜変換、定跡構築、教師データ生成ツール** | `rsshogi = { version = "1.3.0", features = ["records", "book"] }` |
+| **AlphaZero 系探索（Policy ラベルのみ利用）** | `rsshogi = { version = "1.3.0", features = ["policy-labels"] }` |
+| **盤面エディタ、GUI バックエンド（局面検証 + SVG）** | `rsshogi = { version = "1.3.0", features = ["validation", "svg", "records"] }` |
+| **全機能の有効化** | `rsshogi = { version = "1.3.0", features = ["python-data", "hash-128"] }` |
+
+各 Feature が有効化するモジュールと依存クレートの詳細は [全体アーキテクチャの Cargo Feature フラグ一覧](../architecture.md#cargo-feature-フラグ一覧) を参照。
+
+### Git リポジトリからの導入
+
+公開リポジトリの最新コミットを利用する場合は `git` を指定する。
+ビルドの再現性を保つため、`rev` または `tag` の固定を推奨する。
 
 ```toml
 [dependencies]
-rsshogi = { git = "https://github.com/nyoki-mtl/rsshogi" }
+rsshogi = { git = "https://github.com/nyoki-mtl/rsshogi", tag = "v1.3.0", features = ["records"] }
 ```
 
 ## 次のステップ
 
-- [クイックスタート](quickstart.md)：基本的な使い方
-- [例とパターン](examples.md)：実践的なコード例
+- [クイックスタート](quickstart.md)：局面の作成、指し手の適用、合法手生成、棋譜の読み書き。
+- [実践レシピ集](examples.md)：対局シミュレーション、探索、棋譜の一括処理、局面分析のコード例。

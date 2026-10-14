@@ -1,75 +1,51 @@
-# 基本型
+# プリミティブ型のビットレイアウト
 
-> **前提知識**: [内部技術ドキュメントの概要](../index.md)
+将棋エンジンおよび棋譜処理ライブラリの性能は、最下層のプリミティブ型がいかにコンパクトかつ CPU 命令に親和性の高い表現を持つかに左右される。
+`rsshogi` では、座標、駒、持ち駒、指し手、評価値などの基本型をすべて 1〜4 バイトの整数を包む Newtype（`#[repr(transparent)]`）または固定幅列挙型として定義している。
 
-`rsshogi::types` は盤面、駒、指し手を小さな値型として表現する。
-型を分けることで、同じ整数を使う低水準の処理でも座標と駒種を取り違えにくくする。
+---
 
-## この章の地図
+## プリミティブ型のサイズと内部表現一覧
 
-- [座標系](./coordinates.md) は `File`、`Rank`、`Square` と盤上の向きを説明する。
-- [駒](./pieces.md) は `Color`、`PieceType`、`Piece`、`Hand` を説明する。
-- [指し手](./moves.md) は `Move` と盤面情報付きの `Move32` を説明する。
-- [Policy ラベル](./policy-labels.md) は学習器へ渡す手番正規化済みラベルを説明する。
+主要プリミティブ型のメモリサイズ、内部表現、および有効値の範囲を以下に示す。
 
-## newtype を使う理由
+| 型名 | サイズ | 内部表現 | 有効値の範囲とセンチネル | 主な用途 |
+| :--- | :--- | :--- | :--- | :--- |
+| `Color` | 1 Byte | `u8` | `0..=1`（`BLACK = 0`、`WHITE = 1`） | 手番と陣営の識別。 |
+| `File` | 1 Byte | `i8` | `0..=8`（1 筋〜9 筋） | 筋の表現とインデックス変換。 |
+| `Rank` | 1 Byte | `i8` | `0..=8`（一〜九段） | 段の表現と成段判定。 |
+| `Square` | 1 Byte | `i8` | `0..=80`、センチネル `SQ_NONE = 81` | 盤面 81 マスの一次元座標。 |
+| `PieceType` | 1 Byte | `i8` | `0..=15`（`NONE = 0`、実駒 `1..=14`、`GOLD_LIKE = 15`） | 先後を区別しない駒種。 |
+| `Piece` | 1 Byte | `i8` | `0..=31`（先手 `1..=15`、後手 `17..=31`、`16` は無効） | 先後と成り状態を含む盤上の駒。 |
+| `HandPiece` | 1 Byte | `i8` | `0..=6`（歩、香、桂、銀、角、飛、金） | 持ち駒テーブルの 7 種インデックス。 |
+| `Hand` | 4 Bytes | `u32` | 各駒種の枚数ビットとボロービットをパックした 32 ビット値 | 片方の陣営の全持ち駒枚数。 |
+| `Move` | 2 Bytes | `u16` | 移動先 7b、移動元/打駒 7b、打フラグ 1b、成フラグ 1b | USI / YaneuraOu 互換の 16 ビット指し手。 |
+| `Move32` | 4 Bytes | `u32` | 下位 16b `Move` + ビット `16..=20` に移動後の `Piece` | 盤面更新高速化およびオーダリング用の 32 ビット指し手。 |
+| `AperyMove` | 2 Bytes | `u16` | 移動先 7b、移動元/打駒（`81..=87`）7b、成フラグ 1b | Apery（WCSC26）互換の 16 ビット指し手。 |
+| `AperyMove32` | 4 Bytes | `u32` | 下位 16b `AperyMove` + 移動前 `PieceType` 4b + 捕獲 `PieceType` 4b | Apery 互換の 32 ビット指し手。 |
+| `Ki2Notation` | 4 Bytes | `u32` | 手番 1b、同フラグ 1b、移動先 7b、駒種 4b、相対位置 4b、成不成 2b | KI2 形式の指し手表記情報。 |
+| `MoveLabel` | 2 Bytes | `u16` | `0..=2186`（`class * 81 + to_sq`） | DL 将棋用の 2187 クラス方策ラベル（`policy-labels` feature）。 |
+| `CompactMoveLabel` | 2 Bytes | `u16` | `0..=1495` | 構造的不可能手を除外した 1496 クラス圧縮ラベル（`policy-labels` feature）。 |
+| `Eval` | 4 Bytes | `enum`（`i16` ペイロード） | `Cp(-32000..=32000)` または `Special(i16)` | 評価値と詰みスコアの表現。 |
+| `GameResult` | 1 Byte | `#[repr(u8)]` | `0..=2`（`BlackWin = 0`、`WhiteWin = 1`、`Draw = 2`） | 対局結果の表現。 |
+| `RepetitionState` | 1 Byte | `enum` | `None`、`Win`、`Lose`、`Draw`、`Superior`、`Inferior` | 千日手、連続王手の千日手、優等局面と劣等局面の判定結果。 |
+| `EnteringKingRule` | 1 Byte | `#[repr(u8)]` | `NoEnteringKing`、`Cs24Point`、`Cs27Point`、`Cs27PointHandicap`、`TryRule` | 入玉宣言勝ちのルール種別。 |
 
-`Square`、`PieceType`、`Piece`、`Move` はそれぞれ `#[repr(transparent)]` の newtype である。
-そのため配列添字、ビットボード、手生成のような低水準処理で値として扱える。
-同時に API の引数型が意味を表すため、`Square` を `PieceType` の位置へ渡す誤りはコンパイル時に検出される。
+---
 
-```rust,ignore
-use rsshogi::types::{File, Rank, Square};
+## 型安全とゼロコスト抽象化の境界
 
-let square = Square::from_file_rank(File::FILE_7, Rank::RANK_6);
-assert_eq!(square.to_usi(), "7f");
-```
+`rsshogi` のプリミティブ型は、公開 API における型安全性と内部ホットパスにおける配列アクセス速度を両立するため、以下の 3 層で不変条件（Invariant）を管理している。
 
-## 値の有効性と境界
+1. **安全コンストラクタ（`from_raw` / `new`）**：外部入力やシリアライズデータから型を構築する際は、有効範囲を検査して `Option<T>` または `Result<T, E>` を返す。
+2. **信頼済み境界（`from_raw_unchecked`）**：`pub(crate)` または `unsafe` 関数として提供され、呼び出し側が有効範囲内であることを保証する内部ループでのみ使用される。`debug_assert!` によってデバッグビルド時に不変条件違反を即座に検出する。
+3. **型付きテーブル（`SquareTable<T, N>` など）**：`Square` や `PieceType` を直接インデックスとして受け取るラッパー型を用意し、`to_index()` による境界チェックの重複を省きつつ、生整数（`usize`）の取り違えをコンパイル時に防止している。
 
-各 newtype は raw 値を作る `new` と読み出す `raw` を持つ。
-raw 値を使うのはテーブル構築、デコード、テストなど、境界を明示できる箇所に限る。
-通常の呼び出し側は定数、パーサ、または変換関数で作った有効な値を渡す。
+---
 
-`Square::NONE` は盤外を表す番兵値であり、盤面配列や `Square::iter()` の対象ではない。
-`PieceType::GOLD_LIKE` は金と金相当の駒をまとめる内部分類であり、通常の駒種反復には含まれない。
+## 各サブセクションの内容
 
-## 型を選ぶ基準
-
-| 扱いたいもの | 基本型 | 作成方法 |
-|---|---|---|
-| 一つの盤上升 | `Square` | 単独で作成。 |
-| 駒種だけ | `PieceType` | 単独で作成。 |
-| 先後を含む盤上の駒 | `Piece` | 単独で作成。 |
-| 一方の持ち駒の枚数 | `Hand` | 単独で作成。 |
-| 保存・比較する指し手 | `Move` | 単独で作成。 |
-| 移動後の駒を含む指し手 | `Move32` | 局面から作成。 |
-
-`Move` から盤面情報を推測する処理は、必ず対応する `Position` を受け取る。
-この境界により、定跡や棋譜に保存した手と、特定局面で解決した駒情報を区別できる。
-
-## 型間の責務
-
-`Move` は移動元、移動先、駒打ち、成りだけを保持する。
-移動後の駒種や取得駒種のような局面依存情報は `Position` が解決する。
-`Move32` は移動後の駒を保持できるため、CSA や KI2 のように駒名を必要とする出力に使える。
-
-型の raw 値はパーサ、packed record、外部形式変換の基礎になる。
-raw 値を手作業で組み立てるより、通常は `from_usi`、`from_file_rank`、`Move::normal` などの構築 API を使う。
-
-```rust,ignore
-use rsshogi::board::Position;
-use rsshogi::types::Move;
-
-let position = Position::from_sfen(
-    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
-)?;
-let mv = Move::from_usi("7g7f").expect("valid USI move");
-let mv32 = position.move32_from_move(mv);
-assert!(mv32.has_piece_info());
-# Ok::<(), rsshogi::board::parser::SfenError>(())
-```
-
-## 次に読む
-
-→ [座標系](./coordinates.md) で盤上の 81 マスと USI 座標の対応を確認する。
+- **[座標系（Color / File / Rank / Square）](coordinates.md)**：File-major 座標計算、除算と剰余を排除する 256 要素ルックアップテーブル（`RAW_TO_FILE` / `RAW_TO_RANK`）、および `SquareTable` の仕組みを解説する。
+- **[駒と持ち駒（PieceType / Piece / Hand）](pieces.md)**：`Piece` のビット構造と `Hand(u32)` の 7 駒種パッキングおよびボロービットによる一括優劣比較アルゴリズムを解説する。
+- **[指し手表現（Move / Move32 / AperyMove / Ki2Notation）](moves.md)**：USI 系と Apery 系のビットレイアウト比較、特殊指し手定数の衝突回避、`complete_move32` と `apply_move32` の検証仕様、および `Ki2Notation` の 32 ビット構造を解説する。
+- **[方策ラベル（MoveLabel / CompactMoveLabel）](policy-labels.md)**：2187 ラベルの算術的定義と、コンパイル時生成テーブルによる 1496 クラスへの全単射圧縮を解説する。

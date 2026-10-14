@@ -1,105 +1,106 @@
 # よくある質問（FAQ）
 
-## 基本
+## 1. 導入とビルド設定
 
-### rsshogi とは？
+### `rsshogi` とは何か？
 
-Rust 実装の将棋ライブラリです。
-Python パッケージの `rsshogi` からも、盤面管理、指し手生成、棋譜処理を利用できます。
+Rust で実装された高速な将棋コアライブラリ（`rsshogi` クレート）と、その機能を Python から利用するための薄い PyO3 バインディング（`rsshogi` パッケージ）である。
+盤面管理、ビットボードによる合法手生成、千日手および入玉宣言判定、棋譜（KIF / KI2 / CSA / JKF）の読み書き、定跡検索、ならびに機械学習用バイナリ（HCP / HCPE / PackedSfen / PSV / PACK / SBINPACK / SAZPACK）の入出力を提供する。
 
-### どのパッケージを入れるべき？
+### Python パッケージは `rsshogi` と `rsshogi-avx2` のどちらを入れるべきか？
 
-- 通常版：`python -m pip install rsshogi`
-- AVX2 対応の x86_64 CPU 用：`python -m pip install rsshogi-avx2`
+- **通常環境（ARM64 や汎用 x86_64）**：`python -m pip install rsshogi` を使用する。
+- **AVX2 / BMI2 対応の x86_64 CPU 環境**：`python -m pip install rsshogi-avx2` を使用すると、飛び駒の利き計算やビットボード演算が高速化される。
 
-同じ環境には一方だけをインストールします。
-切り替える手順は [インストール](../getting-started/installation.md) を参照してください。
+両者は同じ `rsshogi` モジュール名を提供するため、同一の仮想環境にはどちらか一方のみをインストールする。
+切り替え手順の詳細は [インストール](../getting-started/installation.md) を参照。
 
-## API
+### Rust クレート（`rsshogi`）の Cargo feature はどう構成されているか？
 
-### 手番の型は？
+Rust クレート `rsshogi` は **デフォルトで最小限のエンジンコアのみを有効にする設計（`default = []`）** となっている。
+棋譜の読み書き、定跡、局面シリアライズ、Policy ラベル、SVG 出力などの機能を使用する場合は、`Cargo.toml` の `features` で明示的に有効化する。
 
-`Board.turn` の戻り値は `Color` です。
+| Cargo feature 名 | 有効化される機能と依存関係 |
+| :--- | :--- |
+| （指定なし：`default = []`） | 盤面（`Board` / `Position`）、ビットボード、合法手生成、Zobrist ハッシュ、千日手および入玉宣言判定の最小コア。 |
+| `records` | `Record`、KIF / KI2 / CSA / JKF / USI / SFEN の読み書き、および `pack` / `sbinpack` / `sazpack`（`position-serialization`, `initial-positions`, `policy-labels` を含む）。 |
+| `book` | `MemoryBook`、`StaticBook`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`（`Record` から構築する `BookBuilder` を使う場合は `records` も併せて有効化する）。 |
+| `position-serialization` | `HuffmanCodedPos` (HCP)、`HuffmanCodedPosAndEval` (HCPE)、`PackedSfen`、`PackedSfenValue` (PSV)。 |
+| `policy-labels` | `rsshogi::labels::policy`（2187 クラス `MoveLabel` および 1496 クラス `CompactMoveLabel`）。 |
+| `initial-positions` | 平手および駒落ち定型初期局面の SFEN / `Handicap` サポート。 |
+| `svg` | 盤面の SVG 描画出力。 |
+| `validation` | 局面の詳細な整合性検査ユーティリティ。 |
+| `hash-128` | `ZobristKey` および `BookKey` を 64-bit から 128-bit に拡張する。 |
+| `python-data` | Python バインディング相当の全データ機能（`book`, `records`, `position-serialization`, `svg`, `validation`）を一括で有効化する。 |
 
-### 指し手を進めてから戻すには？
+```toml
+[dependencies]
+rsshogi = { version = "0.1", features = ["records", "book"] }
+```
 
-- `push_move(move)`：`Move` を受け取り指し手を進める。戻り値は `Move32`。
-- `push_move32(move32)`：`Move32` を受け取り指し手を進める。戻り値は `Move32`。
-- `push_usi(usi)`：USI 文字列で指し手を進める。戻り値は `Move32`。
-- `pop()`：最後の手を取り消す。戻り値は `Move32`（手がなければ `None`）。
-- `last_move()`：最後の手を `Move32` で返す（なければ `None`）。
+## 2. 盤面と指し手 API
 
-### 入玉宣言判定はできる？
+### 手番（`Board.turn`）の型は何か？
 
-`board.can_declare_win()` が使えます。
+`Board.turn` プロパティは `Color` 列挙型（`Color.BLACK` または `Color.WHITE`）を返す。
+整数比較が必要な場合は `int(board.turn)` で先手が `0`、後手が `1` に変換される。
 
-### 局面キー（Zobrist hash）は取得できる？
+### 指し手を進めてから 1 手戻すにはどうするか？
 
-`board.zobrist_hash()` で取得できます。
+- **`board.push_move(move)`**：16-bit の `Move` を適用して局面を進め、適用した手を `Move32` で返す。
+- **`board.push_move32(move32)`**：32-bit の `Move32` を適用して局面を進め、適用した手を `Move32` で返す。
+- **`board.push_usi("7g7f")`**：USI 文字列の指し手を適用して局面を進め、適用した手を `Move32` で返す。
+- **`board.pop()`**：直前の 1 手を取り消して局面を戻し、取り消した手を `Move32`（履歴が空なら `None`）で返す。
+- **`board.last_move()`**：局面を戻さずに直前の手を `Move32`（履歴が空なら `None`）で参照する。
 
+### 16-bit の `Move` から 32-bit の `Move32` を復元するには？
 
-### `Move` から `Move32` を復元したい
+指し手を適用する前の局面 `board` に対して `board.move32_from_move(mv)` を呼び出す。
+`Move32` には「移動後の色付き駒（`Piece`）」と「捕獲した駒（`Piece`）」が含まれるため、現在局面の盤上駒情報を参照する必要がある。
+CSA 文字列（例：`"+7776FU"`）から直接変換する場合は `board.move_from_csa("+7776FU")` または `Move32.from_csa("+7776FU")` を使用する。
 
-`board.move32_from_move(mv)` を使います。
-現在局面から移動する駒の情報を補うため、指し手を適用する前に呼び出してください。
-CSA 形式の文字列から作る場合は `board.move_from_csa(csa)` を使います。
+### `AperyMove32` から `Move32` を復元するには？
 
-### `AperyMove32` から `Move32` を復元したい
+指し手を適用する前の局面 `board` を渡して `apery_move32.to_move32(board)` を呼び出す。
+`AperyMove32` は先後を持たない `PieceType` のみを保持し、`Move32` は色付きの `Piece` を保持するため、手番と盤上駒の参照に `board` が必要となる。
 
-`AperyMove32.to_move32(board)` を使ってください。
+## 3. 棋譜と学習用バイナリ形式
 
-`AperyMove32` は `PieceType` しか持たず、`rsshogi.Move32` は色付きの `Piece` を持つため、
-復元には現在局面 `board` が必要です。
+### `PackedSfen`、`HCP`、`HCPE`、`PSV` を既存の NumPy 配列やバッファへ直接書き出すには？
 
-### PackedSfen を既存のバッファに書き出すには？
+各メソッドのキーワード引数 `out` に書き込み可能なバッファ（`bytearray`、`memoryview`、または対応するサイズの `numpy.ndarray`）を指定する。
+`out=None`（既定）のときは新しい `bytes` オブジェクトを返し、`out` を指定したときはバッファへ直接書き込んで `None` を返す。
 
-`board.to_packed_sfen(out=buffer)` を使います。
-`out=None` なら `bytes` を返し、`out` 指定時はバッファに書き込んで `None` を返します。
-`set_packed_sfen()` は `bytes` だけでなく `numpy.ndarray`（`uint8[32]` / `PackedSfen` 構造体）も受け取れます。
+- **`board.to_packed_sfen(out=buf)`**：32 バイト（`uint8[32]` または `rsshogi.numpy.PackedSfen`）。
+- **`board.to_psv(score, move, game_ply=None, game_result=0, out=buf)`**：40 バイト（`uint8[40]` または `rsshogi.numpy.PackedSfenValue`）。
+- **`board.to_hcp(out=buf)`**：32 バイト（`uint8[32]` または `rsshogi.numpy.HuffmanCodedPos`）。
+- **`board.to_hcpe(best_move, score, game_result, out=buf)`**：38 バイト（`uint8[38]` または `rsshogi.numpy.HuffmanCodedPosAndEval`）。
 
-### HCP や HCPE を既存のバッファに書き出すには？
+### USI 指し手リストから簡単に `Record` を作るには？
 
-`board.to_hcp(out=buffer)` または `board.to_hcpe(game_result=result, out=buffer)` を使います。
-`to_hcpe()` の第 1 引数は `best_move` なので、出力先は `out=` で指定してください。
-`out=None` なら `bytes` を返し、`out` 指定時はバッファに書き込んで `None` を返します。
+`Record.from_usi_main_line(init_position_sfen, usi_moves, result=..., evals=...)` を使用する。
+初期局面 SFEN と USI 指し手文字列のリストを渡すと、各手の合法性を検証しながら `Record` を一括構築できる。
 
-- `to_hcp()`: `uint8[32]` または `HuffmanCodedPos`
-- `to_hcpe()`: `uint8[38]` または `HuffmanCodedPosAndEval`
+### `GameResult` から終局特殊手（`SpecialMoveEntry`）を自動生成するには？
 
-`to_hcpe()` は `game_result` の指定が必須です。
+`SpecialMoveEntry.from_result(result, time_ms=None, comment=None)` を使用する。
+`GameResult.BLACK_WIN` や `GameResult.DRAW_BY_REPETITION` などを渡すと、対応する `SpecialMove`（投了、千日手、入玉宣言勝ちなど）を自動選択して `SpecialMoveEntry` を生成する。
 
-### `Record` を USI 指し手列から作りたい
+## 4. 例外とトラブルシューティング
 
-`Record.from_usi_main_line(init_position_sfen, usi_moves, result=..., evals=..., ...)` が使えます。
-USI 文字列の指し手列を渡すと合法性を検証しながら `Record` を構築します。
+### Python API における `TypeError`、`ValueError`、`None` の使い分けは？
 
-### `SpecialMoveEntry` を結果から簡単に作りたい
+- **`TypeError`**：引数の型が一致しない場合に送出される。
+- **`ValueError`**：SFEN や棋譜の構文エラー、非合法手の適用、バイナリのフォーマット違反など、値の内容が不正な場合に送出される。
+- **`None` の返却**：`board.pop()` や `board.last_move()` で履歴が空の場合、あるいは定跡検索（`lookup` / `get`）で該当局面が存在しない場合など、正常系として要素が存在しないことを表す。
 
-`SpecialMoveEntry.from_result(result, time_ms=..., comment=...)` が使えます。
-`GameResult` を渡すと種別 (`RESIGN` / `WIN` など) を自動判定して `SpecialMoveEntry` を構築します。
+### `ValueError: illegal move` が発生する原因は？
 
-## 例外
+現在の局面において非合法な指し手（二歩、打ち歩詰め、王手放置、移動先に自駒がある手、または手番違いの手）を適用しようとした場合に発生する。
+外部データを適用する前に検証したい場合は `board.is_legal_move(move)` を使用する。
 
-### `TypeError` と `ValueError` の使い分けは？
+## 関連項目
 
-- 型不一致: `TypeError`
-- 値の不正（不正手・不正文字列）: `ValueError`
-- 履歴が空など「値がない」ケース: `None` 返却
-
-## 棋譜・バイナリ形式
-
-### KI2 は読み込める？
-
-`Record.from_ki2_str()` で読み込みできます。`to_ki2()` で書き出しも可能です。
-
-## トラブルシューティング
-
-### `ValueError: illegal move` が出る
-
-指し手が現在局面で合法ではありません。`board.is_legal_move(move)` で事前確認してください。
-
-### `ModuleNotFoundError: No module named 'rsshogi'`
-
-実行中の Python 環境からパッケージを見つけられていません。
-その環境で `python -m pip install rsshogi` を実行してください。
-インストール済みの場合は、仮想環境や Notebook のカーネルが実行環境と一致しているか確認してください。
+- [cshogi との API 対応表](compat.md)
+- [フォーマット仕様一覧](formats/index.md)
+- [Record と棋譜データモデル](records.md)
