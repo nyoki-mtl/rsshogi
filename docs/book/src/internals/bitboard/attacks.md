@@ -23,7 +23,7 @@
 
 以下のアニメーションは、`5五` に配置した先手の近接駒（歩、桂、銀、金、玉）の利きパターンを順に表示している。
 
-<div id="atk-step-patterns" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="atk-step-patterns" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -129,7 +129,7 @@ pub fn rook_file_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
 
 以下の盤面は、`5五` の先手角から伸びる 4 方向の斜めレイのうち、右上（`1一`）、右下（`1九`）、左下（`9九`）は盤端まで通り、左上方向のみ `6四` の歩（赤丸）で遮断される様子を示している。
 
-<div id="lz-tz-live-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="lz-tz-live-1" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
@@ -193,7 +193,7 @@ const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
 
 以下のアニメーションは、`5五` の先手飛車から上下左右の 4 方向へ伸びるレイが、`5二` の後手銀および `3五` の後手歩の位置で止まり、最終的に 4 方向の利きとして OR 合成される過程を示している。
 
-<div id="atk-lztz-step" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="atk-lztz-step" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
@@ -291,7 +291,7 @@ const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
 大駒の成駒である馬（`HORSE`）と龍（`DRAGON`）の利きは、専用のテーブルを持たず、元の飛び駒の利きと `king_attacks(sq)` の 1 回の論理和（OR）で合成される。
 以下の盤面は、`5五` の龍の利きが飛車の直線利き（青矢印）と玉の斜め隣接 4 マス（オレンジ矢印）の合成で表される様子を示している。
 
-<div id="atk-dragon-demo" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="atk-dragon-demo" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);

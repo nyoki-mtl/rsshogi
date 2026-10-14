@@ -67,9 +67,9 @@ let raw = file.raw() * 9 + rank.raw();
 
 ### 盤面上の視覚的なマッピング
 
-以下の将棋盤は、基準となる 1 一（`0`）、5 五（`40`）、9 九（`80`）の 3 マスをハイライト表示したものである（上部の数字が筋 `9..1`、右側の漢数字が段 `一..九` を表す）。
+以下の将棋盤は、基準となる 1 一（`0`、緑丸）、5 五（`40`、青丸）、9 九（`80`、赤丸）の 3 マスをハイライト表示したものである（上部の数字が筋 `9..1`、右側の漢数字が段 `一..九` を表す）。
 
-<div id="coords-map" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="coords-map" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -80,6 +80,11 @@ let raw = file.raw() * 9 + rank.raw();
   board.setOptions({ showHands: false });
   board.setPositionFromSFEN('9/9/9/9/9/9/9/9/9 b - 1');
   board.highlightSquares([0, 40, 80]);
+  board.setCircles([
+    { square: '1a', color: 'rgba(0,180,0,0.75)', width: 2.0 },
+    { square: '5e', color: 'rgba(0,120,215,0.75)', width: 2.0 },
+    { square: '9i', color: 'rgba(220,50,50,0.75)', width: 2.0 },
+  ]);
   board.goTo(0);
   window.coordsMap = board;
 }

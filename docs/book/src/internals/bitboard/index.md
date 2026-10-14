@@ -23,7 +23,7 @@
 まず、5 筋に 3 枚の駒（5 九の先手香、5 三の先手歩、5 一の後手香）を置いた盤面で、駒の向きと利きの基本を確認する。
 丸はこの例で注目する駒を示し、青い矢印は先手の歩が 5 三から 5 二へ 1 マス利いていることを示す。
 
-<div id="basics-live-1" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="basics-live-1" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -55,15 +55,15 @@
 <div id="basics-live-and" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.75rem;margin:1rem auto;max-width:960px;">
   <div>
     <p style="text-align:center;margin:0 0 0.35rem;">by_piece[PAWN]</p>
-    <div id="basics-live-and-pawns" style="width:100%;height:360px;border:1px solid #ddd;"></div>
+    <div id="basics-live-and-pawns" style="width:100%;height:230px;border:1px solid #ddd;"></div>
   </div>
   <div>
     <p style="text-align:center;margin:0 0 0.35rem;">by_color[BLACK]</p>
-    <div id="basics-live-and-black" style="width:100%;height:360px;border:1px solid #ddd;"></div>
+    <div id="basics-live-and-black" style="width:100%;height:230px;border:1px solid #ddd;"></div>
   </div>
   <div>
     <p style="text-align:center;margin:0 0 0.35rem;">AND result</p>
-    <div id="basics-live-and-result" style="width:100%;height:360px;border:1px solid #ddd;"></div>
+    <div id="basics-live-and-result" style="width:100%;height:230px;border:1px solid #ddd;"></div>
   </div>
 </div>
 <script src="../../assets/shogi-board.js"></script>
@@ -95,7 +95,7 @@ for to_sq in capture_targets {
 複数駒種の利きをビット論理和（`|`）で合成し、敵玉や対象駒集合と `AND` をとることで、王手判定や特定マスへの攻撃駒列挙（`attackers_to`）をループなしで行える。
 以下の盤面では、5 五の後手玉（青い丸）に対して、5 一の先手飛車の利き（赤い矢印）と 9 九の先手角の利き（オレンジの矢印）が同時に届いている様子を示す。
 
-<div id="basics-live-check" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="basics-live-check" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {

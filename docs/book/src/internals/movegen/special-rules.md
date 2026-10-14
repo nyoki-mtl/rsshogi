@@ -58,7 +58,7 @@
 
 以下の実戦局面では、2 筋と 8 筋以外のすべての筋に先手の歩（赤丸）がすでに存在するため、歩を打てる候補マス（黄色ハイライト）が 2 筋と 8 筋の空きマス（二段目以南）だけに絞り込まれる様子を示している。
 
-<div id="live-nifu-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="live-nifu-1" style="width:550px;height:600px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -106,7 +106,7 @@
 
 以下の局面では、先手が `1四`（`1d`）に歩を打つと `1三`（`1c`）の後手玉に王手がかかるが、後手は玉以外の駒で `1四` の歩を取ることも、玉自身でその歩を取ったり周囲へ逃げたりすることもできないため、`is_pawn_drop_mate` によって打ち歩詰め（非合法手）と判定される。
 
-<div id="live-uchifuzume-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="live-uchifuzume-1" style="width:550px;height:600px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
@@ -140,13 +140,14 @@
 以下の盤面では、`5二` の後手飛車が `5五` の先手玉を睨んでおり、その間にある `5三` の先手銀（オレンジ丸）が `blockers_for_king(BLACK)` に登録されている。
 この銀は 5 筋の直線上（`5二` の飛車を取る手、または `5四` へ引く手）にしか動けず、斜め方向（`4二`、`6二`、`4四`、`6四`）への移動は `!Bitboard::is_aligned(from, to, our_king)` により非合法として弾かれる。
 
-<div id="live-pin-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="live-pin-1" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
   const root = document.getElementById('live-pin-1');
   const board = new ShogiBoardAdapter();
   board.mount(root);
+  board.setOptions({ showHands: false });
   board.setPositionFromSFEN('9/4r4/4S4/9/4K4/9/9/9/9 b - 1');
   board.goTo(0);
   board.setArrows([
