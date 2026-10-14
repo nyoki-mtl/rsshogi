@@ -28,21 +28,21 @@ Miri 実行時や `const fn` 文脈、および非 x86_64 ターゲットでは�
 
 `BitboardSet` が保持する 2 つの基本ビットボード（駒種別 `by_piece[PAWN]` と手番別 `by_color[BLACK]`）から、1 回の AND 演算で先手の歩（`3七` と `7七`）だけを取り出す過程を 4 枚の盤面で並べて示す。
 
-<div id="bb-examples-extract-flow" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0.75rem;margin:1rem auto;max-width:1120px;">
+<div id="bb-examples-extract-flow" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:1rem auto;max-width:800px;">
   <div>
-    <p style="text-align:center;margin:0 0 0.35rem;">position</p>
+    <p style="text-align:center;margin:0 0 0.35rem;">1. position（元の局面）</p>
     <div id="bb-examples-position" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
   <div>
-    <p style="text-align:center;margin:0 0 0.35rem;">by_piece[PAWN]</p>
+    <p style="text-align:center;margin:0 0 0.35rem;">2. by_piece[PAWN]（すべての歩）</p>
     <div id="bb-examples-pawn-all" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
   <div>
-    <p style="text-align:center;margin:0 0 0.35rem;">by_color[BLACK]</p>
+    <p style="text-align:center;margin:0 0 0.35rem;">3. by_color[BLACK]（先手の全駒）</p>
     <div id="bb-examples-black-all" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
   <div>
-    <p style="text-align:center;margin:0 0 0.35rem;">AND result</p>
+    <p style="text-align:center;margin:0 0 0.35rem;">4. AND result（先手の歩のみ）</p>
     <div id="bb-examples-black-pawn-result" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
 </div>
@@ -86,7 +86,7 @@ Miri 実行時や `const fn` 文脈、および非 x86_64 ターゲットでは�
 `5五` の先手飛車の利き（`rook_attacks`）に対し、左隣の `6五` にある味方の歩がブロッカーになると同時に、`andnot(our_pieces)` によって移動先から除外される様子を示す。
 青い矢印が移動可能な方向、赤い丸と赤矢印が味方駒によって遮断および除外されたマスである。
 
-<div id="bb-examples-live-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="bb-examples-live-1" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
@@ -152,7 +152,7 @@ pub fn pop_lsb(&mut self) -> Option<Square> {
 
 以下のアニメーションは、`2七`（`idx = 15`）、`5七`（`idx = 42`）、`8七`（`idx = 69`）の 3 枚の歩が立っているビットボードに対し、`pop_lsb()` を繰り返してインデックスの小さい順（`2七` → `5七` → `8七`）に 1 枚ずつ取り出して消去していく様子を示している。
 
-<div id="ops-poplsb-demo" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="ops-poplsb-demo" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
@@ -218,7 +218,7 @@ pub fn pop_lsb(&mut self) -> Option<Square> {
 以下の盤面では、`5二` の後手飛車と `5五` の先手玉に対する `Bitboard::between(5五, 5二)` の結果（`5三` と `5四` の 2 マス）をハイライト表示している。
 この範囲に味方駒が `5三` の銀 1 枚だけ存在するため、`5三` の銀が絶対ピンであることが分かる。
 
-<div id="ops-live-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="ops-live-1" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script>
 {
   const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);

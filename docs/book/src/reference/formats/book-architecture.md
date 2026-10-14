@@ -6,31 +6,29 @@
 
 ```mermaid
 flowchart TD
-    subgraph ExternalLayer["外部リーダ層 (フォーマット忠実 / 読み取り専用)"]
-        YaneuraOuBook["YaneuraOuBook (DB2016 .db)"]
-        YbbBook["YbbBook (YANE-BINBOOK-V1 .ybb)"]
-        SbkBook["SbkBook (ShogiHome .sbk)"]
+    subgraph ExternalLayer["外部リーダ層 (読み取り専用)"]
+        YaneuraOuBook["YaneuraOuBook<br/>(DB2016 .db)"]
+        YbbBook["YbbBook<br/>(YANE-BINBOOK-V1 .ybb)"]
+        SbkBook["SbkBook<br/>(ShogiHome .sbk)"]
     end
 
-    subgraph IRLayer["編集 IR 層 (SFEN 主キー / リッチメタデータ保持)"]
-        BookDatabase["BookDatabase / BookDatabaseEntry / BookCandidate"]
+    subgraph IRLayer["編集 IR 層 (SFEN 主キー / メタデータ保持)"]
+        BookDatabase["BookDatabase<br/>(BookPosition / BookCandidate)"]
     end
 
-    subgraph LookupLayer["ルックアップ層 (Book トレイト / Zobrist キー高速参照)"]
-        MemoryBook["MemoryBook (HashMap<BookKey, Vec<BookMove>>)"]
-        StaticBook["StaticBook v2 (ソート済みバイナリ .book)"]
-        BookBuilder["BookBuilder (Record からの構築)"]
+    subgraph LookupLayer["ルックアップ層 (Book トレイト / Zobrist キー参照)"]
+        BookBuilder["BookBuilder<br/>(Record からの収集)"]
+        MemoryBook["MemoryBook<br/>(インメモリ辞書)"]
+        StaticBook["StaticBook v2<br/>(ソート済みバイナリ .book)"]
     end
 
-    YaneuraOuBook -->|"entry_from_yaneuraou"| BookDatabase
-    SbkBook -->|"entry_from_sbk"| BookDatabase
-    BookDatabase -->|"write_yaneuraou_db2016"| YaneuraOuBook
-    BookDatabase -->|"write_sbk / to_sbk_bytes"| SbkBook
+    YaneuraOuBook <-->|"entry_from / write_db2016"| BookDatabase
+    SbkBook <-->|"entry_from / write_sbk"| BookDatabase
     BookDatabase -->|"to_memory_book"| MemoryBook
     BookDatabase -->|"to_static_book"| StaticBook
     BookBuilder -->|"into_memory"| MemoryBook
     BookBuilder -->|"build_static"| StaticBook
-    MemoryBook -->|"from_memory_book / from_memory_book_sorted"| StaticBook
+    MemoryBook -->|"from_memory_book"| StaticBook
 ```
 
 ### ルックアップ層（`MemoryBook` / `StaticBook` / `BookBuilder`）

@@ -28,7 +28,7 @@ pub struct Bitboard {
 以下の盤面は、1 一（`bit 0`、緑の丸）から 9 九（`bit 80`、赤の丸）へのインデックス増加方向を示したものである。
 まず同一筋の中を一段目から九段目へ向かって下方向（青い矢印）に進み、九段目に達すると左隣の筋の一段目へジャンプ（オレンジの矢印）する。
 
-<div id="layout-grid-0" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="layout-grid-0" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -63,7 +63,7 @@ pub struct Bitboard {
 縦型レイアウトでは、同一筋の 9 マスが 9 ビットの連続領域に並ぶ。
 そのため、香車や飛車の縦方向の利き（たとえば以下の盤面における 5 九の先手香から 5 五までの 4 マス）は **`bit 40, 41, 42, 43` の連続ビット区間** となり、対象筋の 9 ビット占有状態をシフトとマスク（`(p[part] >> shift) & 0x1ff`）で切り出すだけで `FILE_ATTACKS` テーブルを直接引ける。
 
-<div id="layout-lance-demo" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="layout-lance-demo" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -92,7 +92,7 @@ pub struct Bitboard {
 「`n` 筋のマス集合（`Bitboard::file_mask(file)`）」は連続 9 ビットのブロック（`0x1FF << shift`）で表現される。
 以下の盤面は 5 筋のマスク（`bit 36..=44`）をハイライトしたものであり、二歩判定はこの筋マスクと自歩ビットボードの論理積（`intersects`）だけで完結する。
 
-<div id="layout-file-mask" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="layout-file-mask" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -158,7 +158,7 @@ const BOARD_MASK_HIGH: u64 = 0x0000_0000_0003_FFFF; // 下位 18 ビット (8〜
 以下の盤面では、黄色ハイライトが `p[0]` の領域（`bit 0..=62`：1 筋〜7 筋の全 63 マス）を表す。
 青い丸が `p[0]` の末尾マス（7 九 = `bit 62`）、赤い丸が `p[1]` の開始マス（8 一 = `bit 63`）であり、分割境界は **7 筋と 8 筋の間** に位置する。
 
-<div id="layout-lohi" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<div id="layout-lohi" style="width:550px;height:510px;margin:1rem auto;border:1px solid #ddd;"></div>
 <script src="../../assets/shogi-board.js"></script>
 <script>
 {
@@ -208,11 +208,11 @@ const BOARD_MASK_HIGH: u64 = 0x0000_0000_0003_FFFF; // 下位 18 ビット (8〜
 <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:1rem auto;max-width:960px;">
   <div>
     <p style="text-align:center;margin:0 0 0.35rem;">先手視点（通常表示）</p>
-    <div id="layout-live-1" style="width:100%;height:460px;border:1px solid #ddd;"></div>
+    <div id="layout-live-1" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
   <div>
     <p style="text-align:center;margin:0 0 0.35rem;">後手視点（180 度回転表示）</p>
-    <div id="layout-live-2" style="width:100%;height:460px;border:1px solid #ddd;"></div>
+    <div id="layout-live-2" style="width:100%;height:340px;border:1px solid #ddd;"></div>
   </div>
 </div>
 <script src="../../assets/shogi-board.js"></script>

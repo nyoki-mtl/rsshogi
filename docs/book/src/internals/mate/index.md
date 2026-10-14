@@ -12,21 +12,21 @@
 ```mermaid
 flowchart TD
     A["開始: solve_mate_in_one / solve_mate_in_one_in_place"] --> B["事前準備: KingNeighborhood::new(pos, attacker, defender, king_sq)<br/>敵玉周囲 8 マスと敵玉抜き占有での利き・潜在的空き王手レイを計算"]
-    B --> C{"王手候補手の供給経路"}
+    B --> C["王手候補手の供給"]
     C -->|"!pos.in_check() の solve_mate_in_one"| D["打ち駒優先ストリーミング生成<br/>generate_checks_all_move32_drop_first_into"]
-    C -->|"solve_mate_in_one_in_place または自玉被王手中"| E["候補手リスト生成<br/>generate_checks_all_move32 + is_legal_move32"]
+    C -->|"solve_mate_in_one_in_place / 自玉被王手中"| E["候補手リスト生成<br/>generate_checks_all_move32 + is_legal_move32"]
     D --> F["is_legal_move32 による攻め方の合法性確認"]
     E --> G["第 1 段階: 盤面非破壊の静的反駁フィルタ (refute_candidate)"]
     F --> G
-    G --> H{"1. MoveDelta と CheckClass 構築<br/>王手分類 + 敵玉の隣接 8 マス脱出チェック"}
+    G --> H["1. MoveDelta と CheckClass 構築 + 敵玉の隣接 8 マス脱出チェック"]
     H -->|"逃げ場所あり"| Z["不詰 (棄却して次の王手候補へ)"]
-    H -->|"玉の隣接逃げ場所なし"| I{"2. 王手駒の捕獲による反駁 (refute_by_capture)<br/>ピンされていない玉方駒または玉自身で王手駒を取れるか"}
-    I -->|"確実に捕獲可能"| Z
-    I -->|"捕獲不可またはピン詳細検証が必要"| J{"3. 合い駒による反駁 (refute_by_interpose)<br/>遠隔単王手に対し持ち駒打ちや非ピン駒移動で遮断できるか"}
-    J -->|"確実に遮断可能"| Z
+    H -->|"玉の隣接逃げ場所なし"| I["2. 王手駒の捕獲による反駁 (refute_by_capture)"]
+    I -->|"非ピン駒または玉で確実に捕獲可能"| Z
+    I -->|"捕獲不可またはピン詳細検証が必要"| J["3. 合い駒による反駁 (refute_by_interpose)"]
+    J -->|"持ち駒打ちや非ピン駒移動で確実に遮断可能"| Z
     J -->|"静的反駁をすべて通過 (詰み濃厚)"| K["第 2 段階: 実盤面での確定検証<br/>work.apply_move32(mv) -> work.is_mated()"]
-    K -->|"is_mated() == true (玉方の合法応手 0 手)"| L["詰み確定: Some(mv.to_move()) を返して即座に終了"]
-    K -->|"is_mated() == false (最初の 1 手の合法応手で短絡終了)"| M["work.undo_move32(mv) して次の候補へ"]
+    K -->|"is_mated() == true (玉方の合法応手 0 手)"| L["詰み確定: Some(mv.to_move()) を返して終了"]
+    K -->|"is_mated() == false (最初の合法応手で短絡終了)"| M["work.undo_move32(mv) して次の候補へ"]
 ```
 
 ### 経路 1：打ち駒優先ストリーミングと遅延クローン（`!in_check` の `solve_mate_in_one`）
