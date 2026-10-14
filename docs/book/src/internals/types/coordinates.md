@@ -65,6 +65,26 @@ let raw = file.raw() * 9 + rank.raw();
 
 また、盤面の 180 度回転（後手視点への変換）は `Square::inverse(self)` によって `Square(80 - self.0)` の減算 1 回で計算され、左右反転は `Square::horizontal_flip(self)` によって `(8 - file) * 9 + rank` で計算される。
 
+### 盤面上の視覚的なマッピング
+
+以下の将棋盤は、基準となる 1 一（`0`）、5 五（`40`）、9 九（`80`）の 3 マスをハイライト表示したものである（上部の数字が筋 `9..1`、右側の漢数字が段 `一..九` を表す）。
+
+<div id="coords-map" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script src="../../assets/shogi-board.js"></script>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('coords-map');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: false });
+  board.setPositionFromSFEN('9/9/9/9/9/9/9/9/9 b - 1');
+  board.highlightSquares([0, 40, 80]);
+  board.goTo(0);
+  window.coordsMap = board;
+}
+</script>
+
 ---
 
 ## `RAW_TO_FILE` / `RAW_TO_RANK` による除算と剰余の排除

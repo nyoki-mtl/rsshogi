@@ -21,6 +21,80 @@
 
 近接駒の利き取得関数（`pawn_attacks`、`knight_attacks`、`silver_attacks`、`gold_attacks`、`king_attacks`）は、すべて上記テーブルの 1 回の配列参照（O(1)）のみで完結する。
 
+以下のアニメーションは、`5五` に配置した先手の近接駒（歩、桂、銀、金、玉）の利きパターンを順に表示している。
+
+<div id="atk-step-patterns" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script src="../../assets/shogi-board.js"></script>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('atk-step-patterns');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: false });
+  board.animate([
+    {
+      sfen: '9/9/9/9/4P4/9/9/9/9 b - 1',
+      arrows: [
+        { from: '5e', to: '5d', color: 'rgba(0,120,215,0.7)', width: 1.5 },
+      ],
+      circles: [{ square: '5e', color: 'rgba(0,120,215,0.4)' }],
+      duration: 2500,
+    },
+    {
+      sfen: '9/9/9/9/4N4/9/9/9/9 b - 1',
+      arrows: [
+        { from: '5e', to: '4c', color: 'rgba(255,140,0,0.7)', width: 1.5 },
+        { from: '5e', to: '6c', color: 'rgba(255,140,0,0.7)', width: 1.5 },
+      ],
+      circles: [{ square: '5e', color: 'rgba(255,140,0,0.4)' }],
+      duration: 2500,
+    },
+    {
+      sfen: '9/9/9/9/4S4/9/9/9/9 b - 1',
+      arrows: [
+        { from: '5e', to: '5d', color: 'rgba(0,180,0,0.7)' },
+        { from: '5e', to: '4d', color: 'rgba(0,180,0,0.7)' },
+        { from: '5e', to: '6d', color: 'rgba(0,180,0,0.7)' },
+        { from: '5e', to: '4f', color: 'rgba(0,180,0,0.5)' },
+        { from: '5e', to: '6f', color: 'rgba(0,180,0,0.5)' },
+      ],
+      circles: [{ square: '5e', color: 'rgba(0,180,0,0.4)' }],
+      duration: 2500,
+    },
+    {
+      sfen: '9/9/9/9/4G4/9/9/9/9 b - 1',
+      arrows: [
+        { from: '5e', to: '5d', color: 'rgba(220,50,50,0.7)' },
+        { from: '5e', to: '4d', color: 'rgba(220,50,50,0.7)' },
+        { from: '5e', to: '6d', color: 'rgba(220,50,50,0.7)' },
+        { from: '5e', to: '4e', color: 'rgba(220,50,50,0.7)' },
+        { from: '5e', to: '6e', color: 'rgba(220,50,50,0.7)' },
+        { from: '5e', to: '5f', color: 'rgba(220,50,50,0.7)' },
+      ],
+      circles: [{ square: '5e', color: 'rgba(220,50,50,0.4)' }],
+      duration: 2500,
+    },
+    {
+      sfen: '9/9/9/9/4K4/9/9/9/9 b - 1',
+      arrows: [
+        { from: '5e', to: '5d', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '5f', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '4e', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '6e', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '4d', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '6d', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '4f', color: 'rgba(128,0,255,0.7)' },
+        { from: '5e', to: '6f', color: 'rgba(128,0,255,0.7)' },
+      ],
+      circles: [{ square: '5e', color: 'rgba(128,0,255,0.4)' }],
+      duration: 2500,
+    },
+  ], { loop: true, autoPlay: true });
+  window.atkStepPatterns = board;
+}
+</script>
+
 ---
 
 ## 2. 縦方向の飛び駒（香車と飛車縦）：`FILE_ATTACKS` による 9 ビット直接参照
@@ -44,7 +118,7 @@ pub fn rook_file_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
 }
 ```
 
-- **テーブルサイズ**：段の位置 `rank`（`0..9`）× 筋内の 9 ビット占有パターン（$2^9 = 512$ 通り）× `u16`（2 バイト）= **9,216 バイト（9 KB）** であり、CPU の L1 データキャッシュ（通常 32 KB〜48 KB）に余裕をもって常駐する。
+- **テーブルサイズ**：段の位置 `rank`（`0..9`）× 筋内の 9 ビット占有パターン（`2^9 = 512` 通り）× `u16`（2 バイト）= **9,216 バイト（9 KB）** であり、CPU の L1 データキャッシュ（通常 32 KB〜48 KB）に余裕をもって常駐する。
 - **香車の利き（`lance_attacks`）**：`rook_file_attacks(sq, occupied)` で得た上下両方向の縦利きに対し、手番に応じた前方マスク `LANCE_FORWARD_MASKS[color][sq]` との論理積（AND）をとるだけで求まる。
 
 ---
@@ -52,6 +126,32 @@ pub fn rook_file_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
 ## 3. 斜めおよび横方向の飛び駒（角と飛車）：Qugiy（減算と XOR）と AVX2 双方向レイ計算
 
 角（斜め 4 方向）および飛車の横方向を含む全方向利きは、1 つの筋の中に収まらないため、レイ（光線）上の最初のブロッカー（遮蔽駒）をビット演算で特定する **Qugiy（Subtracting a Rook from a Blocking Piece / Hyperbola Quintessence 系）アルゴリズム** を用いている。
+
+以下の盤面は、`5五` の先手角から伸びる 4 方向の斜めレイのうち、右上（`1一`）、右下（`1九`）、左下（`9九`）は盤端まで通り、左上方向のみ `6四` の歩（赤丸）で遮断される様子を示している。
+
+<div id="lz-tz-live-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('lz-tz-live-1');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: false });
+  board.setPositionFromSFEN('9/9/9/3P5/4B4/9/9/9/9 b - 1');
+  board.goTo(0);
+  board.setArrows([
+    { from: '5e', to: '1a', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '1i', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '9i', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '6d', color: 'rgba(220,50,50,0.6)', width: 1.2 },
+  ]);
+  board.setCircles([
+    { square: '6d', color: 'rgba(220,50,50,0.8)', width: 2.0 },
+    { square: '5e', color: 'rgba(0,120,215,0.4)' },
+  ]);
+  window.lzTzLive1 = board;
+}
+</script>
 
 ### 正方向レイ（インデックス増加方向）の基本原理
 
@@ -91,6 +191,77 @@ const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
 3. ビット順序が逆転した空間では、負方向レイも「インデックスが増加する正方向レイ」と完全に同型になるため、同じ `increasing_ray_attacks` を適用できる。
 4. 得られた結果を再度 `reverse_bits` で元のビット順序に戻し、正方向の結果と OR 合成する。
 
+以下のアニメーションは、`5五` の先手飛車から上下左右の 4 方向へ伸びるレイが、`5二` の後手銀および `3五` の後手歩の位置で止まり、最終的に 4 方向の利きとして OR 合成される過程を示している。
+
+<div id="atk-lztz-step" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('atk-lztz-step');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: false });
+  const sfen = '9/4s4/9/9/4R1p2/9/9/9/9 b - 1';
+  board.animate([
+    {
+      sfen: sfen,
+      arrows: [
+        { from: '5e', to: '5b', color: 'rgba(0,120,215,0.8)', width: 1.5 },
+      ],
+      circles: [
+        { square: '5b', color: 'rgba(220,50,50,0.7)', width: 2.0 },
+      ],
+      duration: 2000,
+    },
+    {
+      sfen: sfen,
+      arrows: [
+        { from: '5e', to: '5b', color: 'rgba(0,120,215,0.4)', width: 0.8 },
+        { from: '5e', to: '5i', color: 'rgba(0,180,0,0.8)', width: 1.5 },
+      ],
+      duration: 2000,
+    },
+    {
+      sfen: sfen,
+      arrows: [
+        { from: '5e', to: '5b', color: 'rgba(0,120,215,0.4)', width: 0.8 },
+        { from: '5e', to: '5i', color: 'rgba(0,180,0,0.4)', width: 0.8 },
+        { from: '5e', to: '3e', color: 'rgba(255,140,0,0.8)', width: 1.5 },
+      ],
+      circles: [
+        { square: '3e', color: 'rgba(220,50,50,0.7)', width: 2.0 },
+      ],
+      duration: 2000,
+    },
+    {
+      sfen: sfen,
+      arrows: [
+        { from: '5e', to: '5b', color: 'rgba(0,120,215,0.4)', width: 0.8 },
+        { from: '5e', to: '5i', color: 'rgba(0,180,0,0.4)', width: 0.8 },
+        { from: '5e', to: '3e', color: 'rgba(255,140,0,0.4)', width: 0.8 },
+        { from: '5e', to: '9e', color: 'rgba(128,0,255,0.8)', width: 1.5 },
+      ],
+      duration: 2000,
+    },
+    {
+      sfen: sfen,
+      arrows: [
+        { from: '5e', to: '5b', color: 'rgba(0,120,215,0.7)', width: 1.2 },
+        { from: '5e', to: '5i', color: 'rgba(0,120,215,0.7)', width: 1.2 },
+        { from: '5e', to: '3e', color: 'rgba(0,120,215,0.7)', width: 1.2 },
+        { from: '5e', to: '9e', color: 'rgba(0,120,215,0.7)', width: 1.2 },
+      ],
+      circles: [
+        { square: '5b', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+        { square: '3e', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+      ],
+      duration: 3000,
+    },
+  ], { loop: true, autoPlay: true });
+  window.atkLztzStep = board;
+}
+</script>
+
 ### AVX2 による 2 方向同時レイ計算（`paired_increasing_attacks`）
 
 `x86_64` で AVX2 および SSE2 が利用可能な環境では、`attack_tables.rs` 内の SIMD 高速パスが有効になる。
@@ -116,3 +287,33 @@ const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
 | `rook_rank_attacks(sq, occupied)` | インデックス増加方向（`beams.e`）は `increasing_ray_attacks`、減少方向（`beams.w`）は最寄りブロッカー `blocker`（MSB）を求めて `beams.w ^ ROOK_RAY_BITS[blocker].w` で影の部分を打ち消す Classical アプローチ | 飛車の横方向のみの利き抽出。 |
 | `horse_attacks(sq, occupied)` | `bishop_attacks(sq, occupied) \| king_attacks(sq)` | 馬の利き計算。 |
 | `dragon_attacks(sq, occupied)` | `rook_attacks(sq, occupied) \| king_attacks(sq)` | 龍の利き計算。 |
+
+大駒の成駒である馬（`HORSE`）と龍（`DRAGON`）の利きは、専用のテーブルを持たず、元の飛び駒の利きと `king_attacks(sq)` の 1 回の論理和（OR）で合成される。
+以下の盤面は、`5五` の龍の利きが飛車の直線利き（青矢印）と玉の斜め隣接 4 マス（オレンジ矢印）の合成で表される様子を示している。
+
+<div id="atk-dragon-demo" style="width:600px;height:660px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('atk-dragon-demo');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: false });
+  board.setPositionFromSFEN('9/9/9/9/4+R4/9/9/9/9 b - 1');
+  board.goTo(0);
+  board.setArrows([
+    { from: '5e', to: '5a', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '5i', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '1e', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '9e', color: 'rgba(0,120,215,0.6)', width: 1.2 },
+    { from: '5e', to: '4d', color: 'rgba(255,140,0,0.7)', width: 1.0 },
+    { from: '5e', to: '6d', color: 'rgba(255,140,0,0.7)', width: 1.0 },
+    { from: '5e', to: '4f', color: 'rgba(255,140,0,0.7)', width: 1.0 },
+    { from: '5e', to: '6f', color: 'rgba(255,140,0,0.7)', width: 1.0 },
+  ]);
+  board.setCircles([
+    { square: '5e', color: 'rgba(0,120,215,0.4)' },
+  ]);
+  window.atkDragonDemo = board;
+}
+</script>

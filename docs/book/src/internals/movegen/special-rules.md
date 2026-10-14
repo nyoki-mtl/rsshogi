@@ -56,6 +56,43 @@
 先手または後手の盤上の歩のビットボード `our_pawns = pos.pieces(us, PieceType::PAWN)` を用いて、歩が存在する筋をビット演算で特定する。
 63+18 分割された File-major レイアウトにより、各筋の 9 ビット（`0x1ff << (file * 9)`）と `our_pawns` の交差を調べるだけで、すでに味方の歩がある筋の空きマスを歩打ち候補から一括でマスク除外できる。
 
+以下の実戦局面では、2 筋と 8 筋以外のすべての筋に先手の歩（赤丸）がすでに存在するため、歩を打てる候補マス（黄色ハイライト）が 2 筋と 8 筋の空きマス（二段目以南）だけに絞り込まれる様子を示している。
+
+<div id="live-nifu-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script src="../../assets/shogi-board.js"></script>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('live-nifu-1');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: true });
+  board.setPositionFromSFEN('lnsgk1snl/6gb1/p1pppp2p/6pR1/9/1rP6/P2PPPP1P/1BG6/LNS1KGSNL b 2P2p 1');
+  board.goTo(0);
+  board.highlightSquares([
+    (2 - 1) * 9 + (3 - 1),
+    (2 - 1) * 9 + (5 - 1),
+    (2 - 1) * 9 + (6 - 1),
+    (2 - 1) * 9 + (7 - 1),
+    (2 - 1) * 9 + (8 - 1),
+    (8 - 1) * 9 + (3 - 1),
+    (8 - 1) * 9 + (4 - 1),
+    (8 - 1) * 9 + (5 - 1),
+    (8 - 1) * 9 + (7 - 1),
+  ]);
+  board.setCircles([
+    { square: '1g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '3g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '4g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '5g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '6g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '7f', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+    { square: '9g', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+  ]);
+  window.liveNifu1 = board;
+}
+</script>
+
 ### 打ち歩詰めの盤面非破壊判定（`is_pawn_drop_mate`）
 
 歩を打つマス `to` が敵玉のちょうど 1 マス前方（すなわち歩打ちによる王手）である場合、その手で敵玉が詰んでしまうと **打ち歩詰め（反則）** となる。
@@ -67,6 +104,28 @@
    敵玉の周囲 8 マスのうち敵の味方駒がないマス `king_escape_candidates`（歩が打たれた `to` 自身も含む）を走査し、`!self.is_square_attacked_with_occupied(sq, color, occupied_after)`（攻め方の利きがないマス）が **1 マスでも存在すれば**、敵玉はそのマスへ逃げられる（または打たれた歩を玉で取れる）ため打ち歩詰めではない（`false`）。
    どちらの応手も 1 つも存在しない場合にのみ、打ち歩詰め（`true`）と確定する。
 
+以下の局面では、先手が `1四`（`1d`）に歩を打つと `1三`（`1c`）の後手玉に王手がかかるが、後手は玉以外の駒で `1四` の歩を取ることも、玉自身でその歩を取ったり周囲へ逃げたりすることもできないため、`is_pawn_drop_mate` によって打ち歩詰め（非合法手）と判定される。
+
+<div id="live-uchifuzume-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('live-uchifuzume-1');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setOptions({ showHands: true });
+  board.setPositionFromSFEN('l1+R2+R3/6ggl/p3ppppk/2p1b4/6S2/2P+b3N1/P+p3PPP1/4G1SK1/1N3+p1N1 b Pg2sn2l4p 1');
+  board.goTo(0);
+  board.setArrows([
+    { from: 'S:P', to: '1d', color: 'rgba(220,50,50,0.7)', width: 1.5 },
+  ]);
+  board.setCircles([
+    { square: '1c', color: 'rgba(220,50,50,0.8)', width: 2.0 },
+  ]);
+  window.liveUchifuzume1 = board;
+}
+</script>
+
 ---
 
 ## 4. 擬似合法性（`is_pseudo_legal`）と完全合法性（`is_legal`）の検証
@@ -77,6 +136,28 @@
 1. **打ち歩詰めの検査**：歩打ちのとき、`is_pawn_drop_mate(us, to)` が真なら非合法とする（駒打ちで自玉が新たに素抜かれることはないため、歩以外の駒打ちは常に合法となる）。
 2. **玉自身の移動の検査**：動かす駒が玉（`KING`）のとき、移動元 `from` を空けた占有状態 `occupied ^ from` において移動先 `to` に敵の利きがあれば自殺手として非合法とする。
 3. **絶対ピンされた駒の移動検査**：玉以外の盤上駒を動かすとき、移動元 `from` が `blockers_for_king(us)`（絶対ピン集合）に含まれていなければ無条件で合法となる。含まれている場合は、`Bitboard::is_aligned(from, to, our_king)` が真（ピンされている直線上の移動またはピン元の敵駒の捕獲）であるときのみ合法となる。
+
+以下の盤面では、`5二` の後手飛車が `5五` の先手玉を睨んでおり、その間にある `5三` の先手銀（オレンジ丸）が `blockers_for_king(BLACK)` に登録されている。
+この銀は 5 筋の直線上（`5二` の飛車を取る手、または `5四` へ引く手）にしか動けず、斜め方向（`4二`、`6二`、`4四`、`6四`）への移動は `!Bitboard::is_aligned(from, to, our_king)` により非合法として弾かれる。
+
+<div id="live-pin-1" style="width:640px;height:720px;margin:1rem auto;border:1px solid #ddd;"></div>
+<script>
+{
+  const { ShogiBoardAdapter } = RShogiBoard.installShogiBoardGlobals(window);
+  const root = document.getElementById('live-pin-1');
+  const board = new ShogiBoardAdapter();
+  board.mount(root);
+  board.setPositionFromSFEN('9/4r4/4S4/9/4K4/9/9/9/9 b - 1');
+  board.goTo(0);
+  board.setArrows([
+    { from: '5b', to: '5e', color: 'rgba(220,50,50,0.6)', width: 1.2 },
+  ]);
+  board.setCircles([
+    { square: '5c', color: 'rgba(255,140,0,0.8)', width: 2.0 },
+  ]);
+  window.livePin1 = board;
+}
+</script>
 
 ---
 
