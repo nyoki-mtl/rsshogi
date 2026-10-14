@@ -39,8 +39,8 @@
 | `0x0A` | 2B | `u16` | `flags` | `0x0003`（`FLAG_HAS_SCORE \| FLAG_HAS_DEPTH`）。ビット 0（score）とビット 1（depth）の両方が立っていない場合は `BookError::Unsupported`。 |
 | `0x0C` | 1B | `u8` | `key_bytes` | 1 キーあたりのバイト数。通常ビルドでは `8`（64-bit Zobrist）、`hash-128` ビルドでは `16`（128-bit Zobrist）。実行中ビルドのキー幅と異なる場合は `BookError::Unsupported`。 |
 | `0x0D` | 1B | `u8` | `reserved` | 予約領域（書き出し時は `0`）。 |
-| `0x0E` | 4B | `u32` | `node_count` | 登録局面数 $N$。 |
-| `0x12` | 4B | `u32` | `move_count` | 全候補手の合計数 $M$。 |
+| `0x0E` | 4B | `u32` | `node_count` | 登録局面数 `N`。 |
+| `0x12` | 4B | `u32` | `move_count` | 全候補手の合計数 `M`。 |
 
 ### `keys` 配列（`node_count * key_bytes` バイト）
 
@@ -54,14 +54,14 @@
 ### `offsets` 配列（`(node_count + 1) * 4` バイト）
 
 `node_count + 1` 個の `u32`（LE）を格納する。
-`i` 番目（$0 \le i < \text{node\_count}$）の局面に対応する候補手スライスは `moves[offsets[i] as usize .. offsets[i + 1] as usize]` となる。
+`i` 番目（`0 <= i < node_count`）の局面に対応する候補手スライスは `moves[offsets[i] as usize .. offsets[i + 1] as usize]` となる。
 
 `offsets` 配列は以下の不変条件を満たす必要がある。
 
 - 要素数が `node_count + 1` であること。
 - 先頭要素が `offsets[0] == 0` であること。
 - 末尾要素が `offsets[node_count] as usize == move_count` であること。
-- すべての $i$ について単調非減少（`offsets[i] <= offsets[i + 1]`）であること。
+- すべての `i` について単調非減少（`offsets[i] <= offsets[i + 1]`）であること。
 
 ### `moves` 配列（`move_count * 6` バイト、`BookMove`）
 

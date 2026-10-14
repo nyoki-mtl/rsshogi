@@ -23,7 +23,7 @@ pub(crate) struct StateStack {
 
 ### セグメント構造の利点
 
-1. **インデックス計算がビットシフトとマスクのみで完結する**：チャンクサイズが 2 のべき乗（$64 = 2^6$）であるため、深さ `index` の要素は `chunks[index >> 6][index & 63]` で除算なしに直接参照できる。
+1. **インデックス計算がビットシフトとマスクのみで完結する**：チャンクサイズが 2 のべき乗（`64 = 2^6`）であるため、深さ `index` の要素は `chunks[index >> 6][index & 63]` で除算なしに直接参照できる。
 2. **アドレス安定性とヒープ再確保の排除**：新しいチャンクが必要になった場合でも既存の `Box<[StateInfo; 64]>` は一切移動しない。また、`pop()` 時は `self.len -= 1` とするだけで確保済みのチャンクを解放せずに保持するため、探索木の昇降でヒープアロケーションは一度も発生しない。
 3. **履歴末尾の高速部分複製（`clone_suffix`）**：並列探索のワーカー起動や 1 手詰めソルバの作業局面生成で使われる `Position::clone_for_search_bounded(max_back_plies)` は、`StateStack::clone_suffix` を呼び出す。何百手もの全対局履歴をコピーするのではなく、直近の必要な手数分（および `plies_from_null` の範囲）だけを新しい `StateStack` へ切り出してコピーし、巻き戻し不可能な過去のチャンク複製コストを省いている。
 
@@ -94,7 +94,7 @@ pub(crate) struct StateInfo {
 | `7`（`CHECK_SQ_HORSE`） | `HORSE`（馬） | スロット `4`（角） `\| king_attacks(enemy_king)` |
 | `8`（`CHECK_SQ_DRAGON`） | `DRAGON`（龍） | スロット `5`（飛） `\| king_attacks(enemy_king)` |
 
-この 9 スロット圧縮により、毎ノードの `StateInfo` のメモリサイズを $7 \times 16 = 112$ バイト削減すると同時に、`update_check_squares` における金の王手マス計算とメモリ書き込みを 5 回から 1 回に減らしている。
+この 9 スロット圧縮により、毎ノードの `StateInfo` のメモリサイズを 7 × 16 = 112 バイト削減すると同時に、`update_check_squares` における金の王手マス計算とメモリ書き込みを 5 回から 1 回に減らしている。
 
 ---
 

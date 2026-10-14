@@ -31,8 +31,8 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 | 2 | 1B | `u8` | `game_result` | 対局結果 `GameResult` の数値表現（未定義値は `InvalidGameResult`）。 |
 | 3 | 1B | `u8` | `termination_reason` | 終局理由 `SazTerminationReason`（`0`：合法手なし、`1`：千日手引分、`2`：連続王手の千日手勝ち、`3`：連続王手の千日手負け、`4`：優等局面、`5`：劣等局面、`6`：入玉宣言、`7`：最大手数到達）。`8` 以上は `InvalidTerminationReason`。 |
 | 4 | 1B | `u8` | `entering_king_rule` | 入玉宣言ルール `EnteringKingRule`（`0`：`None`、`1`：`Point24`、`2`：`Point24Handicap`、`3`：`Point27`、`4`：`Point27Handicap`、`5`：`TryRule`、`6`：`Unset`）。`7` 以上は `InvalidEnteringKingRule`。 |
-| 5 | `1..=5` B | ULEB128 (`u32`) | `position_count` | この対局に含まれる局面レコードの個数 $P$。 |
-| 6 | 可変長 | `SazSelfplayPosition * P` | `positions` | $P$ 個の局面レコードを順に連続格納する。 |
+| 5 | `1..=5` B | ULEB128 (`u32`) | `position_count` | この対局に含まれる局面レコードの個数 `P`。 |
+| 6 | 可変長 | `SazSelfplayPosition * P` | `positions` | `P` 個の局面レコードを順に連続格納する。 |
 
 ### 局面レコードのワイヤーレイアウト（`SazSelfplayPosition` / `SazPosition`）
 
@@ -41,19 +41,19 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 | 順序 | サイズ | エンコーディング | フィールド名 | 内容と量子化スケール |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | 2B | `u16` LE | `played` | この局面で実際に選択された 16-bit 指し手（`Move::raw()`）。 |
-| 2 | 6B | `u16` LE $\times 3$ | `root_wdl` | MCTS 探索後の root 集約 WDL（`win`, `draw`, `loss` の順）。3 要素の合計は厳密に `65535`。 |
-| 3 | 6B | `u16` LE $\times 3$ | `outcome_wdl` | 終局結果から確定した教師 WDL（`win`, `draw`, `loss` の順、手番視点）。合計は厳密に `65535`。 |
-| 4 | 6B | `u16` LE $\times 3$ | `raw_wdl` | 探索を通す前にネットワークが出力した WDL（`win`, `draw`, `loss` の順）。合計は厳密に `65535`。 |
+| 2 | 6B | `u16` LE × 3 | `root_wdl` | MCTS 探索後の root 集約 WDL（`win`, `draw`, `loss` の順）。3 要素の合計は厳密に `65535`。 |
+| 3 | 6B | `u16` LE × 3 | `outcome_wdl` | 終局結果から確定した教師 WDL（`win`, `draw`, `loss` の順、手番視点）。合計は厳密に `65535`。 |
+| 4 | 6B | `u16` LE × 3 | `raw_wdl` | 探索を通す前にネットワークが出力した WDL（`win`, `draw`, `loss` の順）。合計は厳密に `65535`。 |
 | 5 | 2B | `u16` LE | `raw_mate` | ネットワークの mate head が出力した詰み確率（`u16 / 65535` 量子化）。 |
-| 6 | 2B | `u16` LE | `raw_moves_left` | ネットワークの moves-left head の予測残り手数（`手数 * 32` の固定小数点数、分解能 $1/32$ 手）。 |
+| 6 | 2B | `u16` LE | `raw_moves_left` | ネットワークの moves-left head の予測残り手数（`手数 * 32` の固定小数点数、分解能 `1/32` 手）。 |
 | 7 | 2B | `u16` LE | `plies_left` | 実際の対局終了までの残り手数。 |
 | 8 | 4B | `u32` LE | `requested_visits` | この局面で要求された探索シミュレーション回数。 |
-| 9 | 2B | `u16` LE | `target_weight_milli` | 学習時のサンプル重み（千分率、`1000` = 重み $1.0$）。 |
+| 9 | 2B | `u16` LE | `target_weight_milli` | 学習時のサンプル重み（千分率、`1000` = 重み `1.0`）。 |
 | 10 | 1B | `u8` | `exploration_flags` | 探索設定やノイズ有無を表すビットフラグ。 |
 | 11 | 1B | `u8` | `mate_tag` | 証明詰み手数 `mate` の有無タグ（`0`：`None`、`1`：`Some`）。`0` と `1` 以外は `InvalidMateTag`。 |
 | 12 | 0B または 2B | `i16` LE（条件付き） | `mate_value` | `mate_tag == 1` のときのみ存在する 2 バイト符号付き詰み手数。`mate_tag == 0` のときは 0 バイト。 |
-| 13 | `1..=5` B | ULEB128 (`u32`) | `policy_count` | 後続する `policy` エントリの個数 $M$。 |
-| 14 | 可変長 | `SazSelfplayPolicyEntry * M` | `policy` | $M$ 個の候補手 policy エントリを連続格納する。 |
+| 13 | `1..=5` B | ULEB128 (`u32`) | `policy_count` | 後続する `policy` エントリの個数 `M`。 |
+| 14 | 可変長 | `SazSelfplayPolicyEntry * M` | `policy` | `M` 個の候補手 policy エントリを連続格納する。 |
 
 ### Policy エントリのワイヤーレイアウト（`SazSelfplayPolicyEntry` / `SazPolicyEntry`）
 
