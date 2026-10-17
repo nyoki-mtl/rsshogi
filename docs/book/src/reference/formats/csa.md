@@ -166,7 +166,8 @@ CSA ファイルには `/` 行で区切って複数局を収録できる。
 ### Python
 
 ```python
-from rsshogi import Move32, Record
+from rsshogi.core import Board
+from rsshogi.record import Record
 
 # 単一局の読み込みと書き出し
 record = Record.from_csa_file("single_game.csa")
@@ -177,8 +178,9 @@ record.write_csa("output.csa", encoding="utf-8")
 records_from_file = Record.from_csa_games_file("multi_games.csa")
 records_from_str = Record.from_csa_games_str(multi_csa_text)
 
-# 1 手の CSA 文字列取得（Move32 は移動前の駒種と成フラグを持つため Board 不要）
-mv32 = Move32.from_csa("+7776FU")
+# CSA 文字列から盤面上の指し手を復元し、単独で CSA 文字列に戻す
+board = Board()
+mv32 = board.move_from_csa("+7776FU")
 print(mv32.to_csa())  # "+7776FU"
 ```
 

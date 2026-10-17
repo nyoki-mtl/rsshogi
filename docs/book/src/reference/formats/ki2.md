@@ -84,7 +84,8 @@ KIF と同様に、本手順の後に `変化：N手` セクションを記述�
 ### Python
 
 ```python
-from rsshogi import Board, Move, Record
+from rsshogi.core import Board, Move
+from rsshogi.record import Record
 
 # KI2 文字列のパースと書き出し
 record = Record.from_ki2_str(ki2_text)

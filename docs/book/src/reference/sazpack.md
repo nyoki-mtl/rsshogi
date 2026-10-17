@@ -83,10 +83,11 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 
 ### Python
 
-Python では `rsshogi.sazpack` サブモジュール（およびトップレベル `rsshogi`）で `SazWdl`、`SazPolicyEntry`、`SazPosition`、`SazGame` と読み書き関数を公開している。
+Python では `rsshogi.sazpack` サブモジュールで `SazWdl`、`SazPolicyEntry`、`SazPosition`、`SazGame` と読み書き関数を公開している。
 
 ```python
-from rsshogi import Board, GameResult
+from rsshogi.core import Board
+from rsshogi.record import GameResult
 from rsshogi.sazpack import (
     SazGame,
     SazPolicyEntry,

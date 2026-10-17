@@ -89,11 +89,13 @@
 ### Python
 
 ```python
-from rsshogi import Board, BookBuilder, BookMove, MemoryBook, Move, Record, StaticBook, book_key_from_position
+from rsshogi.book import BookBuilder, StaticBook, book_key_from_position
+from rsshogi.core import Board
+from rsshogi.record import Record
 
 # 1. BookBuilder で Record（本手順と分岐）を取り込み StaticBook を生成する
 builder = BookBuilder()
-record = Record.from_kif_file("game.kif")
+record = Record.from_kif_file("game.kif", encoding="utf-8")
 builder.extend_from_game_record(record, default_score=0, default_depth=16)
 
 static_book = builder.build_static()

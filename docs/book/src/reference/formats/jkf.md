@@ -212,7 +212,7 @@ CSA 形式の指し手文字列（`+8822UM`）とは異なり、JKF の `move.pi
 
 ```python
 import json
-from rsshogi import Record
+from rsshogi.record import Record
 
 # JKF 文字列またはファイルからの読み込み
 record = Record.from_jkf_str(jkf_text)

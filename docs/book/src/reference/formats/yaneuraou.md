@@ -124,7 +124,8 @@ YBB ファイルは、32 バイトのヘッダ、44 バイト × `N` 個のイ�
 ### Python（DB2016）
 
 ```python
-from rsshogi import Board, YaneuraOuBook
+from rsshogi.book import YaneuraOuBook
+from rsshogi.core import Board
 
 book = YaneuraOuBook.open("user_book1.db")
 diag = book.diagnostics()

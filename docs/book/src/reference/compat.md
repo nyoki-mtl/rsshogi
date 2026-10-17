@@ -79,7 +79,7 @@
 - **KI2 表記（`Move.to_ki2(board)` / `Move32.to_ki2(board)`）**：KI2 文字列（例：`▲７六歩`、`▲５八金右`）の生成には、同じマスへ移動可能な同種駒の有無（相対動作修飾子 `右`、`左`、`上`、`寄`、`引`、`打` の判定）や直前手との移動先一致（`同` の判定）が必要である。そのため、`Move.to_ki2(board)` と `Move32.to_ki2(board)` はいずれも指し手適用前の `Board` を引数に取る。
 
 ```python
-from rsshogi import Board, Move
+from rsshogi.core import Board, Move
 
 board = Board()
 mv = Move.from_usi("7g7f")

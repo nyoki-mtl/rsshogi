@@ -36,7 +36,7 @@ Rust では `Cargo.toml` に `rsshogi` を追加する。
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.3.0", features = ["records", "book"] }
+rsshogi = { version = "1.3.1", features = ["records", "book"] }
 ```
 
 ```rust

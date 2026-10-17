@@ -75,7 +75,7 @@ flowchart LR
 #### Python
 
 ```python
-from rsshogi import Record
+from rsshogi.record import Record
 
 # KIF 文字列をパースして他フォーマットへ変換する
 record = Record.from_kif_str(kif_text)

@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-17
+
+SBK 定跡書庫のオープン性能を改善したパッチリリース。公開 API と保存形式に変更はない。
+
+### Changed
+
+- `SbkBook::open` / `open_with_control` がインデックス構築中にファイル全体をメモリへ読み込むように
+  なった。ステートごとの `seek` と、グラフ走査中の `Position` クローンがなくなり、
+  走査は `PackedSfen` をキーに単一の `Position` を再利用する。
+  オープン時のピークメモリはファイルサイズに比例する（読み込んだバイト列は戻り値には残らない）。
+  合成 107 MB SBK（840,000 state）での計測で、open は 34.5 s から 1.4 s、ピーク RSS は
+  22.2 GB から 282 MB になった。
+
+### Fixed
+
+- `PackedSfen` で表現できない局面を含む SBK を開いたときに panic していたのを修正。
+  `BookError::InvalidData` を返す。
+
 ## [1.3.0] - 2026-10-11
 
 このリリースは minor 更新ですが、SAZ2 の公開 API と保存形式に破壊的変更を含みます。
