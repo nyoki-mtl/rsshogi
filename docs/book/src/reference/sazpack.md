@@ -1,7 +1,11 @@
-# sazpack フォーマット仕様（SAZ2 v3）
+# sazpack フォーマット仕様（SAZ2 v4）
 
-`sazpack`（マジック `SAZ2`、現行バージョン `3`）は、AlphaZero 系のモンテカルロ木探索（MCTS）自己対局から得られる教師データを対局単位のチャンクとして保存するバイナリフォーマットである。
+`sazpack`（マジック `SAZ2`、現行バージョン `4`）は、AlphaZero 系のモンテカルロ木探索（MCTS）自己対局から得られる教師データを対局単位のチャンクとして保存するバイナリフォーマットである。
 各対局の開始局面と終局情報に加え、各手番における探索後の root WDL、ネットワークの raw 出力（raw WDL、raw prior、raw mate、raw moves-left）、証明詰み手数、および合法手ごとの訪問回数と勝敗上下限（疎な policy 分布）を格納する。
+
+reader は version `4` のチャンクだけを受理する。
+異なる版のデータを利用する際は、ヘッダとペイロードの仕様を確認して変換するか、生成元から再生成する。
+終局理由の意味が生成元で失われている場合、版番号を変更するだけでは復元できない。
 
 ## 1. ワイヤーレイアウト仕様
 
@@ -17,7 +21,7 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 | オフセット | サイズ | エンコーディング | フィールド名 | 内容と検証規則 |
 | :--- | :--- | :--- | :--- | :--- |
 | `0x00` | 4B | `[u8; 4]` | `magic` | `b"SAZ2"` 固定。不一致時は `SazSelfplayError::InvalidMagic`。 |
-| `0x04` | 1B | `u8` | `version` | `3` 固定。`3` 以外の値は `SazSelfplayError::UnsupportedVersion(version)`。 |
+| `0x04` | 1B | `u8` | `version` | `4` 固定。`4` 以外の値は `SazSelfplayError::UnsupportedVersion(version)`。v3 以前のチャンクは読み替えずに拒否する。 |
 | `0x05` | 1B | `u8` | `flags` | `0` 固定。`0` 以外の値は `SazSelfplayError::UnsupportedFlags(flags)`。 |
 | `0x06` | 4B | `u32` LE | `payload_len` | ヘッダ直後に続くペイロード全体のバイト長。ファイル長が `10 + payload_len` より短い場合は `Truncated`、長い場合は `TrailingBytes`。 |
 
@@ -27,9 +31,9 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 
 | 順序 | サイズ | エンコーディング | フィールド名 | 内容と有効値 |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | 32B | `[u8; 32]` | `stem_packed_sfen` | 対局開始局面の 32 バイト `PackedSfen`。デコード時に `Position::set_packed_sfen` で合法性が検証される。 |
+| 1 | 32B | `[u8; 32]` | `stem_packed_sfen` | 対局開始局面の 32 バイト `PackedSfen`。codec はバイト列を保持し、局面としての妥当性は検証しない。 |
 | 2 | 1B | `u8` | `game_result` | 対局結果 `GameResult` の数値表現（未定義値は `InvalidGameResult`）。 |
-| 3 | 1B | `u8` | `termination_reason` | 終局理由 `SazTerminationReason`（`0`：合法手なし、`1`：千日手引分、`2`：連続王手の千日手勝ち、`3`：連続王手の千日手負け、`4`：優等局面、`5`：劣等局面、`6`：入玉宣言、`7`：最大手数到達）。`8` 以上は `InvalidTerminationReason`。 |
+| 3 | 1B | `u8` | `termination_reason` | 終局理由 `SazTerminationReason`（`0`：合法手なし、`1`：千日手引分、`2`：連続王手の千日手勝ち、`3`：連続王手の千日手負け、`4`：優等局面、`5`：劣等局面、`6`：入玉宣言、`7`：最大手数到達、`8`：投了、`9`：裁定）。`10` 以上は `InvalidTerminationReason`。<br>`8` と `9` の終局局面には合法手が残る。`8` は敗者側が投了した終局であり、評価値の閾値で手番側（最後に記録された局面の手番）の負けを確定させる自己対局の打ち切りを含む。`9` は投了を伴わない宣言であり、引き分けを宣言した場合の `game_result` は `DrawByAdjudication` になる。 |
 | 4 | 1B | `u8` | `entering_king_rule` | 入玉宣言ルール `EnteringKingRule`（`0`：`None`、`1`：`Point24`、`2`：`Point24Handicap`、`3`：`Point27`、`4`：`Point27Handicap`、`5`：`TryRule`、`6`：`Unset`）。`7` 以上は `InvalidEnteringKingRule`。 |
 | 5 | `1..=5` B | ULEB128 (`u32`) | `position_count` | この対局に含まれる局面レコードの個数 `P`。 |
 | 6 | 可変長 | `SazSelfplayPosition * P` | `positions` | `P` 個の局面レコードを順に連続格納する。 |
@@ -69,7 +73,7 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 | 6 | 1B | `u8` | `upper` | 探索で証明された勝敗上限 `SazOutcomeBound`（`0`：`Loss`、`1`：`Draw`、`2`：`Win`）。`3` 以上は `InvalidOutcomeBound`。 |
 
 > [!NOTE]
-> メモリ上や下流の学習テンソル構築において、候補手のラベルと勝敗上下限を 16-bit 整数 `packed_label_bounds: u16` にパックして扱う場合は、下位 11 ビット（bits `0..=10`）に `CompactMoveLabel`（`0..1496`）、bits `11..=12` に `lower`（`SazOutcomeBound`）、bits `13..=14` に `upper`（`SazOutcomeBound`）、bit `15` に `0` を割り当てる設計と対応付けられる。`SAZ2` v3 チャンクのワイヤー上では、局面再生なしで直接読み書きできるよう `mv: u16 LE`（2B）と `lower: u8`（1B）、`upper: u8`（1B）として記録される。
+> メモリ上や下流の学習テンソル構築において、候補手のラベルと勝敗上下限を 16-bit 整数 `packed_label_bounds: u16` にパックして扱う場合は、下位 11 ビット（bits `0..=10`）に `CompactMoveLabel`（`0..1496`）、bits `11..=12` に `lower`（`SazOutcomeBound`）、bits `13..=14` に `upper`（`SazOutcomeBound`）、bit `15` に `0` を割り当てる設計と対応付けられる。`SAZ2` v4 チャンクのワイヤー上では、局面再生なしで直接読み書きできるよう `mv: u16 LE`（2B）と `lower: u8`（1B）、`upper: u8`（1B）として記録される。
 
 ## 2. 検証不変条件（Validation Invariants）
 
@@ -77,7 +81,11 @@ Chunk = ChunkHeader (10 bytes) + SazSelfplayGame*
 
 1. **WDL 分布の総和**：各局面の `root_wdl`、`outcome_wdl`、`raw_wdl` は、いずれも `u32::from(win) + u32::from(draw) + u32::from(loss) == 65535`（`SazWdl::TOTAL`）を満たさなければならない。不一致の場合は `SazSelfplayError::InvalidDistributionSum` を返す。
 2. **Prior 分布の総和**：`policy` が空でない各局面について、全エントリの `prior` の合計および `raw_prior` の合計がそれぞれ厳密に `65535` に一致しなければならない（桁溢れを防ぐため残余予算 `65535` からの減算 `checked_sub` で検証される）。なお、`policy` が 0 件の終端局面等では合計が `65535` に達しないため、`policy` は少なくとも 1 手以上のエントリを持ち合計 `65535` を満たす必要がある。
-3. **列挙値とタグの境界**：未知の `GameResult`、`SazTerminationReason`（`> 7`）、`EnteringKingRule`（`> 6`）、`SazOutcomeBound`（`> 2`）、および `mate_tag`（`0` または `1` 以外）はすべてデコード時に拒否される。
+3. **列挙値とタグの境界**：未知の `GameResult`、`SazTerminationReason`（`> 9`）、`EnteringKingRule`（`> 6`）、`SazOutcomeBound`（`> 2`）、および `mate_tag`（`0` または `1` 以外）はすべてデコード時に拒否される。
+
+局面の妥当性、着手の合法性、候補手の重複、`lower <= upper`、終局結果と終局理由の整合性は codec の検証対象に含まれない。
+例えば `DrawByAdjudication` と `Resignation` の組み合わせも読み書きできるため、生成側で整合性を確認する。
+終局理由の表にある条件はデータの意味を定める契約であり、codec が盤面を再生して判定するものではない。
 
 ## 3. コード例
 

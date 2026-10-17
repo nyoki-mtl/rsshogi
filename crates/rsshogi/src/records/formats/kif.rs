@@ -1019,6 +1019,7 @@ fn terminal_from_kif_name(name: &str, side_to_move: Color) -> SpecialMoveEntry {
         "千日手" => (SpecialMove::RepetitionDraw, GameResult::DrawByRepetition),
         "最大手数" => (SpecialMove::MaxMoves, GameResult::DrawByMaxPlies),
         "持将棋" => (SpecialMove::Impasse, GameResult::DrawByImpasse),
+        "裁定引分" => (SpecialMove::Draw, GameResult::DrawByAdjudication),
         "中断" => (SpecialMove::Interrupt, GameResult::Paused),
         "不詰" => (SpecialMove::NoMate, GameResult::Paused),
         "トライ" => (SpecialMove::Try, GameResult::Paused),
@@ -1057,6 +1058,9 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
     }
     if trimmed.contains("持将棋") {
         return Some(SpecialMoveEntry::new(SpecialMove::Impasse, GameResult::DrawByImpasse));
+    }
+    if trimmed.contains("裁定引分") {
+        return Some(SpecialMoveEntry::new(SpecialMove::Draw, GameResult::DrawByAdjudication));
     }
     if trimmed.contains("中断") {
         return Some(SpecialMoveEntry::new(SpecialMove::Interrupt, GameResult::Paused));
@@ -1244,8 +1248,8 @@ fn special_move_to_kif_text(special: &SpecialMoveEntry) -> String {
         SpecialMove::Resign => "投了",
         SpecialMove::Interrupt => "中断",
         SpecialMove::MaxMoves => "最大手数",
-        SpecialMove::Impasse => "持将棋",
-        SpecialMove::Draw => "引き分け",
+        SpecialMove::Draw if special.result() == GameResult::DrawByAdjudication => "裁定引分",
+        SpecialMove::Impasse | SpecialMove::Draw => "持将棋",
         SpecialMove::RepetitionDraw => "千日手",
         SpecialMove::Mate => "詰み",
         SpecialMove::NoMate => "不詰",
@@ -1293,8 +1297,10 @@ fn format_kif_summary(
         SpecialMove::Resign => format!("まで{ply}手で{last}の勝ち"),
         SpecialMove::Interrupt => format!("まで{ply}手で中断"),
         SpecialMove::MaxMoves => format!("まで{ply}手で最大手数"),
-        SpecialMove::Impasse => format!("まで{ply}手で持将棋"),
-        SpecialMove::Draw => format!("まで{ply}手で引き分け"),
+        SpecialMove::Draw if terminal.result() == GameResult::DrawByAdjudication => {
+            format!("まで{ply}手で裁定引分")
+        }
+        SpecialMove::Impasse | SpecialMove::Draw => format!("まで{ply}手で持将棋"),
         SpecialMove::RepetitionDraw => format!("まで{ply}手で千日手"),
         SpecialMove::Mate => format!("まで{ply}手で詰み"),
         SpecialMove::NoMate => format!("まで{ply}手で不詰"),
@@ -2561,6 +2567,93 @@ mod tests {
     fn test_parse_kif_repeated_hand_pieces_do_not_overflow() {
         let hands = "歩".repeat(300);
         assert_eq!(parse_hand_pieces(&hands).get("FU"), Some(&300));
+    }
+
+    #[test]
+    fn test_parse_kif_adjudicated_draw_terminal() {
+        let record = parse_kif_str("手合割：平手\n 1 ７六歩(77)\n 2 裁定引分").unwrap();
+        assert_eq!(record.result(), GameResult::DrawByAdjudication);
+        assert_eq!(record.main_terminal().unwrap().kind(), &SpecialMove::Draw);
+    }
+
+    #[test]
+    fn test_parse_kif_and_ki2_adjudicated_draw_summary() {
+        for record in [
+            parse_kif_str("手合割：平手\n 1 ７六歩(77)\nまで1手で裁定引分").unwrap(),
+            parse_ki2_str("手合割：平手\n▲７六歩\nまで1手で裁定引分").unwrap(),
+        ] {
+            assert_eq!(record.main_moves().count(), 1);
+            assert_eq!(record.result(), GameResult::DrawByAdjudication);
+            assert_eq!(record.main_terminal().unwrap().kind(), &SpecialMove::Draw);
+        }
+    }
+
+    #[test]
+    fn test_export_kif_and_ki2_roundtrip_draw_results() {
+        for result in [
+            GameResult::DrawByAdjudication,
+            GameResult::DrawByRepetition,
+            GameResult::DrawByImpasse,
+        ] {
+            let record = Record::from_main_line_with_result(
+                hirate_position().to_sfen(None),
+                vec![
+                    MoveEntry::new(Move::from_usi("7g7f").unwrap()),
+                    MoveEntry::new(Move::from_usi("3c3d").unwrap()),
+                ],
+                result,
+            )
+            .unwrap();
+            let expected_kind = match result {
+                GameResult::DrawByAdjudication => SpecialMove::Draw,
+                GameResult::DrawByImpasse => SpecialMove::Impasse,
+                _ => SpecialMove::RepetitionDraw,
+            };
+            let kif = export_kif(&record).unwrap();
+            let ki2 = export_ki2(&record).unwrap();
+            if result == GameResult::DrawByAdjudication {
+                assert!(kif.contains("裁定引分"));
+                assert!(ki2.contains("まで2手で裁定引分"));
+                assert!(!kif.contains("持将棋"));
+                assert!(!ki2.contains("持将棋"));
+                assert!(!kif.contains("引き分け"));
+                assert!(!ki2.contains("引き分け"));
+            }
+            for parsed in [parse_kif_str(&kif).unwrap(), parse_ki2_str(&ki2).unwrap()] {
+                assert_eq!(parsed.result(), result);
+                assert!(parsed.result().is_draw());
+                assert_eq!(parsed.main_terminal().unwrap().kind(), &expected_kind);
+                assert_eq!(
+                    parsed.main_moves().map(|entry| entry.mv()).collect::<Vec<_>>(),
+                    record.main_moves().map(|entry| entry.mv()).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_export_draw_with_impasse_result() {
+        let mut record = Record::from_main_line_with_result(
+            hirate_position().to_sfen(None),
+            vec![MoveEntry::new(Move::from_usi("7g7f").unwrap())],
+            GameResult::DrawByImpasse,
+        )
+        .unwrap();
+        record
+            .set_main_terminal(SpecialMoveEntry::new(SpecialMove::Draw, GameResult::DrawByImpasse))
+            .unwrap();
+
+        let kif = export_kif(&record).unwrap();
+        let ki2 = export_ki2(&record).unwrap();
+        assert!(kif.contains("持将棋"));
+        assert!(ki2.contains("まで1手で持将棋"));
+        assert!(!kif.contains("裁定引分"));
+        assert!(!ki2.contains("裁定引分"));
+        for parsed in [parse_kif_str(&kif).unwrap(), parse_ki2_str(&ki2).unwrap()] {
+            assert_eq!(parsed.result(), GameResult::DrawByImpasse);
+            assert_eq!(parsed.main_terminal().unwrap().kind(), &SpecialMove::Impasse);
+            assert_eq!(parsed.main_moves().count(), 1);
+        }
     }
 
     #[test]

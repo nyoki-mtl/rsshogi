@@ -305,6 +305,7 @@ fn result_to_jkf_special(result: GameResult) -> Option<&'static str> {
         GameResult::DrawByRepetition => Some("SENNICHITE"),
         GameResult::DrawByImpasse => Some("JISHOGI"),
         GameResult::DrawByMaxPlies => Some("MAX_MOVES"),
+        GameResult::DrawByAdjudication => Some("HIKIWAKE"),
         GameResult::BlackWinByDeclaration | GameResult::WhiteWinByDeclaration => Some("KACHI"),
         GameResult::BlackWinByTryRule | GameResult::WhiteWinByTryRule => Some("KACHI"),
         GameResult::BlackWinByForfeit | GameResult::WhiteWinByForfeit => Some("KACHI"),

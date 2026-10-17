@@ -35,7 +35,8 @@ impl TryFrom<GameResult> for HcpeGameResult {
             GameResult::WhiteWin => Ok(Self::WhiteWin),
             GameResult::DrawByRepetition
             | GameResult::DrawByMaxPlies
-            | GameResult::DrawByImpasse => Ok(Self::Draw),
+            | GameResult::DrawByImpasse
+            | GameResult::DrawByAdjudication => Ok(Self::Draw),
             _ => Err(HcpeError::UnsupportedGameResult(value)),
         }
     }

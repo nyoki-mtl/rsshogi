@@ -342,6 +342,7 @@ fn result_to_game(result: GameResult) -> Option<PackGameResult> {
         GameResult::DrawByRepetition
         | GameResult::DrawByMaxPlies
         | GameResult::DrawByImpasse
+        | GameResult::DrawByAdjudication
         | GameResult::Paused => Some(PackGameResult::Draw),
         GameResult::Error | GameResult::Invalid => None,
     }

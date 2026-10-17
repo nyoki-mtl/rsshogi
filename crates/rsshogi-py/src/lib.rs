@@ -624,6 +624,7 @@ const GAME_RESULT_MEMBER_NAMES: &[&str] = &[
     "WHITE_WIN_BY_TRY_RULE",
     "BLACK_WIN_BY_ILLEGAL_MOVE",
     "WHITE_WIN_BY_ILLEGAL_MOVE",
+    "DRAW_BY_ADJUDICATION",
     "PAUSED",
     "BLACK_WIN_BY_TIMEOUT",
     "WHITE_WIN_BY_TIMEOUT",
@@ -911,6 +912,11 @@ impl PyGameResult {
     #[classattr]
     fn WHITE_WIN_BY_ILLEGAL_MOVE(py: Python<'_>) -> PyResult<Py<PyGameResult>> {
         Py::new(py, PyGameResult { inner: GameResult::WhiteWinByIllegalMove })
+    }
+
+    #[classattr]
+    fn DRAW_BY_ADJUDICATION(py: Python<'_>) -> PyResult<Py<PyGameResult>> {
+        Py::new(py, PyGameResult { inner: GameResult::DrawByAdjudication })
     }
 
     #[classattr]
@@ -5423,6 +5429,7 @@ fn game_result_name(result: GameResult) -> &'static str {
         GameResult::WhiteWinByTryRule => "WHITE_WIN_BY_TRY_RULE",
         GameResult::BlackWinByIllegalMove => "BLACK_WIN_BY_ILLEGAL_MOVE",
         GameResult::WhiteWinByIllegalMove => "WHITE_WIN_BY_ILLEGAL_MOVE",
+        GameResult::DrawByAdjudication => "DRAW_BY_ADJUDICATION",
         GameResult::Paused => "PAUSED",
         GameResult::BlackWinByTimeout => "BLACK_WIN_BY_TIMEOUT",
         GameResult::WhiteWinByTimeout => "WHITE_WIN_BY_TIMEOUT",
@@ -5446,6 +5453,7 @@ fn game_result_from_str(name: &str) -> Option<GameResult> {
         "WHITE_WIN_BY_TRY_RULE" => Some(GameResult::WhiteWinByTryRule),
         "BLACK_WIN_BY_ILLEGAL_MOVE" => Some(GameResult::BlackWinByIllegalMove),
         "WHITE_WIN_BY_ILLEGAL_MOVE" => Some(GameResult::WhiteWinByIllegalMove),
+        "DRAW_BY_ADJUDICATION" => Some(GameResult::DrawByAdjudication),
         "PAUSED" => Some(GameResult::Paused),
         "BLACK_WIN_BY_TIMEOUT" => Some(GameResult::BlackWinByTimeout),
         "WHITE_WIN_BY_TIMEOUT" => Some(GameResult::WhiteWinByTimeout),
@@ -5469,6 +5477,7 @@ fn game_result_from_value(value: u8) -> Option<GameResult> {
         11 => Some(GameResult::Paused),
         12 => Some(GameResult::BlackWinByIllegalMove),
         13 => Some(GameResult::WhiteWinByIllegalMove),
+        14 => Some(GameResult::DrawByAdjudication),
         16 => Some(GameResult::BlackWinByTimeout),
         17 => Some(GameResult::WhiteWinByTimeout),
         20 => Some(GameResult::BlackWinByTryRule),
@@ -5487,6 +5496,7 @@ fn special_move_from_game_result(result: GameResult) -> SpecialMove {
         }
         GameResult::BlackWinByTryRule | GameResult::WhiteWinByTryRule => SpecialMove::Try,
         GameResult::DrawByMaxPlies => SpecialMove::MaxMoves,
+        GameResult::DrawByAdjudication => SpecialMove::Draw,
         GameResult::BlackWinByForfeit | GameResult::WhiteWinByForfeit => SpecialMove::WinByDefault,
         GameResult::DrawByImpasse => SpecialMove::Impasse,
         GameResult::BlackWinByIllegalMove | GameResult::WhiteWinByIllegalMove => {

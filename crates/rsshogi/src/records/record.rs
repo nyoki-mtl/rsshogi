@@ -1809,6 +1809,7 @@ fn special_from_game_result(result: GameResult) -> SpecialMove {
         }
         GameResult::BlackWinByTryRule | GameResult::WhiteWinByTryRule => SpecialMove::Try,
         GameResult::DrawByMaxPlies => SpecialMove::MaxMoves,
+        GameResult::DrawByAdjudication => SpecialMove::Draw,
         GameResult::BlackWinByForfeit | GameResult::WhiteWinByForfeit => SpecialMove::WinByDefault,
         GameResult::DrawByImpasse => SpecialMove::Impasse,
         GameResult::BlackWinByIllegalMove | GameResult::WhiteWinByIllegalMove => {

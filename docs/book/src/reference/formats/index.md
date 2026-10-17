@@ -131,7 +131,7 @@ let jkf_text = export_jkf(&record)?;
 | `PackedSfenValue` (PSV) | 40 バイト固定 | PackedSfen + 評価値 + 指し手 (`Move`) + 手数 + 勝敗 | [学習用バイナリ仕様](training-binaries.md) |
 | `PACK` | 可変長（対局単位） | 開始局面 + 手順 (`AperyMove`) と評価値 + 終局結果の連結保存 | [学習用バイナリ仕様](training-binaries.md) |
 | `SBINPACK` (`SBN2`) | 可変長（チャンク / チェーン） | 合法手インデックスと評価値差分による高圧縮棋譜ストリーム | [sbinpack フォーマット仕様](../sbinpack.md) |
-| `SAZPACK` (`SAZ2` v3) | 可変長（チャンク） | AlphaZero 型 MCTS 自己対局のゲーム統計と疎な方策分布の保存 | [sazpack フォーマット仕様](../sazpack.md) |
+| `SAZPACK` (`SAZ2` v4) | 可変長（チャンク） | AlphaZero 型 MCTS 自己対局のゲーム統計と疎な方策分布の保存 | [sazpack フォーマット仕様](../sazpack.md) |
 
 ## 関連項目
 
