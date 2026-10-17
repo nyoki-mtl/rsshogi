@@ -1,8 +1,8 @@
 //! SBK 定跡書庫の読み込みと書き出しサポート。
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::board::position::{PackedSfen, Ply};
@@ -147,6 +147,9 @@ impl SbkBook {
     /// SBK 定跡書庫を開き、状態グラフ全体をデコードせずに Packed SFEN インデックスを構築する。
     ///
     /// 状態ペイロードはオンデマンドでデコードされる。インデックスは解決済みステートごとに 1 行を保持する。
+    ///
+    /// インデックス構築中はファイル全体をメモリへ読み込むため、オープン時のピークメモリは
+    /// ファイルサイズに比例する。読み込んだバイト列は戻り値には保持されない。
     pub fn open(path: impl AsRef<Path>) -> Result<Self, BookError> {
         Self::open_with_control(path, |_| BookControl::Continue)
     }
@@ -161,9 +164,9 @@ impl SbkBook {
         mut on_progress: impl FnMut(SbkOpenProgress) -> BookControl,
     ) -> Result<Self, BookError> {
         let path = path.as_ref().to_path_buf();
-        let mut file = File::open(&path)?;
+        let bytes = fs::read(&path)?;
 
-        let scan = scan_sbook_file(&mut file)?;
+        let scan = scan_sbook_bytes(&bytes)?;
         if scan.states.is_empty() {
             return Err(BookError::InvalidFormat("sbk contains no states"));
         }
@@ -180,7 +183,7 @@ impl SbkBook {
         };
         book.state_lookup = vec![None; book.states.len()];
         book.build_state_id_index()?;
-        book.build_index(&mut file, &mut on_progress)?;
+        book.build_index(&bytes, &mut on_progress)?;
         Ok(book)
     }
 
@@ -296,45 +299,53 @@ impl SbkBook {
 
     fn build_index(
         &mut self,
-        file: &mut File,
+        bytes: &[u8],
         on_progress: &mut impl FnMut(SbkOpenProgress) -> BookControl,
     ) -> Result<(), BookError> {
-        let standard = Position::from_sfen(InitialPosition::Standard.to_sfen())
+        let mut pos = Position::from_sfen(InitialPosition::Standard.to_sfen())
             .map_err(|err| BookError::InvalidData(err.to_string()))?;
+        let standard_key = pos.to_packed_sfen();
+        let standard_ply = pos.game_ply();
 
-        let mut visited = HashSet::new();
+        let mut visited = vec![false; self.states.len()];
+        let mut visited_count = 0usize;
+        let mut queue = VecDeque::new();
+
         for root_index in 0..self.states.len() {
-            if visited.contains(&root_index) {
+            if visited[root_index] {
                 continue;
             }
 
-            let raw = self.read_state_from_file(file, root_index)?;
-            let root_pos = match raw.position.as_deref() {
-                Some(position) => Position::from_sfen(position).map_err(|err| {
-                    BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
-                })?,
-                None if root_index == 0 => standard.clone(),
+            let raw = self.read_state_from_bytes(bytes, root_index)?;
+            let (root_key, root_ply) = match raw.position.as_deref() {
+                Some(position) => {
+                    pos.set_sfen(position).map_err(|err| {
+                        BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
+                    })?;
+                    (packed_sfen_of_state(&pos)?, pos.game_ply())
+                }
+                None if root_index == 0 => (standard_key, standard_ply),
                 None => continue,
             };
 
-            let mut queue = VecDeque::new();
-            queue.push_back((root_index, root_pos));
+            visited[root_index] = true;
+            visited_count += 1;
+            queue.clear();
+            queue.push_back((root_index, root_key, root_ply));
 
-            while let Some((state_index, fallback_pos)) = queue.pop_front() {
-                if state_index >= self.states.len() || !visited.insert(state_index) {
-                    continue;
+            while let Some((state_index, fallback_key, fallback_ply)) = queue.pop_front() {
+                let raw = self.read_state_from_bytes(bytes, state_index)?;
+                let (key, ply, mut pos_synced) = match raw.position.as_deref() {
+                    Some(position) => {
+                        pos.set_sfen(position).map_err(|err| {
+                            BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
+                        })?;
+                        (packed_sfen_of_state(&pos)?, pos.game_ply(), true)
+                    }
+                    None => (fallback_key, fallback_ply, false),
                 };
 
-                let raw = self.read_state_from_file(file, state_index)?;
-                let pos = match raw.position.as_deref() {
-                    Some(position) => Position::from_sfen(position).map_err(|err| {
-                        BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
-                    })?,
-                    None => fallback_pos,
-                };
-
-                let row =
-                    SbkLookupRow { key: pos.to_packed_sfen(), ply: pos.game_ply(), state_index };
+                let row = SbkLookupRow { key, ply, state_index };
                 if let Some(slot) = self.state_lookup.get_mut(state_index) {
                     *slot = Some(row.clone());
                 }
@@ -349,8 +360,7 @@ impl SbkBook {
                     else {
                         continue;
                     };
-                    if next_state_index >= self.states.len() || visited.contains(&next_state_index)
-                    {
+                    if next_state_index >= self.states.len() || visited[next_state_index] {
                         continue;
                     }
                     let Some(raw_move_word) = raw_move.raw_move else {
@@ -359,13 +369,27 @@ impl SbkBook {
                     let Ok(mv) = sbk_move_word_to_move(raw_move_word) else {
                         continue;
                     };
-                    let mut next_pos = pos.clone();
-                    let mv32 = next_pos.move32_from_move(mv);
-                    if !next_pos.is_legal_move32(mv32) {
+                    if !pos_synced {
+                        pos.set_packed_sfen(&key, false, ply).map_err(|err| {
+                            BookError::InvalidData(format!(
+                                "failed to restore SBK traversal position: {err:?}"
+                            ))
+                        })?;
+                        pos_synced = true;
+                    }
+                    let mv32 = pos.move32_from_move(mv);
+                    if !pos.is_legal_move32(mv32) {
                         continue;
                     }
-                    next_pos.apply_move32(mv32);
-                    queue.push_back((next_state_index, next_pos));
+                    pos.apply_move32(mv32);
+                    let next = packed_sfen_of_state(&pos).map(|key| (key, pos.game_ply()));
+                    // apply_move32 が state を push した直後なので、同じ手の undo は必ず成功する。
+                    pos.undo_move32(mv32)
+                        .expect("undo must succeed immediately after apply_move32");
+                    let (next_key, next_ply) = next?;
+                    visited[next_state_index] = true;
+                    visited_count += 1;
+                    queue.push_back((next_state_index, next_key, next_ply));
                 }
 
                 match on_progress(SbkOpenProgress {
@@ -382,8 +406,28 @@ impl SbkBook {
         let before_dedup = self.index.len();
         self.index.dedup_by(|lhs, rhs| lhs.key == rhs.key);
         self.diagnostics.duplicate_positions = before_dedup - self.index.len();
-        self.diagnostics.unresolved_next_states = self.states.len().saturating_sub(visited.len());
+        self.diagnostics.unresolved_next_states = self.states.len().saturating_sub(visited_count);
         Ok(())
+    }
+
+    fn read_state_from_bytes(
+        &self,
+        bytes: &[u8],
+        state_index: usize,
+    ) -> Result<RawSbkState, BookError> {
+        let offset = self
+            .states
+            .get(state_index)
+            .ok_or_else(|| BookError::InvalidData(format!("missing sbk state {state_index}")))?;
+        let start = usize::try_from(offset.payload_offset)
+            .map_err(|_| BookError::InvalidFormat("protobuf position overflow"))?;
+        let end = start
+            .checked_add(offset.payload_bytes)
+            .ok_or(BookError::InvalidFormat("protobuf length overflow"))?;
+        let payload = bytes
+            .get(start..end)
+            .ok_or(BookError::InvalidFormat("truncated length-delimited field"))?;
+        decode_state_payload(payload)
     }
 
     fn read_state_from_file(
@@ -1002,10 +1046,18 @@ fn write_varint(bytes: &mut Vec<u8>, mut value: u64) {
     }
 }
 
-fn scan_sbook_file(file: &mut File) -> Result<SbkScan, BookError> {
-    let end = file.seek(SeekFrom::End(0))?;
-    file.seek(SeekFrom::Start(0))?;
-    let mut input = WireFileInput::new(BufReader::new(file.try_clone()?), end);
+/// SBK のステート局面を `PackedSfen` へ符号化する。
+///
+/// SFEN は外部入力なので、`PackedSfen` で表現できない局面は panic させず
+/// [`BookError::InvalidData`] として返す。
+fn packed_sfen_of_state(pos: &Position) -> Result<PackedSfen, BookError> {
+    pos.try_to_packed_sfen().map_err(|err| {
+        BookError::InvalidData(format!("unrepresentable sbk state position: {err:?}"))
+    })
+}
+
+fn scan_sbook_bytes(bytes: &[u8]) -> Result<SbkScan, BookError> {
+    let mut input = WireInput::new(bytes);
     let mut author = None;
     let mut description = None;
     let mut states = Vec::new();
@@ -1017,8 +1069,15 @@ fn scan_sbook_file(file: &mut File) -> Result<SbkScan, BookError> {
             (FIELD_SBOOK_DESCRIPTION, 2) => description = Some(input.read_string()?),
             (FIELD_SBOOK_STATE, 2) => {
                 let payload_bytes = input.read_len()?;
-                let payload_offset = input.position();
-                let state_id = read_state_id_from_wire_payload(&mut input, payload_bytes)?;
+                let start = input.pos;
+                let payload_offset = u64::try_from(start)
+                    .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?;
+                input.skip_len(payload_bytes)?;
+                let payload = input
+                    .bytes
+                    .get(start..input.pos)
+                    .ok_or(BookError::InvalidFormat("truncated length-delimited field"))?;
+                let state_id = read_state_id_from_wire_payload(payload)?;
                 states.push(SbkStateOffset { payload_offset, payload_bytes, state_id });
             }
             _ => input.skip_value(wire_type)?,
@@ -1028,45 +1087,16 @@ fn scan_sbook_file(file: &mut File) -> Result<SbkScan, BookError> {
     Ok(SbkScan { author, description, states })
 }
 
-fn read_state_id_from_wire_payload(
-    input: &mut WireFileInput,
-    payload_bytes: usize,
-) -> Result<Option<i32>, BookError> {
-    let payload_end = input
-        .position()
-        .checked_add(
-            u64::try_from(payload_bytes)
-                .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?,
-        )
-        .ok_or(BookError::InvalidFormat("protobuf length overflow"))?;
-    if payload_end > input.end() {
-        return Err(BookError::InvalidFormat("truncated length-delimited field"));
-    }
-
-    let mut state_id = None;
-    while input.position() < payload_end {
+fn read_state_id_from_wire_payload(payload: &[u8]) -> Result<Option<i32>, BookError> {
+    let mut input = WireInput::new(payload);
+    while !input.is_empty() {
         let (field, wire_type) = input.read_tag()?;
         match (field, wire_type) {
-            (FIELD_STATE_ID, 0) => {
-                state_id = Some(input.read_i32()?);
-            }
+            (FIELD_STATE_ID, 0) => return Ok(Some(input.read_i32()?)),
             _ => input.skip_value(wire_type)?,
         }
-        if input.position() > payload_end {
-            return Err(BookError::InvalidFormat("protobuf field exceeds state payload"));
-        }
-        if state_id.is_some() {
-            break;
-        }
     }
-
-    if input.position() < payload_end {
-        let remaining = usize::try_from(payload_end - input.position())
-            .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?;
-        input.skip_len(remaining)?;
-    }
-
-    Ok(state_id)
+    Ok(None)
 }
 
 fn decode_state_payload(payload: &[u8]) -> Result<RawSbkState, BookError> {
@@ -1392,144 +1422,6 @@ impl<'a> WireInput<'a> {
     }
 }
 
-#[derive(Debug)]
-struct WireFileInput {
-    reader: BufReader<File>,
-    pos: u64,
-    end: u64,
-}
-
-impl WireFileInput {
-    const fn new(reader: BufReader<File>, end: u64) -> Self {
-        Self { reader, pos: 0, end }
-    }
-
-    const fn position(&self) -> u64 {
-        self.pos
-    }
-
-    const fn end(&self) -> u64 {
-        self.end
-    }
-
-    const fn is_empty(&self) -> bool {
-        self.pos >= self.end
-    }
-
-    fn read_tag(&mut self) -> Result<(u32, u32), BookError> {
-        let tag = self.read_varint()?;
-        let field =
-            u32::try_from(tag >> 3).map_err(|_| BookError::InvalidFormat("field too large"))?;
-        let wire_type = u32::try_from(tag & 0x07)
-            .map_err(|_| BookError::InvalidFormat("wire type too large"))?;
-        if field == 0 {
-            return Err(BookError::InvalidFormat("protobuf field number must be non-zero"));
-        }
-        Ok((field, wire_type))
-    }
-
-    fn read_varint(&mut self) -> Result<u64, BookError> {
-        let mut shift = 0;
-        let mut value = 0u64;
-        loop {
-            if shift >= 64 {
-                return Err(BookError::InvalidFormat("protobuf varint is too long"));
-            }
-            let mut byte = [0u8; 1];
-            self.reader.read_exact(&mut byte).map_err(|err| {
-                if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                    BookError::InvalidFormat("truncated protobuf")
-                } else {
-                    BookError::Io(err)
-                }
-            })?;
-            self.pos = self
-                .pos
-                .checked_add(1)
-                .ok_or(BookError::InvalidFormat("protobuf position overflow"))?;
-            value |= u64::from(byte[0] & 0x7f) << shift;
-            if byte[0] & 0x80 == 0 {
-                return Ok(value);
-            }
-            shift += 7;
-        }
-    }
-
-    fn read_len(&mut self) -> Result<usize, BookError> {
-        usize::try_from(self.read_varint()?)
-            .map_err(|_| BookError::InvalidFormat("length-delimited field is too large"))
-    }
-
-    fn read_i32(&mut self) -> Result<i32, BookError> {
-        Ok(self.read_varint()? as u32 as i32)
-    }
-
-    fn read_bytes(&mut self) -> Result<Vec<u8>, BookError> {
-        let len = self.read_len()?;
-        let end = self
-            .position()
-            .checked_add(
-                u64::try_from(len)
-                    .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?,
-            )
-            .ok_or(BookError::InvalidFormat("protobuf length overflow"))?;
-        if end > self.end {
-            return Err(BookError::InvalidFormat("truncated length-delimited field"));
-        }
-        let mut bytes = vec![0u8; len];
-        self.reader.read_exact(&mut bytes)?;
-        self.pos = end;
-        Ok(bytes)
-    }
-
-    fn read_string(&mut self) -> Result<String, BookError> {
-        String::from_utf8(self.read_bytes()?)
-            .map_err(|_| BookError::InvalidFormat("protobuf string is not UTF-8"))
-    }
-
-    fn skip_len(&mut self, len: usize) -> Result<(), BookError> {
-        let next = self
-            .position()
-            .checked_add(
-                u64::try_from(len)
-                    .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?,
-            )
-            .ok_or(BookError::InvalidFormat("protobuf length overflow"))?;
-        if next > self.end {
-            return Err(BookError::InvalidFormat("truncated length-delimited field"));
-        }
-        let buffered = self.reader.buffer().len();
-        if len <= buffered {
-            self.reader.consume(len);
-        } else {
-            let remaining = len - buffered;
-            self.reader.consume(buffered);
-            self.reader.seek(SeekFrom::Current(
-                i64::try_from(remaining)
-                    .map_err(|_| BookError::InvalidFormat("protobuf length is too large"))?,
-            ))?;
-        }
-        self.pos = next;
-        Ok(())
-    }
-
-    fn skip_value(&mut self, wire_type: u32) -> Result<(), BookError> {
-        match wire_type {
-            0 => {
-                let _ = self.read_varint()?;
-                Ok(())
-            }
-            1 => self.skip_len(8),
-            2 => {
-                let len = self.read_len()?;
-                self.skip_len(len)
-            }
-            5 => self.skip_len(4),
-            _ => Err(BookError::Unsupported("unsupported protobuf wire type")),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1616,6 +1508,20 @@ mod tests {
             .expect("valid lookup")
             .expect("entry");
         assert_eq!(entry.moves()[0].mv().to_usi(), "7g7f");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sbk_open_rejects_unencodable_state_position() {
+        let path = temp_path("unencodable-root");
+        let bytes = encode_sbook(vec![encode_state(vec![
+            field_varint(FIELD_STATE_ID, 0),
+            field_string(FIELD_STATE_POSITION, "4k4/9/9/9/9/9/9/9/9 b - 1"),
+        ])]);
+        fs::write(&path, bytes).expect("write fixture");
+
+        assert!(matches!(SbkBook::open(&path), Err(BookError::InvalidData(_))));
 
         let _ = fs::remove_file(path);
     }

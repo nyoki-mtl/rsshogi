@@ -111,10 +111,10 @@ unzigzag(u) = ((u >> 1) as i32) ^ -((u & 1) as i32)
 
 ### Python
 
-Python では `Record` のメソッドに加えて、`rsshogi.record` モジュール（およびトップレベル `rsshogi`）で複数局やファイル単位の読み書き関数を提供している。
+Python では `Record` のメソッドに加えて、`rsshogi.record` モジュールで複数局やファイル単位の読み書き関数を提供している。
 
 ```python
-from rsshogi import EngineInfo, GameResult, MoveEntry, Record, SpecialMoveEntry
+from rsshogi.record import EngineInfo, GameResult, MoveEntry, Record, SpecialMoveEntry
 from rsshogi.record import (
     decode_sbinpack,
     decode_sbinpack_file,
@@ -143,7 +143,7 @@ restored = Record.from_sbinpack(data)
 restored_rec, meta = Record.from_sbinpack_with_metadata(data)
 
 # 2. 複数 Record の一括シリアライズとファイル入出力
-chunk_bytes = write_sbinpack([record], stem_score=100, metadata=b"batch-1")
+chunk_bytes = write_sbinpack([record], stem_score=100, metadatas=[b"batch-1"])
 pairs = decode_sbinpack(chunk_bytes)  # list[tuple[Record, bytes]]
 
 write_sbinpack_file("train.sbinpack", [record], stem_score=100)

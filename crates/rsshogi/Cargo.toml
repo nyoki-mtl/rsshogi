@@ -1,6 +1,6 @@
 [package]
 name = "rsshogi"
-version = "1.3.0"
+version = "1.3.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -113,3 +113,7 @@ required-features = ["records"]
 [[example]]
 name = "sfen_roundtrip"
 path = "examples/sfen_roundtrip.rs"
+
+[[example]]
+name = "sbk_open_measure"
+required-features = ["book"]

@@ -145,10 +145,10 @@ KIF では `**` で始まる行がソフト解析情報として使われる。
 ### Python
 
 ```python
-from rsshogi import Record
+from rsshogi.record import Record
 
-# KIF ファイルの読み込み（UTF-8 / Shift_JIS 自動判別）
-record = Record.from_kif_file("sample.kif")
+# UTF-8 の KIF ファイルを読み込む（cp932 のファイルには encoding="cp932" を指定する）
+record = Record.from_kif_file("sample.kif", encoding="utf-8")
 
 # KIF 文字列の生成と保存
 kif_str = record.to_kif()

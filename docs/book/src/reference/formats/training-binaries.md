@@ -122,7 +122,8 @@ YaneuraOu 系のエンジンや NNUE 学習器で使われる固定長フォー�
 
 ```python
 import numpy as np
-from rsshogi import Board, EngineInfo, GameResult, MoveEntry, Record, SpecialMoveEntry
+from rsshogi.core import Board
+from rsshogi.record import EngineInfo, GameResult, MoveEntry, Record, SpecialMoveEntry
 from rsshogi.numpy import HuffmanCodedPos, HuffmanCodedPosAndEval, PackedSfenValue
 from rsshogi.record import decode_pack, write_pack
 
@@ -133,7 +134,7 @@ hcpe_arr = np.zeros(1, dtype=HuffmanCodedPosAndEval)
 board.to_hcpe(best_move="7g7f", score=120, game_result=GameResult.BLACK_WIN, out=hcpe_arr)
 
 psv_arr = np.zeros(1, dtype=PackedSfenValue)
-board.to_psv(score=120, move="7g7f", game_ply=1, game_result=1, out=psv_arr)
+board.to_psv(score=120, mv="7g7f", game_ply=1, game_result=1, out=psv_arr)
 
 # 2. Record と PACK バイナリの相互変換
 record = Record.from_main_line(

@@ -86,7 +86,8 @@ Rust の `BookDatabase::write_sbk` および `to_sbk_bytes`（`SbkWriteOptions`�
 ### Python
 
 ```python
-from rsshogi import Board, SbkBook
+from rsshogi.book import SbkBook
+from rsshogi.core import Board
 
 # SBK 定跡を開いて初期局面を検索する
 book = SbkBook.open("opening.sbk")
