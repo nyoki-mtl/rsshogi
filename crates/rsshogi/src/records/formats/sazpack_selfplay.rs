@@ -3,7 +3,7 @@
 //! 旧 sazpack schema を置換するための `SAZ2` contract を実装する。
 
 use crate::{
-    board::{PackedSfen, PackedSfenError},
+    board::PackedSfen,
     records::formats::sbinpack::{
         decode_uleb128_u32_bounded, encode_uleb128_u32, game_result_from_u8,
     },
@@ -12,7 +12,7 @@ use crate::{
 use std::ops::Range;
 
 pub const SAZPACK_SELFPLAY_MAGIC: [u8; 4] = *b"SAZ2";
-pub const SAZPACK_SELFPLAY_VERSION: u8 = 3;
+pub const SAZPACK_SELFPLAY_VERSION: u8 = 4;
 const HEADER_LEN: usize = 10;
 const MAX_PREALLOC: usize = 1024;
 /// played(2) + root_wdl(6) + outcome_wdl(6) + raw_wdl(6) + raw_mate(2)
@@ -49,8 +49,6 @@ pub enum SazSelfplayError {
     CountOverflow,
     #[error("quantized distribution must sum to 65535")]
     InvalidDistributionSum,
-    #[error("packed sfen decode failed: {0:?}")]
-    PackedSfen(PackedSfenError),
 }
 
 #[repr(u8)]
@@ -64,6 +62,17 @@ pub enum SazTerminationReason {
     RepetitionInferior = 5,
     EnteringKingDeclaration = 6,
     MaxGamePlies = 7,
+    /// 敗者側が投了して終局した。終局局面には合法手が残る。
+    ///
+    /// 自己対局で評価値の閾値により手番側（最後に記録された局面の手番）の負けを確定させる
+    /// 打ち切りもこれに含める。
+    /// 勝者は `game_result` が持つ。
+    Resignation = 8,
+    /// 投了を伴わずに、外部の裁定で結果を確定させて終局した。終局局面には合法手が残る。
+    ///
+    /// 手番側の勝ちを宣言する打ち切りと、引き分けを宣言する打ち切りの双方を指す。
+    /// 引き分け裁定では `game_result` が [`GameResult::DrawByAdjudication`] になる。
+    Adjudication = 9,
 }
 
 impl TryFrom<u8> for SazTerminationReason {
@@ -79,6 +88,8 @@ impl TryFrom<u8> for SazTerminationReason {
             5 => Ok(Self::RepetitionInferior),
             6 => Ok(Self::EnteringKingDeclaration),
             7 => Ok(Self::MaxGamePlies),
+            8 => Ok(Self::Resignation),
+            9 => Ok(Self::Adjudication),
             _ => Err(SazSelfplayError::InvalidTerminationReason(value)),
         }
     }
@@ -617,18 +628,55 @@ mod tests {
         game.positions[0].policy[0].visits = 0;
         game.positions[0].policy[1].visits = u32::MAX;
         let bytes = serialize_selfplay_chunk(std::slice::from_ref(&game)).unwrap();
-        assert_eq!(bytes[4], 3);
+        assert_eq!(bytes[4], 4);
         assert_eq!(deserialize_selfplay_chunk(&bytes).unwrap(), vec![game]);
     }
 
     #[test]
     fn a_version_two_chunk_is_refused_rather_than_misread() {
-        // version 2 は policy entry に訪問数を 2 つ持つ。version 3 として読み違えない。
+        // version 2 は policy entry に訪問数を 2 つ持つ。version 4 として読み違えない。
         let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
         bytes[4] = 2;
         assert_eq!(
             deserialize_selfplay_chunk(&bytes),
             Err(SazSelfplayError::UnsupportedVersion(2))
+        );
+    }
+
+    #[test]
+    fn a_version_three_chunk_is_refused() {
+        // version 3 は payload layout が同一で、終了理由の定義域だけが狭い。
+        // 読めてしまうと同じ値が別の意味を持つため、header で拒否する。
+        let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
+        bytes[4] = 3;
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::UnsupportedVersion(3))
+        );
+    }
+
+    #[test]
+    fn selfplay_roundtrips_adjudicated_termination() {
+        for (result, reason) in [
+            (GameResult::BlackWin, SazTerminationReason::Resignation),
+            (GameResult::WhiteWin, SazTerminationReason::Adjudication),
+            (GameResult::DrawByAdjudication, SazTerminationReason::Adjudication),
+        ] {
+            let mut game = fixture();
+            game.game_result = result;
+            game.termination_reason = reason;
+            let bytes = serialize_selfplay_chunk(std::slice::from_ref(&game)).unwrap();
+            assert_eq!(deserialize_selfplay_chunk(&bytes).unwrap(), vec![game]);
+        }
+    }
+
+    #[test]
+    fn selfplay_rejects_unknown_termination_reason() {
+        let mut bytes = serialize_selfplay_chunk(&[fixture()]).unwrap();
+        bytes[HEADER_LEN + 32 + 1] = 10;
+        assert_eq!(
+            deserialize_selfplay_chunk(&bytes),
+            Err(SazSelfplayError::InvalidTerminationReason(10))
         );
     }
 
@@ -686,7 +734,7 @@ mod tests {
         encode_uleb128_u32(1, &mut payload);
 
         payload.extend_from_slice(&Move::from_usi("7g7f").unwrap().raw().to_le_bytes());
-        // version 3 は root / outcome / raw の 3 本の WDL を持つ。
+        // version 4 は root / outcome / raw の 3 本の WDL を持つ。
         for _ in 0..3 {
             payload.extend_from_slice(&0u16.to_le_bytes());
             payload.extend_from_slice(&u16::MAX.to_le_bytes());

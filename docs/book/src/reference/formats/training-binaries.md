@@ -13,7 +13,7 @@
 | `PackedSfenValue` (PSV) | 40 バイト固定 | 1 局面 | `Move` (`u16`) | YaneuraOu 互換の NNUE 教師データ（局面 + 評価値 + 指し手 + 手数 + 勝敗）。 |
 | `PACK` | 可変長 | 1 対局 | `AperyMove` (`u16`) | ScriptCollection 互換の対局圧縮形式（開始局面 + 手順と評価値 + 終局結果）。 |
 | [`SBINPACK` (`SBN2`)](../sbinpack.md) | 可変長（チャンク / チェーン） | 連続局面列 | 合法手インデックス (ULEB128) | Stockfish binpack の将棋版。合法手順序と評価値差分による高圧縮ストリーム。 |
-| [`SAZPACK` (`SAZ2` v3)](../sazpack.md) | 可変長（チャンク） | 1 対局 + 局面列 | `Move` (`u16`) | AlphaZero 型 MCTS 自己対局の WDL、探索統計、疎な方策（policy）分布の保存。 |
+| [`SAZPACK` (`SAZ2` v4)](../sazpack.md) | 可変長（チャンク） | 1 対局 + 局面列 | `Move` (`u16`) | AlphaZero 型 MCTS 自己対局の WDL、探索統計、疎な方策（policy）分布の保存。 |
 
 > [!IMPORTANT]
 > `HuffmanCodedPos`（32 バイト）と `PackedSfen`（32 バイト）はバイト長が同じであるが、ビット配置とハフマン符号表が完全に異なる別形式である。一方のバイト列を他方のデコーダに入力することはできない。
@@ -48,7 +48,7 @@ Apery、cshogi、および dlshogi 系の学習パイプラインで使われる
   - `str`（`"7g7f"` などの USI 指し手文字列）
 - **`score` に指定可能な型**：`int`（`i16` の範囲 `-32768..=32767`）。
 - **`game_result` に指定可能な型**：
-  - `GameResult` 列挙値：`GameResult.BLACK_WIN`、`GameResult.WHITE_WIN`、`GameResult.DRAW_BY_REPETITION`、`GameResult.DRAW_BY_MAX_PLIES`、`GameResult.DRAW_BY_IMPASSE`（宣言勝ち、反則勝ち、時間切れ勝ち等の勝敗確定バリアントも可）
+  - `GameResult` 列挙値：`GameResult.BLACK_WIN`、`GameResult.WHITE_WIN`、`GameResult.DRAW_BY_REPETITION`、`GameResult.DRAW_BY_MAX_PLIES`、`GameResult.DRAW_BY_IMPASSE`、`GameResult.DRAW_BY_ADJUDICATION`。
   - `int`：`0`（引き分け）、`1`（先手勝ち）、`2`（後手勝ち）
   - `str`：`"DRAW"`、`"BLACK_WIN"`、`"WHITE_WIN"`（大文字と小文字を区別しない）
 

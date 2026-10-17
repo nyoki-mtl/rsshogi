@@ -5,6 +5,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-17
+
+SAZ2 の保存形式と Rust の網羅的な `match` に互換性上の注意がある。
+
+### Added
+
+- `GameResult::DrawByAdjudication`（数値 `14`）を追加。規則上の引き分けが成立していない局面で、
+  外部の裁定により引き分けとした結果を表す。`is_draw()` が `true` を返し、`sbinpack` の
+  `game_result_from_u8`、HCPE の `Draw`、PACK の `Draw`、JKF の `HIKIWAKE`、
+  Python の `GameResult.DRAW_BY_ADJUDICATION` に対応させた。
+  `GameResult` は `#[non_exhaustive]` ではないため、利用側で全 variant を列挙した Rust の `match` は
+  新しい variant への対応が必要になる。既存 variant の数値コードは変更しない。
+  棋譜形式ごとの読み戻しと情報損失は [Python マニュアル](docs/book/src/python/record.md#裁定引き分けの保存) を参照。
+- `SazTerminationReason::Resignation`（`8`）と `SazTerminationReason::Adjudication`（`9`）を追加。
+  どちらも終局局面に合法手が残る終局で、`NoLegalMoves` や `RepetitionDraw` へ偽装せずに記録できる。
+  `8` は敗者側が投了した終局であり、評価値の閾値で手番側の負けを確定させる自己対局の打ち切りを含む。
+  `9` は投了を伴わない宣言で、引き分けを宣言した場合の `game_result` は `DrawByAdjudication` になる。
+
+### Changed
+
+- **Breaking:** 未使用の公開エラー variant `SazSelfplayError::PackedSfen`（`SazError::PackedSfen`）を削除。
+  SAZ2 codec は開始局面のバイト列を保持し、局面としての妥当性は検証しない。
+- **Breaking: SAZ2 自己対局形式を version 4 にする。** ワイヤーレイアウトと既存の終局理由 `0..=7` の意味は
+  version 3 と同一だが、対局結果と終局理由に新しい値を追加したことをヘッダの版で区別する。
+  reader は version 4 だけを受理し、version 3 のチャンクは `UnsupportedVersion(3)` で拒否する。
+  version 3 で保存した既存データはそのままでは読めないため、変換または再生成が必要である。
+  変換ツールは同梱しない。旧コードが裁定を別の終局理由で記録していた場合、その意味はバイト列だけでは復元できない。
+
+### Fixed
+
+- KIF / KI2 の裁定による引き分けを、独自拡張の終局表記 `裁定引分` として読み書きするように修正。
+  終局行とサマリーの両方に対応し、`DrawByAdjudication` を書き出して読み戻しても中断や未決着にならず、裁定理由を保持する。
+  標準の終局表記ではないため、他ソフトでの結果分類は保証しない。
+  `SpecialMove::Draw` でも結果が `DrawByImpasse` の場合は `持将棋` として出力し、
+  CSA `%HIKIWAKE` / JKF `HIKIWAKE` からの変換で裁定引分に変わらないようにした。
+- Python マニュアルの `GameResult` 定数表が、実際の数値コードおよび定数名と一致していなかったのを修正。
+  存在しない `BLACK_WIN_BY_PERPETUAL_CHECK` などを削除し、`from_str` の `"DRAW"` エイリアスと
+  `is_draw()` の対象値の記述も実装に合わせた。
+- SAZ2 の文書に残っていた終局理由の上限値と、局面や着手の合法性を検証するという記述を修正。
+  codec が検証するのはバイナリ構造、列挙値、分布の合計であり、終局結果と終局理由の整合性は利用側が確認する。
+- Windows の `make clean` が Python キャッシュを探索する際、reparse point、`.git`、`work_dir` を巡回しないようにした。
+
 ## [1.3.1] - 2026-10-17
 
 SBK 定跡書庫のオープン性能を改善したパッチリリース。公開 API と保存形式に変更はない。
@@ -502,7 +544,10 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.5...v1.3.0
 [1.2.5]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.2...v1.2.3

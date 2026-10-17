@@ -6,7 +6,7 @@
 //! - [`sfen`] - SFEN 形式（USI プロトコル）。
 //! - [`usi`] - USI position command 形式。
 //! - [`sbinpack`] - sbinpack 形式（NNUE 系訓練データ用バイナリ）。
-//! - [`sazpack`] - sazpack 形式（AlphaZero 系自己対局教師チャンク形式 `SAZ2` version 3）。
+//! - [`sazpack`] - sazpack 形式（AlphaZero 系自己対局教師チャンク形式 `SAZ2` version 4）。
 //! - [`hcpe`] - cshogi / Apery 互換の HCPE 学習データ。
 //! - [`pack`] - YaneuraOu ScriptCollection 互換の可変長 pack 学習データ。
 //! - [`common`] - テキストエンコーディング（[`TextEncoding`] / [`ExportOptions`] / [`EncodedText`]）。

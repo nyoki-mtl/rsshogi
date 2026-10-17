@@ -18,6 +18,11 @@ pub enum GameResult {
     Paused = 11,
     BlackWinByIllegalMove = 12,
     WhiteWinByIllegalMove = 13,
+    /// 合法手が残る局面で、外部の裁定により引き分けとした結果。
+    ///
+    /// 自己対局で WDL 閾値による裁定を使う場合など、規則上の引き分けが成立していない
+    /// 引き分けを表す。千日手・持将棋・最大手数のいずれでもない。
+    DrawByAdjudication = 14,
     BlackWinByTimeout = 16,
     WhiteWinByTimeout = 17,
     BlackWinByTryRule = 20,
@@ -48,7 +53,13 @@ impl GameResult {
         )
     }
     pub const fn is_draw(self) -> bool {
-        matches!(self, Self::DrawByRepetition | Self::DrawByMaxPlies | Self::DrawByImpasse)
+        matches!(
+            self,
+            Self::DrawByRepetition
+                | Self::DrawByMaxPlies
+                | Self::DrawByImpasse
+                | Self::DrawByAdjudication
+        )
     }
     pub const fn is_win(self) -> bool {
         self.is_black_win() || self.is_white_win()
@@ -130,6 +141,7 @@ mod tests {
             (GameResult::Paused, 11),
             (GameResult::BlackWinByIllegalMove, 12),
             (GameResult::WhiteWinByIllegalMove, 13),
+            (GameResult::DrawByAdjudication, 14),
             (GameResult::BlackWinByTimeout, 16),
             (GameResult::WhiteWinByTimeout, 17),
             (GameResult::BlackWinByTryRule, 20),
@@ -140,6 +152,9 @@ mod tests {
         }
         assert_eq!(GameResult::WhiteWinByTryRule.to_score(), -1);
         assert!(GameResult::DrawByImpasse.is_draw());
+        assert!(GameResult::DrawByAdjudication.is_draw());
+        assert!(!GameResult::DrawByAdjudication.is_win());
+        assert_eq!(GameResult::DrawByAdjudication.to_score(), 0);
         assert_eq!(GameResult::BlackWinByForfeit.winner_color(), Some(super::Color::BLACK));
     }
 }

@@ -449,7 +449,7 @@ SpecialMoveEntry.from_result(
 | `"RESIGN"` | 投了 | KIF `投了` / CSA `%TORYO` |
 | `"MAX_MOVES"` | 最大手数到達 | KIF `最大手数` |
 | `"IMPASSE"` | 持将棋 | KIF `持将棋` / CSA `%JISHOGI` |
-| `"DRAW"` | 引き分け | KIF `引き分け` / CSA `%HIKIWAKE` |
+| `"DRAW"` | 引き分け | 結果が裁定なら KIF / KI2 `裁定引分`（独自拡張）、持将棋なら `持将棋` / CSA `%HIKIWAKE` |
 | `"REPETITION_DRAW"` | 千日手 | KIF `千日手` / CSA `%SENNICHITE` |
 | `"MATE"` | 詰み | KIF `詰み` / CSA `%TSUMI` |
 | `"NO_MATE"` | 不詰 | KIF `不詰` / CSA `%FUZUMI` |
@@ -477,39 +477,69 @@ GameResult.from_str(name: str) -> GameResult
 
 | 定数 | 値 (`value`) | 名前 (`name`) | 意味 |
 |---|---:|---|---|
-| `GameResult.DRAW_BY_REPETITION` | `0` | `"DRAW_BY_REPETITION"` | 千日手による引き分け。 |
-| `GameResult.DRAW_BY_MAX_PLIES` | `1` | `"DRAW_BY_MAX_PLIES"` | 最大手数到達による引き分け。 |
-| `GameResult.DRAW_BY_IMPASSE` | `2` | `"DRAW_BY_IMPASSE"` | 持将棋による引き分け。 |
-| `GameResult.BLACK_WIN` | `3` | `"BLACK_WIN"` | 先手勝ち（一般、投了、詰みなど）。 |
-| `GameResult.WHITE_WIN` | `4` | `"WHITE_WIN"` | 後手勝ち（一般、投了、詰みなど）。 |
-| `GameResult.BLACK_WIN_BY_DECLARATION` | `5` | `"BLACK_WIN_BY_DECLARATION"` | 入玉宣言による先手勝ち。 |
-| `GameResult.WHITE_WIN_BY_DECLARATION` | `6` | `"WHITE_WIN_BY_DECLARATION"` | 入玉宣言による後手勝ち。 |
-| `GameResult.BLACK_WIN_BY_TRY_RULE` | `7` | `"BLACK_WIN_BY_TRY_RULE"` | トライルールによる先手勝ち。 |
-| `GameResult.WHITE_WIN_BY_TRY_RULE` | `8` | `"WHITE_WIN_BY_TRY_RULE"` | トライルールによる後手勝ち。 |
-| `GameResult.BLACK_WIN_BY_PERPETUAL_CHECK` | `9` | `"BLACK_WIN_BY_PERPETUAL_CHECK"` | 連続王手の千日手反則による先手勝ち。 |
-| `GameResult.WHITE_WIN_BY_PERPETUAL_CHECK` | `10` | `"WHITE_WIN_BY_PERPETUAL_CHECK"` | 連続王手の千日手反則による後手勝ち。 |
-| `GameResult.BLACK_WIN_BY_ILLEGAL_MOVE` | `11` | `"BLACK_WIN_BY_ILLEGAL_MOVE"` | 後手の反則手による先手勝ち。 |
-| `GameResult.WHITE_WIN_BY_ILLEGAL_MOVE` | `12` | `"WHITE_WIN_BY_ILLEGAL_MOVE"` | 先手の反則手による後手勝ち。 |
-| `GameResult.INVALID` | `13` | `"INVALID"` | 未決着または結果なし。 |
+| `GameResult.BLACK_WIN` | `0` | `"BLACK_WIN"` | 先手勝ち（一般、投了、詰みなど）。 |
+| `GameResult.WHITE_WIN` | `1` | `"WHITE_WIN"` | 後手勝ち（一般、投了、詰みなど）。 |
+| `GameResult.DRAW_BY_REPETITION` | `2` | `"DRAW_BY_REPETITION"` | 千日手による引き分け。 |
+| `GameResult.ERROR` | `3` | `"ERROR"` | エラーによる終了。 |
+| `GameResult.BLACK_WIN_BY_DECLARATION` | `4` | `"BLACK_WIN_BY_DECLARATION"` | 入玉宣言による先手勝ち。 |
+| `GameResult.WHITE_WIN_BY_DECLARATION` | `5` | `"WHITE_WIN_BY_DECLARATION"` | 入玉宣言による後手勝ち。 |
+| `GameResult.DRAW_BY_MAX_PLIES` | `6` | `"DRAW_BY_MAX_PLIES"` | 最大手数到達による引き分け。 |
+| `GameResult.INVALID` | `7` | `"INVALID"` | 未決着または結果なし。 |
+| `GameResult.BLACK_WIN_BY_FORFEIT` | `8` | `"BLACK_WIN_BY_FORFEIT"` | 不戦勝による先手勝ち。 |
+| `GameResult.WHITE_WIN_BY_FORFEIT` | `9` | `"WHITE_WIN_BY_FORFEIT"` | 不戦勝による後手勝ち。 |
+| `GameResult.DRAW_BY_IMPASSE` | `10` | `"DRAW_BY_IMPASSE"` | 持将棋による引き分け。 |
+| `GameResult.PAUSED` | `11` | `"PAUSED"` | 中断。 |
+| `GameResult.BLACK_WIN_BY_ILLEGAL_MOVE` | `12` | `"BLACK_WIN_BY_ILLEGAL_MOVE"` | 後手の反則手による先手勝ち。 |
+| `GameResult.WHITE_WIN_BY_ILLEGAL_MOVE` | `13` | `"WHITE_WIN_BY_ILLEGAL_MOVE"` | 先手の反則手による後手勝ち。 |
+| `GameResult.DRAW_BY_ADJUDICATION` | `14` | `"DRAW_BY_ADJUDICATION"` | 裁定による引き分け。規則上の引き分けが成立していない局面で、外部の判断により引き分けとしたもの。 |
 | `GameResult.BLACK_WIN_BY_TIMEOUT` | `16` | `"BLACK_WIN_BY_TIMEOUT"` | 後手の時間切れによる先手勝ち。 |
 | `GameResult.WHITE_WIN_BY_TIMEOUT` | `17` | `"WHITE_WIN_BY_TIMEOUT"` | 先手の時間切れによる後手勝ち。 |
-| `GameResult.BLACK_WIN_BY_DEFAULT` | `20` | `"BLACK_WIN_BY_DEFAULT"` | 不戦勝による先手勝ち。 |
-| `GameResult.WHITE_WIN_BY_DEFAULT` | `21` | `"WHITE_WIN_BY_DEFAULT"` | 不戦勝による後手勝ち。 |
+| `GameResult.BLACK_WIN_BY_TRY_RULE` | `20` | `"BLACK_WIN_BY_TRY_RULE"` | トライルールによる先手勝ち。 |
+| `GameResult.WHITE_WIN_BY_TRY_RULE` | `21` | `"WHITE_WIN_BY_TRY_RULE"` | トライルールによる後手勝ち。 |
 
 > [!NOTE]
-> 数値コードは `13` の次が `16`、`17` の次が `20` と飛び番になっている。全定数の辞書は `GameResult.__members__` から参照できる。
+> 数値コードは `14` の次が `16`、`17` の次が `20` と飛び番になっている。全定数の辞書は `GameResult.__members__` から参照できる。
 
 | プロパティ / メソッド | 型 | 説明 |
 |---|---|---|
 | `value` / `int(r)` | `int` | 数値コード。 |
 | `name` / `str(r)` | `str` | 定数名（例：`"BLACK_WIN"`）。 |
-| `GameResult.from_str(name)` | `GameResult` | 名前文字列（大文字小文字不問、`"DRAW"` エイリアスは `DRAW_BY_REPETITION`）から `GameResult` を返す。 |
+| `GameResult.from_str(name)` | `GameResult` | 名前文字列（大文字小文字不問）から `GameResult` を返す。 |
 | `is_black_win()` | `bool` | 先手勝ちの種別であれば `True` を返す。 |
 | `is_white_win()` | `bool` | 後手勝ちの種別であれば `True` を返す。 |
-| `is_draw()` | `bool` | 引き分けの種別（`0`, `1`, `2`）であれば `True` を返す。 |
+| `is_draw()` | `bool` | 引き分けの種別（`2`, `6`, `10`, `14`）であれば `True` を返す。 |
 | `is_win()` | `bool` | 先手または後手の勝利が決まっていれば `True` を返す。 |
-| `is_win_by_declaration()` | `bool` | 入玉宣言勝ち（`5`, `6`）であれば `True` を返す。 |
-| `is_win_by_try_rule()` | `bool` | トライルール勝ち（`7`, `8`）であれば `True` を返す。 |
+| `is_win_by_declaration()` | `bool` | 入玉宣言勝ち（`4`, `5`）であれば `True` を返す。 |
+| `is_win_by_try_rule()` | `bool` | トライルール勝ち（`20`, `21`）であれば `True` を返す。 |
+
+### 裁定引き分けの保存
+
+`GameResult.DRAW_BY_ADJUDICATION` は数値 `14` の裁定引き分けである。
+`SpecialMoveEntry.from_result(...)` はこれを `kind == "DRAW"` の終局特殊手に変換する。
+保存形式によって、読み戻した結果が次のように変わる。
+
+| 保存形式 | 読み戻した結果 | 保持される情報 |
+|---|---|---|
+| SAZ2 v4 / SBINPACK | `DRAW_BY_ADJUDICATION` | 裁定引き分けという結果。 |
+| HCPE | HCPE の `Draw`（数値 `0`） | 引き分け。HCPE は独自の結果コードを使い、理由を保持しない。 |
+| PACK / USI 特殊トークン | `DRAW_BY_REPETITION` | 引き分け。裁定という理由は失われる。 |
+| CSA / JKF | `DRAW_BY_IMPASSE` | 引き分け。`HIKIWAKE` は持将棋の結果として読み込まれる。 |
+| KIF / KI2 | `DRAW_BY_ADJUDICATION` | 独自拡張の終局表記 `裁定引分` により、裁定による引き分けを保持する。 |
+
+裁定理由の保持には SAZ2 v4、SBINPACK、または rsshogi の KIF / KI2 拡張表記を使う。
+KIF / KI2 は終局特殊手の `裁定引分` と終局サマリーの `まで○手で裁定引分` を `DRAW_BY_ADJUDICATION` として読み込む。
+`裁定引分` は [KIF 形式の公式仕様](https://kakinoki.o.oo7.jp/kif_format.html)に定義された終局表記ではない。
+ShogiHome が使用する [tsshogi 2.3.4 の実装](https://github.com/sunfish-shogi/tsshogi/blob/bec83166c011eb662ee963f04ddb3fe2eb584c99/src/kakinoki.ts)は未知の終局理由を文字列として読み書きするが、裁定引分を引き分けとして分類する対応はない。
+他ソフトとの受け渡しでは、拡張表記の読み込みと結果の分類を確認する必要がある。
+
+CSA `%HIKIWAKE` と JKF `HIKIWAKE` の読み込み結果は、`kind == "DRAW"`、`result == DRAW_BY_IMPASSE` である。
+これを KIF / KI2 に変換する場合は、結果に従って `持将棋` を出力し、読み戻しても `DRAW_BY_IMPASSE` を保持する。
+`SpecialMoveEntry("DRAW", GameResult.DRAW_BY_IMPASSE)` を直接指定した場合も同じである。
+
+旧版が出力した `引き分け` は裁定と持将棋を区別する情報を持たないため、裁定引分としては読み込まない。
+KIF の終局行は未知の特殊手（`kind == "UNKNOWN"`、結果は `PAUSED`）、終局サマリーだけの場合は結果未設定（`INVALID`）となる。
+KI2 の終局サマリーだけの場合は中断（`kind == "INTERRUPT"`、結果は `PAUSED`）となる。
+旧表記の結果を復元するには、生成元の対局情報で理由を確認する必要がある。
 
 ### `GameResultInfo`
 

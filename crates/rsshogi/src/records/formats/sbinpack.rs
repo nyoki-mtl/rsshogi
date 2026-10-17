@@ -680,6 +680,7 @@ pub fn game_result_from_u8(value: u8) -> Option<GameResult> {
         11 => Some(GameResult::Paused),
         12 => Some(GameResult::BlackWinByIllegalMove),
         13 => Some(GameResult::WhiteWinByIllegalMove),
+        14 => Some(GameResult::DrawByAdjudication),
         16 => Some(GameResult::BlackWinByTimeout),
         17 => Some(GameResult::WhiteWinByTimeout),
         20 => Some(GameResult::BlackWinByTryRule),

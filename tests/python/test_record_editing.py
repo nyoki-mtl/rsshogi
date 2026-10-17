@@ -253,6 +253,48 @@ def test_game_record_to_dict_from_dict_roundtrip() -> None:
     assert rebuilt.metadata.updated_date == "2026-02-13T00:00:00+00:00"
 
 
+@pytest.mark.parametrize("format_name", ["kif", "ki2"])
+@pytest.mark.parametrize("moves", [["7g7f"], ["7g7f", "3c3d"]])
+def test_record_adjudicated_draw_roundtrip(format_name: str, moves: list[str]) -> None:
+    record = rs.record.Record.from_usi_main_line(
+        "startpos", moves, result=rs.record.GameResult.DRAW_BY_ADJUDICATION
+    )
+    text = getattr(record, f"to_{format_name}")()
+    parsed = getattr(rs.record.Record, f"from_{format_name}_str")(text)
+
+    assert "裁定引分" in text
+    assert "持将棋" not in text
+    assert "引き分け" not in text
+    assert parsed.result == rs.record.GameResult.DRAW_BY_ADJUDICATION
+    assert parsed.result.is_draw()
+    assert parsed.main_terminal is not None
+    assert parsed.main_terminal.kind == "DRAW"
+    assert [entry.move.to_usi() for entry in parsed.moves] == moves
+
+
+@pytest.mark.parametrize("source_format", ["direct", "csa", "jkf"])
+@pytest.mark.parametrize("target_format", ["kif", "ki2"])
+def test_record_impasse_draw_cross_conversion(source_format: str, target_format: str) -> None:
+    record = rs.record.Record.from_usi_main_line("startpos", ["7g7f"])
+    record.set_main_terminal(rs.record.SpecialMoveEntry("DRAW", rs.record.GameResult.DRAW_BY_IMPASSE))
+    if source_format != "direct":
+        source = getattr(record, f"to_{source_format}")()
+        record = getattr(rs.record.Record, f"from_{source_format}_str")(source)
+    assert record.result == rs.record.GameResult.DRAW_BY_IMPASSE
+    assert record.main_terminal is not None
+    assert record.main_terminal.kind == "DRAW"
+
+    text = getattr(record, f"to_{target_format}")()
+    restored = getattr(rs.record.Record, f"from_{target_format}_str")(text)
+
+    assert "持将棋" in text
+    assert "裁定引分" not in text
+    assert restored.result == rs.record.GameResult.DRAW_BY_IMPASSE
+    assert restored.main_terminal is not None
+    assert restored.main_terminal.kind == "IMPASSE"
+    assert [entry.move.to_usi() for entry in restored.moves] == ["7g7f"]
+
+
 def test_record_from_jkf_str_roundtrip() -> None:
     record = rs.record.Record.from_main_line(
         rs.core.Board().to_sfen(),

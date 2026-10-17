@@ -249,6 +249,32 @@ def test_sazpack_rejects_invalid_distribution_sum() -> None:
         saz.write_sazpack([game])
 
 
+def test_sazpack_roundtrips_an_adjudicated_draw() -> None:
+    saz = rsshogi.sazpack
+    base = _fixture_game()
+    game = saz.SazGame(
+        HIRATE_SFEN,
+        rsshogi.record.GameResult.DRAW_BY_ADJUDICATION,
+        9,  # Adjudication
+        0,
+        list(base.positions),
+    )
+
+    decoded = saz.decode_sazpack(saz.write_sazpack([game]))[0]
+
+    assert decoded.game_result == rsshogi.record.GameResult.DRAW_BY_ADJUDICATION
+    assert decoded.game_result.is_draw()
+    assert decoded.termination_reason == 9
+
+
+def test_sazpack_rejects_an_unknown_termination_reason() -> None:
+    saz = rsshogi.sazpack
+    data = bytearray(saz.write_sazpack([_fixture_game()]))
+    data[10 + 32 + 1] = 10
+    with pytest.raises(ValueError, match="termination reason"):
+        saz.decode_sazpack(bytes(data))
+
+
 def test_sazpack_rejects_invalid_magic() -> None:
     saz = rsshogi.sazpack
     data = bytearray(saz.write_sazpack([_fixture_game()]))
@@ -258,10 +284,19 @@ def test_sazpack_rejects_invalid_magic() -> None:
 
 
 def test_sazpack_rejects_a_version_two_chunk() -> None:
-    """Version 2 stores two visit counters per entry, so it must not be read as version 3."""
+    """Version 2 stores two visit counters per entry, so it must not be read as version 4."""
     saz = rsshogi.sazpack
     data = bytearray(saz.write_sazpack([_fixture_game()]))
-    assert data[4] == 3
+    assert data[4] == 4
     data[4] = 2
+    with pytest.raises(ValueError, match="version"):
+        saz.decode_sazpack(bytes(data))
+
+
+def test_sazpack_rejects_a_version_three_chunk() -> None:
+    """Version 3 shares the layout but not the termination-reason domain, so it is refused."""
+    saz = rsshogi.sazpack
+    data = bytearray(saz.write_sazpack([_fixture_game()]))
+    data[4] = 3
     with pytest.raises(ValueError, match="version"):
         saz.decode_sazpack(bytes(data))

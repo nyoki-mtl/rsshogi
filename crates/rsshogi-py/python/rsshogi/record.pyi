@@ -74,6 +74,7 @@ class GameResult:
     BLACK_WIN_BY_FORFEIT: GameResult
     WHITE_WIN_BY_FORFEIT: GameResult
     DRAW_BY_IMPASSE: GameResult
+    DRAW_BY_ADJUDICATION: GameResult
     BLACK_WIN_BY_TRY_RULE: GameResult
     WHITE_WIN_BY_TRY_RULE: GameResult
     INVALID: GameResult

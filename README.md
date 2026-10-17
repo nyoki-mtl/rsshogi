@@ -12,7 +12,7 @@
 
 ```toml
 [dependencies]
-rsshogi = "1.3.1"
+rsshogi = "1.4.0"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
@@ -20,7 +20,7 @@ rsshogi = "1.3.1"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.3.1", features = ["records", "book"] }
+rsshogi = { version = "1.4.0", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
