@@ -1,6 +1,6 @@
 # rsshogi
 
-この文書は rsshogi 1.5.0 を対象とする。
+この文書は rsshogi 1.5.1 を対象とする。
 Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
 旧定跡 API の削除を含むため、更新時は移行手順を確認する。
 
@@ -40,7 +40,7 @@ Rust では `Cargo.toml` に `rsshogi` を追加する。
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.5.0", features = ["records", "book"] }
+rsshogi = { version = "1.5.1", features = ["records", "book"] }
 ```
 
 ```rust

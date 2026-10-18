@@ -1,6 +1,6 @@
 # rsshogi
 
-この文書は rsshogi 1.5.0 を対象とする。
+この文書は rsshogi 1.5.1 を対象とする。
 Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
 旧定跡 API の削除を含むため、更新時は移行手順を確認する。
 
@@ -16,7 +16,7 @@ Native Book は独立圧縮ブロックを持つ wire version 4 を使用する�
 
 ```toml
 [dependencies]
-rsshogi = "1.5.0"
+rsshogi = "1.5.1"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
@@ -24,7 +24,7 @@ rsshogi = "1.5.0"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.5.0", features = ["records", "book"] }
+rsshogi = { version = "1.5.1", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
