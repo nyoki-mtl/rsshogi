@@ -231,4 +231,30 @@ impl Position {
         }
         self.recompute_caches();
     }
+
+    /// 盤面を 180 度回転し、駒色・持ち駒・手番を反転した局面を返す。
+    ///
+    /// 反転は SFEN と PackedSfen の両方の出力に使うため、規則をここ 1 箇所に置く。
+    /// 出力に必要な盤面・持ち駒・手番・玉位置だけを設定する。
+    /// bitboard と state stack は局面に同期しないので、指し手を適用する用途には使わない。
+    pub(in crate::board) fn flipped(&self) -> Self {
+        let mut flipped = Self::empty();
+
+        for (sq, piece) in self.board.iter() {
+            if piece.is_empty() {
+                continue;
+            }
+            let flipped_piece = Piece::from_parts(piece.color().flip(), piece.piece_type());
+            flipped.board.set(sq.flip(), flipped_piece);
+            if piece.piece_type() == PieceType::KING {
+                flipped.set_king_square(flipped_piece.color(), sq.flip());
+            }
+        }
+
+        flipped.hands[Color::BLACK.to_index()] = self.hands[Color::WHITE.to_index()];
+        flipped.hands[Color::WHITE.to_index()] = self.hands[Color::BLACK.to_index()];
+        flipped.set_side_to_move(self.turn().flip());
+        flipped.ply = self.ply;
+        flipped
+    }
 }

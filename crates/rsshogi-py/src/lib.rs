@@ -11,14 +11,11 @@ use std::path::Path;
 
 mod dtype;
 mod book;
+mod native_book;
 mod pack;
 mod policy;
 mod python_types;
 mod sazpack;
-#[cfg(all(test, feature = "python-tests"))]
-pub(crate) use book::{
-    PyBookMove, PyMemoryBook, PyStaticBook, book_key_after, book_key_from_position,
-};
 use dtype::add_dtype_module;
 use python_types::{
     PyBitboard, PyColor, PyHand, PyMoveType, PyPiece, PyPieceType, PyRepetitionState, PySquare,
@@ -33,8 +30,6 @@ use ::rsshogi::board::{
     PositionState as RawPositionState, ValidationIssue as RawValidationIssue,
     ValidationReport as RawValidationReport,
 };
-#[cfg(all(test, feature = "python-tests"))]
-use ::rsshogi::book::{Book, BookMove};
 use ::rsshogi::mate;
 use ::rsshogi::records::formats::sbinpack::{
     SbinpackMetadata, chains_from_record_with_metadata as chains_from_record_sbinpack,
@@ -173,6 +168,14 @@ impl PyMove {
     #[allow(clippy::wrong_self_convention)]
     fn to_apery(&self) -> PyAperyMove {
         PyAperyMove { inner: self.inner.to_apery() }
+    }
+
+    fn flip_side(&self) -> Self {
+        Self { inner: self.inner.flip() }
+    }
+
+    fn mirror_file(&self) -> Self {
+        Self { inner: self.inner.mirror_file() }
     }
 
     fn __int__(&self) -> u16 {
@@ -561,6 +564,14 @@ impl PyMove32 {
     #[allow(clippy::wrong_self_convention)]
     fn to_ki2(&self, board: &PyBoard) -> Option<String> {
         self.inner.to_ki2(&board.position)
+    }
+
+    fn flip_side(&self) -> Self {
+        Self { inner: self.inner.flip() }
+    }
+
+    fn mirror_file(&self) -> Self {
+        Self { inner: self.inner.mirror_file() }
     }
 
     #[getter]
@@ -3279,6 +3290,10 @@ impl PyBoard {
         self.position.to_sfen(None)
     }
 
+    fn to_sfen_flipped(&self) -> String {
+        self.position.to_sfen_flipped(None)
+    }
+
     fn to_position_state(&self) -> PyPositionState {
         PyPositionState::from_position_state(board::generate_position_state(&self.position))
     }
@@ -3300,6 +3315,24 @@ impl PyBoard {
         let packed = self
             .position
             .try_to_packed_sfen()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        if let Some(out) = out {
+            fill_psfen_output(out, &packed.data)?;
+            Ok(py.None())
+        } else {
+            Ok(PyBytes::new(py, &packed.data).unbind().into())
+        }
+    }
+
+    #[pyo3(signature = (out=None))]
+    fn to_packed_sfen_flipped(
+        &self,
+        py: Python<'_>,
+        out: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let packed = self
+            .position
+            .try_to_packed_sfen_flipped()
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
         if let Some(out) = out {
             fill_psfen_output(out, &packed.data)?;
@@ -3892,6 +3925,7 @@ fn register_record_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn register_book_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    native_book::register(m)?;
     book::register_book_classes(m)
 }
 
@@ -3900,7 +3934,6 @@ fn register_policy_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    book::register_book_functions(m)?;
     m.add_function(wrap_pyfunction!(parse_usi_position, m)?)?;
     m.add_function(wrap_pyfunction!(parse_usi_position_parts, m)?)?;
     m.add_function(wrap_pyfunction!(normalize_usi_position, m)?)?;
@@ -5720,69 +5753,5 @@ T5
 
         let mut editor = PyRecordEditor::new("startpos").expect("editor");
         assert!(editor.go_to(usize::MAX).is_err());
-    }
-
-    #[test]
-    fn book_key_from_position_works() {
-        let board = PyBoard::new(Some(STARTPOS_SFEN)).expect("board init");
-        let key = book_key_from_position(&board);
-        assert_ne!(key.low(), 0);
-    }
-
-    #[test]
-    fn book_key_after_matches_push() {
-        Python::attach(|py| {
-            let mut board = PyBoard::new(Some(STARTPOS_SFEN)).expect("board init");
-            let mv = PyMove::from_move(Move::from_usi("7g7f").expect("valid move"));
-
-            let key_after = book_key_after(&board, &mv);
-
-            let _py_mv = Py::new(py, mv).expect("py wrap");
-            board.apply_usi("7g7f").expect("legal move");
-            let key_current = book_key_from_position(&board);
-
-            assert_eq!(key_after.low(), key_current.low());
-            assert_eq!(key_after.high(), key_current.high());
-        });
-    }
-
-    #[test]
-    fn memory_book_insert_and_get() {
-        let mut book = PyMemoryBook::new();
-        let board = PyBoard::new(Some(STARTPOS_SFEN)).expect("board init");
-        let key = book_key_from_position(&board);
-
-        let mv = PyMove::from_move(Move::from_usi("7g7f").expect("valid move"));
-        let book_move = PyBookMove::from_book_move(BookMove::new(mv.inner, 100, 10));
-
-        book.insert_move(&key, &book_move);
-
-        let entry = book.get(&key).expect("entry exists");
-        assert_eq!(entry.moves().len(), 1);
-        assert_eq!(entry.moves()[0].score(), 100);
-    }
-
-    #[test]
-    fn static_book_roundtrip() {
-        let mut memory_book = PyMemoryBook::new();
-        let board = PyBoard::new(Some(STARTPOS_SFEN)).expect("board init");
-        let key = book_key_from_position(&board);
-
-        let mv = PyMove::from_move(Move::from_usi("7g7f").expect("valid move"));
-        let book_move = PyBookMove::from_book_move(BookMove::new(mv.inner, 100, 10));
-        memory_book.insert_move(&key, &book_move);
-
-        Python::attach(|py| {
-            let cls = py.get_type::<PyStaticBook>();
-            let static_book = PyStaticBook::from_memory_book(&cls, &memory_book);
-            let bytes = static_book.to_bytes(py);
-
-            let restored =
-                PyStaticBook::from_bytes(&cls, bytes.as_any()).expect("roundtrip succeeds");
-
-            assert_eq!(restored.inner.len(), 1);
-            let entry = restored.get(&key).expect("entry exists");
-            assert_eq!(entry.moves().len(), 1);
-        });
     }
 }

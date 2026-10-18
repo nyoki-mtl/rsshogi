@@ -5,6 +5,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-18
+
+Native Book の API と保存形式に破壊的変更を含む。
+
+### Added
+
+- Native Book の新規構築でブロック局面数を 1..=16384 から指定できる。既定と推奨値は 64。Rust は `NativeBookBuilder::with_block_positions`、Python は `block_positions=` を使用する。保存値の取得と、compaction、別名保存、救出での維持にも対応する。
+
+- Native Book v4 の reader / editor / builder を Rust と Python に追加。32B の局面キー、任意の評価値、コメント、文書メタデータ、ブロック単位の部分読込、差分保存、排他、保全付き復旧、別名救出、compaction に対応する。本体は可変長整数と既定 64 局面単位の Zstandard 圧縮、ブロックごとの CRC-32C と展開上限を使う。
+- 文書単位の `depth_kind: u32` を追加。0 は未指定、1 は探索深さ、2 は定跡内の後退解析距離。未知の値も保存と再読込で保持する。
+- DB2016、SBK、所有 IR から v4 への明示変換と欠落報告を追加。
+- `Move::flip` / `Move::mirror_file` と `Move32::flip` / `Move32::mirror_file` を追加。
+  盤面の 180 度回転（先後反転）と左右反転に対応する指し手を返す。`Move32::flip` は
+  駒情報の手番も反転し、`mirror_file` は駒情報をそのまま保つ。`MOVE_NONE` や
+  `MOVE_NULL` のような通常手でない値はそのまま返す。学習データの対称性拡張で使う。
+- `Position::to_packed_sfen_flipped` / `Position::try_to_packed_sfen_flipped` を追加。
+  SFEN 文字列を経由せずに先後反転局面の `PackedSfen` を得る。反転規則は
+  `Position::to_sfen_flipped` と共有する。
+- Python bindings に反転 API を追加。`Move.flip_side()` / `Move.mirror_file()`、
+  `Move32.flip_side()` / `Move32.mirror_file()`、`Board.to_sfen_flipped()`、
+  `Board.to_packed_sfen_flipped(out=None)` を公開する。Python 側の命名は既存の
+  `Square.flip_side()` / `Bitboard.flip_side()` に揃えた（core の `flip` に対応する）。
+
+### Breaking changes
+
+- `BookError` に `Busy`、`NativeLog`、`SaveUncertain` を追加し、`#[non_exhaustive]` を付けた。利用側の Rust の `match` は新しい variant への対応に加え、将来の拡張を受ける `_` 分岐が必要になる。
+- 旧 `Book`、`BookKey`、`BookMove`、`BookEntry`、`MemoryBook`、`StaticBook`、`BookBuilder` と旧 v2 変換 API を Rust / Python から削除。v2 単独から局面を復元できないため、元の棋譜や外部定跡から v4 を再生成する。外部 reader と所有 IR は維持する。
+- Native 候補手の `count` を削除。外部入力の回数は 0 を含め欠落として報告し、既定の strict 変換は失敗する。明示的な lossy 変換だけが回数を捨てて続行する。
+- ライブラリは minor 更新だが、定跡の API と保存形式に破壊的変更を含む。reader は wire version 4（magic `RSSHGBK4`）を受理し、旧 v2 と固定長 v3 を拒否する。固定長 v3 の互換 reader は設けず、入力から再生成する。利用側は `depth_kind == 1` の場合だけ深さを探索深さの条件に使う。
+
+### Fixed
+
+- `check_candidate_bb` の駒種と候補表の対応を修正した。index 6 の表は馬の候補であり、
+  これまで `PieceType::ROOK` を渡したときに返されていた。`PieceType::HORSE` を渡すと
+  馬の候補表を返すようになり、`PieceType::ROOK` / `PieceType::DRAGON` は
+  「絞り込めない」ことを表す `Bitboard::ALL` を返す。従来の飛は馬の候補表、龍は
+  `Bitboard::EMPTY` を返しており、単独で使うと王手を取りこぼす可能性があった。
+  成駒（と金・成香・成桂・成銀）は金の候補表を返すようになった。
+  関数が直接王手だけを覆い、開き王手を覆わないことを doc comment に明記した。
+  **利用側の対応**: 馬の候補を得るために `PieceType::ROOK` を渡していた箇所は
+  `PieceType::HORSE` に置き換える。置き換えない場合も `Bitboard::ALL` は上位集合なので
+  結果の正しさは保たれるが、絞り込みが効かなくなる。
+
+### Performance
+
+- `generate_moves::<Checks>` などの `MoveGenType` 経由の王手生成が、非王手局面では
+  王手候補表を使う専用生成器へ委譲するようになった。従来は全空きマス × 全駒種に対して
+  `gives_check_move` を個別に呼ぶ総当たりだった。生成される指し手集合は変わらない
+  （非王手の 79,233 局面で `Checks` / `ChecksAll` / `QuietChecks` / `QuietChecksAll` を
+  1.4.0 および独立した参照経路と照合）。王手中の挙動は従来どおり王手回避手に絞る。
+- `CapturePlusPro` / `CapturePlusProAll` の盤上手生成で、取る手にならない空きマスを
+  `pop_lsb` で走査する前に Bitboard で落とすようにした。非歩駒は敵駒のある升だけ、
+  歩は敵駒のある升と敵陣だけを走査する。生成される指し手集合は変わらない
+  （82,257 局面で 1.4.0 および全候補からの抽出結果と一致）。
+- 王手中の `solve_mate_in_one` が、作業局面の複製にキー・キャッシュの全再計算を
+  含まなくなった。
+
+### Development
+
+- 王手生成の回帰テストは、王手候補表を使わず全候補から王手を選ぶ参照経路と照合する。
+- 通常 CI に release ビルドのゼロアロケーション検査を追加し、debug ビルドで省略される一手詰めの確保検査を行う。
+- feature 単独のビルドと、警告をエラーにする rustdoc 検査を追加する。
+- 指し手の捕獲駒情報、特殊手定数、Python API 一覧と CI 構成の説明を実装に揃える。
+
 ## [1.4.0] - 2026-10-17
 
 SAZ2 の保存形式と Rust の網羅的な `match` に互換性上の注意がある。
@@ -544,7 +608,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.2.5...v1.3.0

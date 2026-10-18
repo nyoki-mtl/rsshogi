@@ -45,7 +45,7 @@ crates/rsshogi/src/
 │   ├── move_list.rs    ヒープ確保を行わない固定容量の指し手コンテナ（MoveList / Move32List）
 │   └── perft.rs        合法手生成の網羅性テストと性能計測用 perft
 ├── mate.rs         静的反駁フィルタを備えた 1 手詰めソルバ
-├── book/           定跡の参照、変換、構築（MemoryBook, StaticBook, DB2016, YBB, SBK, BookDatabase）[feature = "book"]
+├── book/           定跡の参照、変換、構築（NativeBook, NativeBookEditor, DB2016, YBB, SBK, BookDatabase）[feature = "book"]
 └── records/        棋譜と教師データの入出力（KIF, KI2, CSA, JKF, PACK, SBINPACK, SAZPACK, HCPE）[feature = "records"]
 ```
 
@@ -67,7 +67,7 @@ USI 探索エンジンのように盤面操作と合法手生成だけを必要�
 | `svg` | なし | `Position::to_svg` および `SvgOptions` による盤面の SVG 文字列出力。 |
 | `validation` | なし | `Position::validate`、`validate_all`、`is_valid` による局面の整合性検証メソッド。 |
 | `initial-positions` | なし | `board::InitialPosition` 列挙型（平手および駒落ち 14 種の SFEN と手合割名の相互変換）。 |
-| `book` | `initial-positions`, `position-serialization` | `rsshogi::book` モジュール（`MemoryBook`、`StaticBook`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`）。`records` も有効な場合は `BookBuilder` による棋譜からの定跡構築も有効になる。 |
+| `book` | `initial-positions`, `position-serialization` | `rsshogi::book` モジュール（`NativeBook`、`NativeBookEditor`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`）。`NativeBookBuilder` は順次入力から本体を構築する。 |
 | `records` | `position-serialization`, `initial-positions`, `policy-labels`, `encoding_rs`, `serde`, `serde_json`, `ordered-float` | `rsshogi::records` モジュール（`Record`、KIF / KI2 / CSA / JKF、PACK、SBINPACK、SAZPACK、HCPE の入出力）。 |
 | `python-data` | `book`, `records`, `position-serialization`, `svg`, `validation` | `rsshogi-py` が使用するデータ処理系 Feature 一式をまとめて有効化する。 |
 

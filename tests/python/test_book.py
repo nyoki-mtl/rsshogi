@@ -3,77 +3,6 @@
 import rsshogi as rs
 
 
-def test_book_key_from_position():
-    """Test book_key_from_position function."""
-    board = rs.core.Board()
-    key = rs.book.book_key_from_position(board)
-
-    assert key is not None
-    assert isinstance(key, rs.book.BookKey)
-    assert key.low != 0
-    assert key.high >= 0
-
-
-def test_book_key_after():
-    """Test book_key_after function."""
-    board = rs.core.Board()
-    mv = rs.core.Move.from_usi("7g7f")
-
-    key_after = rs.book.book_key_after(board, mv)
-    board.apply_usi("7g7f")
-    key_current = rs.book.book_key_from_position(board)
-
-    assert key_after.low == key_current.low
-    assert key_after.high == key_current.high
-
-
-def test_memory_book_basic():
-    """Test MemoryBook basic operations."""
-    book = rs.book.MemoryBook()
-    assert len(book) == 0
-
-    board = rs.core.Board()
-    key = rs.book.book_key_from_position(board)
-
-    # Initially no entry
-    assert book.get(key) is None
-    assert not book.contains(key)
-
-    # Insert a move
-    mv = rs.core.Move.from_usi("7g7f")
-    book_move = rs.book.BookMove(mv, score=100, depth=10)
-    book.insert_move(key, book_move)
-
-    # Now entry should exist
-    assert book.contains(key)
-    entry = book.get(key)
-    assert entry is not None
-    assert len(entry.moves) == 1
-    assert entry.moves[0].score == 100
-    assert entry.moves[0].depth == 10
-    assert str(entry.moves[0]) == "7g7f"
-
-
-def test_static_book_from_memory():
-    """Test StaticBook.from_memory_book."""
-    memory_book = rs.book.MemoryBook()
-    static_book = rs.book.StaticBook.from_memory_book(memory_book)
-
-    assert len(static_book) == 0
-
-
-def test_static_book_roundtrip():
-    """Test StaticBook serialization roundtrip."""
-    memory_book = rs.book.MemoryBook()
-    static_book = rs.book.StaticBook.from_memory_book(memory_book)
-
-    # Serialize and deserialize
-    data = static_book.to_bytes()
-    restored = rs.book.StaticBook.from_bytes(data)
-
-    assert len(restored) == len(static_book)
-
-
 def test_yaneuraou_book_lookup(tmp_path):
     """Test YaneuraOu DB2016 lookup preserves external metadata."""
     path = tmp_path / "book.db"
@@ -221,86 +150,13 @@ def test_sbk_book_open_with_control_cancel(tmp_path):
         raise AssertionError("expected cancellation error")
 
 
-def test_book_key_equality():
-    """Test BookKey equality comparison."""
-    board = rs.core.Board()
-    key1 = rs.book.book_key_from_position(board)
-    key2 = rs.book.book_key_from_position(board)
-
-    assert key1 == key2
-    assert not (key1 != key2)
-
-
-def test_book_key_hash():
-    """Test BookKey is hashable."""
-    board = rs.core.Board()
-    key = rs.book.book_key_from_position(board)
-
-    # Should be able to use as dict key
-    d = {key: "value"}
-    assert d[key] == "value"
-
-
-def test_book_key_repr():
-    """Test BookKey string representation."""
-    board = rs.core.Board()
-    key = rs.book.book_key_from_position(board)
-
-    repr_str = repr(key)
-    assert "BookKey" in repr_str
-    assert "low=" in repr_str
-
-    str_str = str(key)
-    assert "0x" in str_str
-
-    expected = (key.high << 64) | key.low
-    assert int(key) == expected
-
-
-def test_book_builder_from_game_record():
-    """Test book_builder_from_game_record function."""
-    kif = """\
-手合割：平手
-手数----指手---------消費時間--
- 1 ７六歩(77)
- 2 ３四歩(33)
- 3 ２六歩(27)
- 4 投了
-まで3手で先手の勝ち
-"""
-    record = rs.record.Record.from_kif_str(kif)
-    memory_book = rs.book.book_builder_from_game_record(record, default_score=0, default_depth=1)
-
-    assert isinstance(memory_book, rs.book.MemoryBook)
-    # Should have at least the initial position
-    assert len(memory_book) >= 1
-
-
-def test_book_builder_class():
-    """Test BookBuilder class."""
-    builder = rs.book.BookBuilder()
-
-    board = rs.core.Board()
-    mv = rs.core.Move.from_usi("7g7f")
-
-    # Test insert_for_position
-    builder.insert_for_position(board, mv, score=100, depth=10)
-    memory_book = builder.into_memory()
-    assert len(memory_book) >= 1
-
-    # Test extend_from_game_record
-    kif = """\
-手合割：平手
-手数----指手---------消費時間--
- 1 ７六歩(77)
- 2 投了
-まで1手で先手の勝ち
-"""
-    record = rs.record.Record.from_kif_str(kif)
-    builder = rs.book.BookBuilder()
-    builder.extend_from_game_record(record, default_score=0, default_depth=1)
-    static_book = builder.build_static()
-    assert len(static_book) >= 1
+def test_removed_v2_search_api_is_not_exported():
+    """Version 2 requires explicit migration to native v3 instead of legacy aliases."""
+    for name in (
+        "BookKey", "BookMove", "BookEntry", "MemoryBook", "StaticBook", "BookBuilder",
+        "book_key_from_position", "book_key_after", "book_builder_from_game_record",
+    ):
+        assert not hasattr(rs.book, name)
 
 
 def _field_varint(field: int, value: int) -> bytes:

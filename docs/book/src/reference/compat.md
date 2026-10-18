@@ -21,7 +21,7 @@
 
 `cshogi` から `rsshogi` へ移行する際、最も重要な違いは **16-bit 指し手の内部ビット表現** である。
 
-- **`rsshogi.Move`（YaneuraOu `Move16` 互換）**：ビット 14 が駒打ちフラグ、ビット 15 が成りフラグである。`StaticBook`、`PackedSfenValue`（PSV）、`sbinpack`、`sazpack`、`YbbBook` はすべてこの表現を使用する。
+- **`rsshogi.Move`（YaneuraOu `Move16` 互換）**：ビット 14 が駒打ちフラグ、ビット 15 が成りフラグである。`NativeBook`、`PackedSfenValue`（PSV）、`sbinpack`、`sazpack`、`YbbBook` はすべてこの表現を使用する。
 - **`rsshogi.AperyMove`（Apery / `cshogi.move16` 互換）**：移動元フィールド `from` に `81..=87` を格納して駒打ちを表し、ビット 14 が成りフラグである。`HuffmanCodedPosAndEval`（HCPE）および `PACK` 形式はこの表現を使用する。
 
 | ビット領域 | `rsshogi.Move`（YaneuraOu 方式） | `rsshogi.AperyMove`（Apery / cshogi 方式） |

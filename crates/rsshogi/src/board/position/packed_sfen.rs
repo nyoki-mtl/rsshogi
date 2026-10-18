@@ -381,6 +381,24 @@ impl Position {
         self.try_to_packed_sfen().expect("position must be representable as PackedSfen")
     }
 
+    /// 先後反転（盤面を 180 度回転し、駒色と手番を反転）した局面を PackedSfen に変換する。
+    ///
+    /// 学習データの左右・先後拡張で、SFEN 文字列を経由せずに反転局面を得るために使う。
+    /// 反転規則は [`Self::to_sfen_flipped`] と同一である。
+    ///
+    /// # Panics
+    ///
+    /// [`Self::to_packed_sfen`] と同じ条件で panic する。
+    pub fn to_packed_sfen_flipped(&self) -> PackedSfen {
+        self.try_to_packed_sfen_flipped()
+            .expect("flipped position must be representable as PackedSfen")
+    }
+
+    /// 先後反転した局面を PackedSfen に変換し、表現不能な局面をエラーにする。
+    pub fn try_to_packed_sfen_flipped(&self) -> Result<PackedSfen, PackedSfenError> {
+        self.flipped().try_to_packed_sfen()
+    }
+
     /// 局面を PackedSfen に変換し、表現不能な局面をエラーにする。
     pub fn try_to_packed_sfen(&self) -> Result<PackedSfen, PackedSfenError> {
         let black_king = self.king_square(Color::BLACK);

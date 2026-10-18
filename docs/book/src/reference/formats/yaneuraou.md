@@ -41,7 +41,7 @@ move ponder score depth count [# インラインコメント]
 | 列位置 | フィールド | 型（`YaneuraOuBookMove`） | 内容と省略規則 |
 | :--- | :--- | :--- | :--- |
 | 1 | `move` | `Move` | 現局面での指し手（USI 形式）。リーダは通常手に加えて `none` や `resign` も受理する。 |
-| 2 | `ponder` | `Move` | 予想される相手の応手（USI 形式）。存在しない場合は `none`（`Move::NONE`）。 |
+| 2 | `ponder` | `Move` | 予想される相手の応手（USI 形式）。存在しない場合は `none`（`Move::MOVE_NONE`）。 |
 | 3 | `score` | `Option<i32>` | 評価値（単位：cp、手番視点）。`none` または省略時は `None`。 |
 | 4 | `depth` | `Option<u32>` | 探索深さ。`none` または省略時は `None`。 |
 | 5 | `count` | `Option<u64>` | 採択回数（出現回数）。`none` または省略時は `None`。 |
@@ -183,5 +183,5 @@ if let Some(entry) = ybb.lookup_position(&pos)? {
 ## 関連項目
 
 - [定跡 3 層アーキテクチャ](book-architecture.md)
-- [StaticBook バイナリフォーマット仕様](book.md)
+- [NativeBook バイナリフォーマット仕様](book.md)
 - [ShogiHome SBK フォーマット仕様](sbk.md)

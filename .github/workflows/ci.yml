@@ -35,3 +35,32 @@ jobs:
         run: uv sync --dev
       - name: Check
         run: make check
+      # debug ビルドでは一手詰めの確保検査を省くため、release でも実行する。
+      - name: Check release allocations
+        run: cargo test -p rsshogi --release --all-features --test zero_allocation_contract --locked
+
+  feature-matrix:
+    name: per-feature build and doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      # make check は default と --all-features しか踏まないため、
+      # feature 単独・組み合わせの破綻をここで検出する。
+      - name: Check each feature
+        run: cargo hack check -p rsshogi --each-feature --all-targets --locked
+      # intra-doc link は feature で解決可否が変わるため、feature ごとに rustdoc を通す。
+      # make check は rustdoc を走らせない。
+      - name: Document each feature
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo hack doc -p rsshogi --each-feature --no-deps --locked

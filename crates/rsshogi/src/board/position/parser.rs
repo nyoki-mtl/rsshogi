@@ -2,7 +2,7 @@ use super::Position;
 use crate::board::parser::{
     PositionState, PositionStateError, SfenError, generate_sfen_with_ply, parse_sfen,
 };
-use crate::types::{Color, EnteringKingRule, Piece, PieceType};
+use crate::types::{Color, EnteringKingRule, PieceType};
 
 impl Position {
     /// SFEN 文字列から局面を生成する。
@@ -112,20 +112,7 @@ impl Position {
     /// `None` の場合は現在の手数を使用する。
     /// `Some(x)` で負数を指定した場合は手数を出力しない。
     pub fn to_sfen_flipped(&self, game_ply: Option<i32>) -> String {
-        let mut flipped = Self::empty();
-
-        for (sq, piece) in self.board.iter() {
-            if piece.is_empty() {
-                continue;
-            }
-            let flipped_piece = Piece::from_parts(piece.color().flip(), piece.piece_type());
-            flipped.board.set(sq.flip(), flipped_piece);
-        }
-
-        flipped.hands[Color::BLACK.to_index()] = self.hands[Color::WHITE.to_index()];
-        flipped.hands[Color::WHITE.to_index()] = self.hands[Color::BLACK.to_index()];
-        flipped.set_side_to_move(self.turn().flip());
-        flipped.ply = self.ply;
+        let flipped = self.flipped();
 
         let ply = game_ply.unwrap_or_else(|| i32::from(self.ply));
         let ply = if ply < 0 { None } else { Some(ply) };

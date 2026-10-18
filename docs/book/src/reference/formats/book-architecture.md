@@ -1,126 +1,97 @@
-# 定跡 3 層アーキテクチャ
+# 定跡アーキテクチャ
 
-`rsshogi` の定跡（Opening Book）サブシステムは、探索中の高速な候補手参照、外部フォーマットの無損失（lossless）読み取り、および形式間の編集と相互変換という異なる要件を両立するため、3 層アーキテクチャを採用している。
+本章は rsshogi 1.5.0 の Native Book v4 を説明する。
 
-## 1. 3 層構造の全体像
+定跡は Native Book v4、外部形式の reader、変換用の所有 IR に分ける。
+評価値による採択や抽選は利用側のエンジンが行う。
 
-```mermaid
-flowchart TD
-    subgraph ExternalLayer["外部リーダ層 (読み取り専用)"]
-        YaneuraOuBook["YaneuraOuBook<br/>(DB2016 .db)"]
-        YbbBook["YbbBook<br/>(YANE-BINBOOK-V1 .ybb)"]
-        SbkBook["SbkBook<br/>(ShogiHome .sbk)"]
-    end
+| 用途 | 型 | 契約 |
+| --- | --- | --- |
+| 部分参照 | `NativeBook` | open 時点の snapshot。検索は所有 entry と `Result` を返す |
+| 編集と保存 | `NativeBookEditor` | 1 writer の排他、局面 snapshot の追記、明示的な compaction |
+| 初期構築 | `NativeBookBuilder` | 任意順の順次入力、メモリ予算付き外部 sort、新規出力 |
+| 外部形式の参照 | `YaneuraOuBook` / `YbbBook` / `SbkBook` | 各形式の値と意味を保持する concrete reader |
+| 変換用 IR | `BookDatabase` | SFEN と形式固有情報を持つ所有データ。全件ロードは明示的に行う |
 
-    subgraph IRLayer["編集 IR 層 (SFEN 主キー / メタデータ保持)"]
-        BookDatabase["BookDatabase<br/>(BookPosition / BookCandidate)"]
-    end
+## Native Book v4
 
-    subgraph LookupLayer["ルックアップ層 (Book トレイト / Zobrist キー参照)"]
-        BookBuilder["BookBuilder<br/>(Record からの収集)"]
-        MemoryBook["MemoryBook<br/>(インメモリ辞書)"]
-        StaticBook["StaticBook v2<br/>(ソート済みバイナリ .book)"]
-    end
+局面は盤面、持ち駒、手番を含む 32B の正規形 `PackedSfen` で識別する。手数と履歴は含まず、復元時の手数は 1。キーは byte 辞書順で比較し、Zobrist の `hash-128` 設定には依存しない。
 
-    YaneuraOuBook <-->|"entry_from / write_db2016"| BookDatabase
-    SbkBook <-->|"entry_from / write_sbk"| BookDatabase
-    BookDatabase -->|"to_memory_book"| MemoryBook
-    BookDatabase -->|"to_static_book"| StaticBook
-    BookBuilder -->|"into_memory"| MemoryBook
-    BookBuilder -->|"build_static"| StaticBook
-    MemoryBook -->|"from_memory_book"| StaticBook
+ライブラリの版は 1.5.0、ファイル形式は version 4（magic `RSSHGBK4`）である。
+ライブラリの版番号とファイル形式の版番号は独立している。
+
+本体は 128B ヘッダー、56B 単位のブロック索引、圧縮ブロック、コメント索引、本文、文書メタデータを持つ。
+writer は指定した局面数ごとにキーの prefix と可変長整数を符号化し、独立した Zstandard frame に圧縮する。
+新規構築の既定と推奨値は 64 局面で、入力前に `NativeBookBuilder::with_block_positions(256)` のように 1..=16384 を指定できる。
+保存された値は `NativeBook::block_positions()` で取得し、編集後の compaction、別名保存と救出でも維持する。
+reader は 1..=16384 局面のブロックを受理し、open 時に索引を RAM に読み、検索時に必要なブロックだけを展開する。
+展開済み 1 ブロックを cache し、検索はコメント本文を読まない。
+通常保存はヘッダーや本体を書き換えず、変更局面と文書メタデータを 1 transaction として追記する。
+追記内の候補手は固定 16B であり、圧縮本体と同じ評価値、深さと表示順位を保持する。
+reader は capture した長さの snapshot を保持し、再 open するまで後の保存を反映しない。
+
+候補手は `mv`、`score`、任意の `depth: Option<u32>`、`display_order` を持ち、回数を保存しない。
+depth の未設定と 0 は区別する。
+`NativeBookMetadata.depth_kind: u32` は文書全体の深さの意味を示し、0 は未指定、1 は探索深さ、2 は定跡内の後退解析距離である。
+未知の値も保存、再読込と compaction で保持する。
+エンジンは `depth_kind == 1` を確認した場合だけ探索深さの条件へ使う。
+メタデータの追記はヘッダーの depth_kind より優先し、compaction は最新値を新本体へ反映する。
+
+```rust
+extern crate rsshogi;
+use rsshogi::board::Position;
+use rsshogi::book::{
+    NativeBook, NativeBookEditor, NativeBookEntry, NativeBookMetadata,
+    NativeBookPosition, NativeCandidate,
+};
+use rsshogi::types::Move;
+
+let position = Position::from_sfen(
+    "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+)?;
+let candidate = NativeCandidate::new(Move::from_usi("7g7f").expect("valid USI"));
+let entry = NativeBookEntry::from_position(&position, vec![candidate])?;
+let mut editor = NativeBookEditor::create("new.book", NativeBookMetadata::default())?;
+editor.upsert_position(NativeBookPosition::new(entry))?;
+editor.save()?;
+drop(editor);
+let book = NativeBook::open("new.book")?;
+assert!(book.get(&position)?.is_some());
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### ルックアップ層（`MemoryBook` / `StaticBook` / `BookBuilder`）
+`NativeBook::entries()` と `records()` はキー順の streaming iterator。前者は検索データのみ、後者はコメント込みの snapshot を返す。`NativeBookEditor::records()` は未保存の編集も含む。`write_to` は未保存の変更を含む snapshot を新規出力し、`write_to_with_replace` は明示的な置換にも対応する。保存先の writer ロックも取得する。
 
-`Book` トレイトを実装し、探索エンジンが対局中に最小のオーバーヘッドで候補手を引くための正規化済み参照層である。
+完全検証は `validate_full` で行う。ログの不正箇所を飛び越えず、既に上書きされた古い snapshot の本文も検査する。`recover_tail` は正常な開始ヘッダーがある未完了 tail だけを保全付きで復旧し、`salvage_prefix` は原本を保持して検証済み prefix を別ファイルへ再構築する。詳細は [バイナリ仕様](book.md) を参照。
 
-- **局面キー**：`book_key_from_position(&pos)` が返す `BookKey`（盤面、持ち駒、手番から計算される Zobrist ハッシュ。通常は 64-bit、`hash-128` feature 有効時は 128-bit）を主キーとする。手数（ply）はキーに含めない。
-- **候補手データ**：1 手あたり `BookMove { mv: Move, score: i16, depth: u16 }`（6 バイト相当）のみを保持する不可逆（lossy）な軽量表現である。
-- **`MemoryBook`**：`HashMap<BookKey, Vec<BookMove>>` によるインメモリ辞書であり、動的な候補手追加に対応する。
-- **`StaticBook`**：ソート済み `BookKey` 配列とオフセット配列を持つ不変構造であり、`.book` バイナリファイルとの高速な直列化と二分探索を提供する。
-- **`BookBuilder`**：`Record`（本手順および変化手順）を DFS 走査して各局面の指し手、評価値、深さを収集し、`MemoryBook` またはソート済み `StaticBook` を構築する。
+コメントと文書メタデータは任意である。エンジンの候補手検索`get`はコメント本文を読まず、採択にも使わない。
+ただしopen時は、追記ログのCRCと内容を検証するため、ログ内のコメントも読む。
+本体のコメント量は通常の候補手検索の読込量に加わらないが、ログ内のコメント量は起動時の検証量に加わる。
+全件検証、保存、compactionにもコメント量に応じたコストがある。
 
-### 外部リーダ層（`YaneuraOuBook` / `YbbBook` / `SbkBook`）
+## 外部形式からの変換
 
-YaneuraOu や ShogiHome（ShogiGUI）で使われる定跡ファイルを、フォーマット固有のメタデータを落とさずに直接読み取る読み取り専用リーダ群である。
+Rust の `BookDatabase`、`YaneuraOuBook`、`SbkBook` は `write_native_book(path, NativeBookImportOptions)` を持つ。外部 reader からは所有 IR 全件への展開を経ず、順次変換して builder に渡す。
 
-- **`YaneuraOuBook`**：`#YANEURAOU-DB2016 1.00` 形式のテキスト定跡（`.db`）をストリーミングまたは二分探索で参照し、`YaneuraOuBookEntry` / `YaneuraOuBookMove`（`mv`, `ponder`, `score`, `depth`, `count`, `comment`, `min_ply`）を返す。
-- **`YbbBook`**：`YANE-BINBOOK-V1` 形式の固定長バイナリ定跡（`.ybb`）を検証してメモリ上に保持し、32 バイトの `PackedSfen` 二分探索によって `YbbEntry` / `YbbMove`（`mv`, `raw_move`, `eval`, `depth`, `ply`, `flipped`）を返す。
-- **`SbkBook`**：ShogiHome / ShogiGUI の Protobuf 形式定跡（`.sbk`）を開いて `PackedSfen` と `state_id` のインデックスを構築し、一致した局面の `SbkEntry` / `SbkMove` / `SbkEval` をオンデマンドでデコードする。
+既定の `allow_lossy = false` は保存できない情報があれば新規出力を公開せず失敗する。
+`allow_lossy = true` を明示すると、`NativeBookImportReport` に出力件数、除外局面数、フィールド別の欠落件数、入力位置と SFEN 付きの先頭 32 件の例、省略例数を返す。
+候補手の depth は `u32` の全域を保持する。
+入力に回数があれば、0 を含め `candidate.count` の欠落として数え、strict 変換を失敗させる。
+lossy 変換では回数を捨てて報告し、別のフィールドへ代入しない。
+局面が PackedSfen で表現不能なら、既定はエラー、明示的な lossy 変換では報告して除外する。
 
-### 編集 IR 層（`BookDatabase`）
+DB2016 の候補手評価は入力で宣言された cp として扱い、大きな整数を詰みと推測しない。
+SBK の手の評価は注釈値であるため cp に転用せず、状態評価や PV を候補手へ複製しない。
+ponder、元の手数、形式固有 metadata など v4 に保存できない値は欠落報告の対象になる。
 
-外部フォーマット間の相互変換や定跡編集を担う所有権付き中間表現（IR）である。
+棋譜から構築する場合は局面を再生し、`NativeBookEntry::from_position` で候補手を作って `NativeBookBuilder::push` に渡す。同じ局面の集計や候補手の重複解消は収集側で明示する。builder は重複局面を拒否する。子局面の評価を使う場合は、収集側で手番視点、詰み距離、bound を変換する。
 
-- **局面表現（`BookPosition`）**：手数を `1` に揃えた正規化 SFEN を主キーとし、派生した `BookKey`、32 バイト `PackedSfen`、および元の手数 `original_ply` を併せて保持する。
-- **候補手表現（`BookCandidate`）**：`mv: Move`、`ponder: Option<Move>`、`score: Option<i32>`、`depth: Option<u32>`、`weight: Option<i32>`、`count: Option<u64>`、および DB2016 / SBK 由来の詳細メタデータ（`BookMoveMetadata`）を保持する。
-- **出力機能**：`to_memory_book` / `to_static_book` によるルックアップ層への射影に加え、`write_yaneuraou_db2016`（DB2016 書き出し）および `write_sbk` / `to_sbk_bytes`（SBK 全体書き出し）を提供する。
+## 1.5.0 への移行
 
-## 2. 定跡 4 フォーマットの比較
+旧 `Book` trait、`BookKey`、`BookMove`、`BookEntry`、`MemoryBook`、`StaticBook`、`BookBuilder`、`NativeBookConvertOptions`、`NativeScorePolicy`、`to_memory_book`、`to_static_book` は削除した。
+ハッシュキー API の互換層は設けない。
 
-| 項目 | [StaticBook v2](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
-| :--- | :--- | :--- | :--- | :--- |
-| ファイル形式 | 固定長バイナリ（`.book`） | UTF-8 テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
-| ヘッダ / マジック | `RSHOGIBK` + `version = 2` (22B) | `#YANEURAOU-DB2016 1.00` | `YANE-BINBOOK-V1\0` (32B) | `SBook` Protobuf メッセージ |
-| 局面キー | `BookKey`（64/128-bit Zobrist） | 正規化 SFEN（手数 `1`） | 32B `PackedSfen` + `ply: u16` | SFEN + `PackedSfen` 索引 + `state_id` |
-| 候補手の型 | `BookMove` (6B) | `YaneuraOuBookMove` | `YbbMove` (4B または 6B) | `SbkMove` + `SbkEval` |
-| 予想応手（ponder） | ✕ | `ponder: Move`（`none` 可） | ✕ | ✕（`SbkEval.variation` に読み筋） |
-| 評価値 | `score: i16` | `score: Option<i32>` | `eval: i16` | `SbkEval.evaluation_value: Option<i32>` |
-| 探索深さ | `depth: u16` | `depth: Option<u32>` | `depth: Option<u16>` | `SbkEval.depth: Option<i32>` |
-| 採択回数 / 重み | ✕（`score` へ射影可） | `count: Option<u64>` | ✕ | `weight: Option<i32>` / `games: Option<i32>` |
-| コメント保持 | ✕ | ○（局面および指し手） | ✕ | ○（author, description, 局面） |
-| 書き出し対応 | `StaticBook::write_file` | `BookDatabase::write_yaneuraou_db2016` | ✕（読み取り専用） | `BookDatabase::write_sbk` |
-
-## 3. スコア、深さ、重みのマッピングと丸め規則
-
-外部フォーマット（DB2016 / SBK）と `BookDatabase`、および `StaticBook` / `MemoryBook` の間で変換を行う際のフィールド対応と数値丸め（narrowing）規則は以下の通りである。
-
-### 外部リーダから `BookDatabase` への取り込み
-
-| フィールド | DB2016 (`entry_from_yaneuraou`) | SBK (`entry_from_sbk`) |
-| :--- | :--- | :--- |
-| `BookCandidate.mv` | `YaneuraOuBookMove.mv`（通常手のみ受理。`resign` 等はエラー） | `SbkMove.mv` |
-| `BookCandidate.ponder` | `ponder` が通常手なら `Some(ponder)`、`Move::NONE` 等は `None` | `None` |
-| `BookCandidate.score` | `YaneuraOuBookMove.score` (`Option<i32>`) | `None`（状態単位の評価値は `SbkEntryMetadata.evals` に保持） |
-| `BookCandidate.depth` | `YaneuraOuBookMove.depth` (`Option<u32>`) | `None`（状態単位の深さは `SbkEntryMetadata.evals` に保持） |
-| `BookCandidate.weight` | `None` | `SbkMove.weight` (`Option<i32>`) |
-| `BookCandidate.count` | `YaneuraOuBookMove.count` (`Option<u64>`) | `None` |
-
-### `BookDatabase` から `MemoryBook` / `StaticBook` への射影
-
-`BookDatabase::to_memory_book(&options)` および `to_static_book(&options)` では、`NativeBookConvertOptions` に従って各 `BookCandidate` を `BookMove { mv: Move, score: i16, depth: u16 }` へ変換する。
-
-| `BookMove` フィールド | 変換規則 |
-| :--- | :--- |
-| `mv: Move` | `BookCandidate.mv` をそのままコピーする。 |
-| `score: i16` | `NativeScorePolicy::Score`（既定）のときは `candidate.score` を参照し、`NativeScorePolicy::Weight` のときは `candidate.weight` を参照する。値 `Some(v)`（`i32`）が存在する場合は `[i16::MIN, i16::MAX]`（`-32768..=32767`）にクランプし、`None` の場合は `options.missing_score`（既定値 `0`）を使用する。 |
-| `depth: u16` | `candidate.depth`（`Option<u32>`）が `Some(d)` の場合は `[0, u16::MAX]`（`0..=65535`）にクランプし、`None` の場合は `options.missing_depth`（既定値 `0`）を使用する。 |
-
-この変換では、`BookDatabase` 内のエントリ順および候補手順がそのまま保持される。
-異なる SFEN エントリが同一の `BookKey` に解決された場合は、データベース順で候補手が追記される。
-
-## 4. Rust と Python の API 対応表
-
-| 型 / 関数 | Rust (`rsshogi::book`) | Python (`rsshogi`) | 説明 |
-| :--- | :--- | :--- | :--- |
-| `BookKey`, `BookMove`, `BookEntry` | ○ | ○ | ルックアップ層のキー、候補手、局面エントリ。 |
-| `book_key_from_position`, `book_key_after` | ○ | ○ | `Board` / `Position` からの `BookKey` 計算関数。 |
-| `MemoryBook` | ○ | ○ | インメモリ定跡辞書。 |
-| `StaticBook` | ○ | ○ | `.book` バイナリの読み書きと二分探索。 |
-| `BookBuilder` | ○ | ○ | `Record` や候補手挿入からの定跡構築ビルダー。 |
-| `YaneuraOuBook`, `YaneuraOuBookEntry`, `YaneuraOuBookMove`, `YaneuraOuBookDiagnostics` | ○ | ○ | DB2016（`.db`）テキスト定跡のオンデマンドリーダと診断結果。 |
-| `SbkBook`, `SbkEntry`, `SbkMove`, `SbkEval`, `SbkDiagnostics`, `SbkOpenProgress` | ○ | ○ | ShogiHome（`.sbk`）Protobuf 定跡のリーダと状態グラフ遷移。 |
-| `YbbBook`, `YbbBookOpenOptions`, `YbbEntry`, `YbbMove` | ○ | ✕（Rust のみ） | YaneuraOu `YANE-BINBOOK-V1`（`.ybb`）バイナリ定跡リーダ。 |
-| `BookDatabase`, `BookDatabaseEntry`, `BookPosition`, `BookCandidate` | ○ | ✕（Rust のみ） | 定跡編集およびフォーマット間相互変換用の中間表現（IR）。 |
-| `NativeBookConvertOptions`, `NativeScorePolicy` | ○ | ✕（Rust のみ） | `BookDatabase` から `MemoryBook` / `StaticBook` への変換オプション。 |
-| `YaneuraOuBookOpenOptions`, `YaneuraOuAccessMode` | ○ | ✕（Rust のみ） | DB2016 オープン時のソート検証とアクセスモード指定。 |
-| `YaneuraOuDb2016WriteOptions` | ○ | ✕（Rust のみ） | `BookDatabase` からの DB2016 書き出しオプション。 |
-| `SbkWriteOptions` | ○ | ✕（Rust のみ） | `BookDatabase` からの SBK 書き出しオプション。 |
-
-## 関連項目
-
-- [StaticBook バイナリフォーマット仕様](book.md)
-- [YaneuraOu 定跡フォーマット仕様（DB2016 / YBB）](yaneuraou.md)
-- [ShogiHome SBK フォーマット仕様](sbk.md)
-- [フォーマット仕様一覧](index.md)
+wire version 4 の reader は旧 v2 と固定長 v3 を受理しない。
+旧 v2 は局面情報を失っているため、ファイル単独から v4 へ変換できない。
+固定長 v3 も互換 reader を設けず、元の棋譜または外部定跡から再生成する。
+外部 reader と `BookDatabase` の DB2016 / SBK 書出しは引き続き利用できる。

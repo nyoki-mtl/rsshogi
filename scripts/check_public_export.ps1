@@ -114,6 +114,10 @@ try {
     Write-TestFile (Join-Path $source ".sandbox/private.txt") "private sandbox"
     Write-TestFile (Join-Path $source ".serena/private.txt") "private serena"
     Write-TestFile (Join-Path $source "private-notes/new-dev-dir.txt") "unlisted private data"
+    Write-TestFile (Join-Path $source "scripts/native-book-benchmark.ps1") "private benchmark"
+    Write-TestFile (Join-Path $source "scripts/native_book_layout_probe.py") "private layout probe"
+    Write-TestFile (Join-Path $source "scripts/native_book_layout_probe/Cargo.toml") "private probe crate"
+    Write-TestFile (Join-Path $source "scripts/public-helper.ps1") "public helper"
 
     Invoke-Git $source add -A
     Invoke-Git $source commit -q -m "source snapshot"
@@ -192,6 +196,13 @@ try {
     Assert-NotTracked $exportWork ".sandbox"
     Assert-NotTracked $exportWork ".serena"
     Assert-NotTracked $exportWork "private-notes"
+    Assert-NotTracked $exportWork "scripts/native-book-benchmark.ps1"
+    Assert-NotTracked $exportWork "scripts/native_book_layout_probe.py"
+    Assert-NotTracked $exportWork "scripts/native_book_layout_probe"
+
+    if (-not (Git-Output $exportWork ls-files -- scripts/public-helper.ps1)) {
+        throw "unrelated public script was not exported"
+    }
 
     if (Git-Output $exportWork ls-files -- obsolete.txt) {
         throw "deleted upstream path is still tracked after export: obsolete.txt"

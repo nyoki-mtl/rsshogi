@@ -1,143 +1,503 @@
-# StaticBook バイナリフォーマット仕様
+# Native Book v4 バイナリ形式
 
-`StaticBook`（`rsshogi::book::StaticBook`）は、`rsshogi` 独自の読み取り専用定跡バイナリフォーマット（現行バージョン `2`）である。
-局面キー配列、オフセット配列、および固定長候補手配列の 3 段構造をとることで、大規模な定跡に対する二分探索（`binary_search`）とスライス参照を最小のメモリフットプリントで実現する。
+本章は rsshogi 1.5.0 が読み書きする圧縮配置（wire version 4）を説明する。
 
-## 基本設計
+Native Book v4 は、局面と候補手をブロック単位で部分読込し、編集差分を単一の `.book` ファイルへ追記する形式である。
+Rust の `book` feature と Python の `rsshogi.book` から利用できる。
 
-- **主キー**：手数（ply）を除いた局面の Zobrist ハッシュである `BookKey`（通常ビルドでは 64-bit、Cargo feature `hash-128` 有効時は 128-bit）を使用する。
-- **可変長の候補手リスト**：オフセット配列 `offsets` によって、1 局面あたり任意の個数の `BookMove` スライスを表現する。
-- **エンディアン**：すべてのマルチバイト整数はリトルエンディアン（LE）で記録される。
+## 1. 論理モデル
 
-## 1. ワイヤーレイアウト仕様
+### 1.1 局面の同一性
 
-バイナリデータは、22 バイトの固定長ヘッダに続けて、`keys` 配列、`offsets` 配列、`moves` 配列を隙間なく配置する。
+局面は盤面、先後それぞれの持ち駒、手番で識別する。
+手数、到達手順、千日手履歴は含めない。
+先後反転、左右反転は行わず、先後を取り替えた局面も別キーとする。
+正規化キーは`Position::try_to_packed_sfen()`の32Bとし、読込時の局面復元では手数を1にする。
+これは Native Book adapter の規則である。
+既存の`Position::sfen_unpack()`が渡す手数0は変更せず、その出力を正規化SFENとして直接使わない。
+バイト列をdecodeして同じ実装で再encodeした値を正規形とし、別表現の同一局面を保存しない。
+駒落ちは表現可能な範囲で受理し、玉欠落や駒数超過など表現不能な局面はエラーにする。
+比較順は32Bのバイト辞書順（`PackedSfen::cmp_bytes`相当）とする。
+`PackedSfen`のword比較順、Zobrist、ホストのエンディアンに依存させない。
+将来この符号化を変える場合は形式versionを上げる。
+
+### 1.2 候補手
+
+候補手の主キーは`(局面キー, mv.raw())`である。
+通常の盤上移動と駒打ちだけを受理し、投了、宣言、null move等は拒否する。
+同じ局面の同じ指し手は1件に限る。
+候補手ゼロの局面を認め、局面コメントだけを保持できる。
+子局面の登録は必須ではなく、到達不能な孤立局面も保持できる。
+手番や駒の移動を含む合法性は書込前にrsshogiで検証する。
+エンジンも利用直前に現在局面で合法性を確認する。
+
+候補手はディスク上では`mv.raw()`昇順に並べる。
+利用者の指定した候補手順は、候補手ごとの`display_order`に保存する。
+これはShogiLensの既存の`reorder_move`を保持するための表示順であり、エンジンの採択優先度ではない。
+局面内の順位は`0..k`の重複のない順列とし、追加時は末尾、削除時は後続を詰める。
+初期順序のある入力はその順序を保持し、順序がない入力だけ`mv.raw()`順を初期値とする。
+再読込後の一致は、局面と候補手の集合、全保存フィールド、コメント、表示順の一致を指す。
+エンジンの最善手選択と閾値はライブラリの保存処理に入れない。
+
+### 1.3 評価値
+
+評価値は候補手を指す前の局面の手番側の視点とする。
+正は手番側が有利、負は不利を意味する。
+子局面の手番視点の評価を取り込む場合、利用側のadapterが符号と詰み距離を変換する。
+先手絶対値をそのまま保存しない。
+
+| kind | 意味 | value | bound |
+| --- | --- | --- | --- |
+| 0 | 未評価 | 0固定 | 0固定 |
+| 1 | centipawn | `i32`の符号付きcp。0は評価済みの互角 | 0 exact、1 lower、2 upper |
+| 2 | 距離既知の詰み | 正は手番勝ち、負は手番負け。絶対値は候補手を含む終局までのply数。0と`i32::MIN`は拒否 | 0、1、2 |
+| 3 | 距離不明の詰み | 手番勝ちを+1、手番負けを-1 | 0固定 |
+
+例えば親局面の候補手がそのまま詰みなら`Mate(+1)`である。
+子の手番が2plyで詰まされる評価なら、親の候補手評価は`Mate(+3)`になる。
+子局面が既に詰んでいるときの外部評価`mate 0`は、子の敗北を局面から確認して親の`Mate(+1)`へ変換する。
+符号や意味を確定できない外部値を推測で取り込まない。
+boundの反転ではlowerとupperを交換する。
+distance不明、bound付き、未評価の候補手を自動的に「最高評価」として採用しない。
+比較可能性と採択は利用側の方針で決め、エンジン接続では既存設定との対応をテストする。
+depth は `Option<u32>` とし、未設定と 0 を区別する。
+意味はファイル単位の `depth_kind` で指定する。
+0 は未指定、1 は探索深さ、2 は定跡内の後退解析距離である。
+その他の `u32` 値もそのまま保持する。
+利用側は 1 を確認した場合だけ探索深さの条件に利用し、未指定や未知の値を推測で読み替えない。
+候補手の回数は保存しない。
+回数を持つ外部形式からの変換では欠落を報告し、既定の strict 変換は失敗する。
+
+### 1.4 コメントとメタデータ
+
+局面と各候補手に、それぞれ1つの任意UTF-8コメントを持つ。
+改行はLFに正規化する。Unicode正規化、Markdown解釈、HTML解釈は行わない。
+未設定と空文字は同じ「コメントなし」に正規化する。
+局面削除は候補手とすべてのコメントも削除する。
+候補手削除はその候補手のコメントだけを削除する。
+候補手を削除しても局面は残る。
+候補手の評価更新は、APIで明示的に変更しなかった他フィールドとコメントを保持する。
+
+文書全体に任意のUTF-8 `title`と`description`、および `depth_kind` を持つ。
+ShogiLens の同名の文書フィールドを保持する。
+コメントと同じ改行と空文字の正規化を行い、JSONのnullと空文字の区別は保持しない。
+文書メタデータも本体と追記ログに保存し、sidecarは必要としない。
+初期版のファイルには任意のweight、PV、エンジン名、作成日時を保存しない。
+これらを持つ外部形式からの変換は、欠落フィールドの件数を報告し、黙って評価値等へ代入しない。
+
+## 2. データファイルの本体
+
+すべての整数はlittle-endian、すべての位置と長さはbyte単位を基本とする。
+圧縮ブロック内の可変長整数は §2.2 の規則に従う。
+ポインタやRust構造体のメモリ表現を直接保存しない。
+予約領域は0を書き、0以外を読む場合は未対応形式として拒否する。
+未知のflagsを安全性の根拠なしに無視しない。
+将来の疎な索引等のための未定義領域は予約以上に定義せず、必要になった時点で互換性とversionを判断する。
+
+### 2.1 ヘッダー
+
+固定128B。配置は次のとおりとする。
+
+| byte offset | 型 | 意味 |
+| --- | --- | --- |
+| 0 | `[u8; 8]` | magic `RSSHGBK4` |
+| 8 | `u16` | version = 4 |
+| 10 | `u16` | header_bytes = 128 |
+| 12 | `u32` | flags = 0 |
+| 16 | `u64` | base_end。本体末尾かつログ開始位置 |
+| 24 | `u64` | N：本体の局面数 |
+| 32 | `u64` | M：本体の候補手数 |
+| 40 | `u64` | C：本体の非空コメント数 |
+| 48 | `u64` | block_index_offset |
+| 56 | `u64` | blocks_offset |
+| 64 | `u64` | blocks_bytes = Z |
+| 72 | `u64` | comment_index_offset |
+| 80 | `u64` | comment_text_offset |
+| 88 | `u64` | comment_text_bytes = T |
+| 96 | `u32` | base_crc32c。`[128, base_end)`を対象 |
+| 100 | `u32` | header_crc32c。この4Bを0とした128Bを対象 |
+| 104 | `u64` | document_metadata_offset。不在なら0 |
+| 112 | `u64` | document_metadata_bytes = U。不在なら0 |
+| 120 | `u32` | block_positions = P。既定 64、reader/writer とも 1..=16384 に対応 |
+| 124 | `u32` | 本体の depth_kind |
+
+ヘッダー、ブロック索引、圧縮ブロック、コメント索引、本文、文書メタデータの順で隙間なく配置する。
+`NativeBookBuilder::with_block_positions(P)` で入力前に局面数を指定できる。
+`NativeBook::block_positions()` で保存値を取得し、compaction、別名保存と救出は元の値を維持する。
+ブロック数を `B = ceil(N / P)` とすると、`block_index_offset = 128`、`blocks_offset = 128 + 56B`、`comment_index_offset = blocks_offset + Z` となる。
+以降の位置も各領域長から一意に計算されなければならない。
+文書メタデータが不在のときだけ、そのoffsetを0とする例外を適用する。
+ヘッダーの値と計算値が異なる入力を拒否する。
+空でメタデータが既定値の本体は N=M=C=T=U=Z=0、`base_end = 128` となる。
+0Bファイルは空の定跡ではなく、不完全なヘッダーとして拒否する。
+本体の`[0, base_end)`は不変であり、通常保存では1Bも書き換えてはならない。
+ヘッダーのsequenceやCRCを更新する最適化も禁止する。
+新規構築とcompactionだけが別ファイルに新しいヘッダーと本体を作る。
+
+CRCはCRC-32C（Castagnoli）とする。
+反射多項式`0x82F63B78`、初期値`0xFFFFFFFF`、最終XOR`0xFFFFFFFF`、チェック値`CRC("123456789") = 0xE3069283`を使う。
+CRCは破損検出用であり、改ざん認証ではない。
+ヘッダーのCRCはopen時に必ず検証し、本体全体のCRCは完全検証とcompactionで検証する。
+開始ヘッダーのCRCも、payload長を使う前に必ず検証する。
+CRC 実装は `book` feature 内の private な portable table 方式とする。
+256要素のテーブルと逐次更新APIを用意し、独立したbit単位の参照計算と既知byte fixtureで照合する。
+CRC実装手段とwire規約は分離し、将来高速化しても保存byteを変えない。
+
+### 2.2 ブロック索引と圧縮データ
+
+索引は B 件の 56B レコードで、各ブロックの先頭キーの厳密な昇順とする。
+
+| byte offset | 型 | 意味 |
+| --- | --- | --- |
+| 0 | `[u8; 32]` | ブロックの先頭局面キー |
+| 32 | `u64` | 圧縮ブロック領域内の相対 offset |
+| 40 | `u32` | 圧縮後の byte 長 |
+| 44 | `u32` | 展開後の byte 長 |
+| 48 | `u32` | 圧縮後の byte 列の CRC-32C |
+| 52 | `u32` | reserved = 0 |
+
+相対 offset は先頭 0 から圧縮長の累積で求まり、最後の末尾は Z と一致する。
+各長さは 1B 以上 64MiB 以下とする。
+各ブロックは独立した Zstandard frame 1 件であり、writer は level 3 を使う。
+reader は CRC、frame の圧縮長、展開長を検査し、末尾に追加された frame や余剰 byte を拒否する。
+展開 window の上限は 64MiB とする。
+
+最終ブロックを除き P 局面、最終ブロックは残りの局面を持つ。
+展開後は各局面について次のデータを順に連結する。
+
+1. 直前のキーと共通する先頭 byte 数（`u8`）。ブロック先頭は 0、以降は最大共通 prefix の長さ（0..=31）。
+2. キーの残りの `32 - prefix` B。
+3. 候補手数（可変長 `u32`、最大 65,535）。
+4. 次の可変長候補手を候補手数だけ連結。
+
+候補手は `move_raw`（`u16`）、kind（`u8`）、bound（`u8`）、必要時の評価値、depth の有無（`u8`）、必要時の depth、display_order の順とする。
+kind 0 では評価値を省略して 0 とし、kind 1..=3 では `i32` の ZigZag 値を可変長 `u32` として格納する。
+変換式は `((value as u32) << 1) ^ ((value >> 31) as u32)` である。
+depth の有無は 0 または 1 に限り、1 の場合だけ可変長 `u32` の depth を続ける。
+display_order は可変長 `u32` で格納するが、値域は `u16` とする。
+
+可変長整数は unsigned LEB128 の最短表現とし、下位 7bit ずつ格納する。
+上位 bit が 1 なら後続 byte があり、最大 5B、5B 目は 0..=15 に限る。
+多 byte 表現の最終 byte が 0 となる冗長表現、桁あふれ、途中終了は拒否する。
+ブロック展開時は、先頭キーと索引キーの一致、最大共通 prefix、ブロック内と隣接ブロック間の厳密な昇順、評価値など符号化された各値を検証する。
+検索で取得した entry については、さらに局面キーの正規形、指し手の合法性、候補手順と表示順位を検証する。
+同じブロック内でも取得していない entry の意味検証は行わず、`validate_full` が全 entry を検証する。
+展開後の未参照末尾も拒否する。
+
+open 時に索引全件を RAM へ読み、検索時に該当ブロックだけを展開する。
+reader は展開済み 1 ブロックを cache し、別ブロックへのアクセス時に置き換える。
+候補手検索ではコメント本文を読まない。
+
+### 2.3 コメント領域
+
+コメント索引は1件32Bで、`(position_id, target_kind, move_raw)`の昇順とする。
+`position_id` はブロック順に連結した本体の局面の 0 始まりの ordinal である。
+ordinalは外部APIに永続IDとして公開しない。
+
+| byte offset | 型 | 意味 |
+| --- | --- | --- |
+| 0 | `u64` | position_id。N未満 |
+| 8 | `u16` | move_raw。局面コメントなら0固定 |
+| 10 | `u8` | target_kind。0は局面、1は候補手 |
+| 11 | `[u8; 5]` | reserved = 0 |
+| 16 | `u64` | 本文領域内の相対offset |
+| 24 | `u64` | UTF-8本文のbyte長。0は禁止 |
+
+索引の対象重複と存在しない候補手への参照は拒否する。
+比較はlittle-endianをdecodeした各フィールドで行う。
+レコード全体や先頭16Bの`memcmp`を比較関数として使わない。
+外部mergeも同じtuple比較を使い、byte配置とtuple順が同じであるとは仮定しない。
+本文は索引順に連結し、隙間、共有範囲、未参照末尾を認めない。
+通常の候補手検索はこの索引も本文も読まない。
+コメント取得時にだけ二分探索し、対象本文のUTF-8と上限を検証する。
+
+### 2.4 文書メタデータ領域
+
+title と description がともに空で depth_kind が 0 のとき、writer は領域を省略し、ヘッダーの offset と長さをともに 0 とする。
+それ以外はコメント本文の直後に、title_bytes（u64）、description_bytes（u64）、depth_kind（u32）、title 本文、description 本文を隙間なく置く。
+長さ0はフィールド不在を表す。
+領域長 U は `20 + title_bytes + description_bytes` であり、領域の末尾は base_end と一致しなければならない。
+base_crc32cの対象に含め、通常の候補手検索では読み込まない。
+`metadata()`を要求したときにだけ本文を読み、UTF-8と長さを検証する。
+本体の depth_kind はヘッダーとメタデータ領域で一致しなければならない。
+メタデータ領域を省略した場合はヘッダーの値を使う。
+追記ログによるメタデータ全体の置換は、ヘッダーの値より優先する。
+compaction は最新値を新しいヘッダーとメタデータに反映する。
+
+## 3. 追記ログと通常保存
+
+### 3.1 トランザクション
+
+ログは`base_end`から始まる連続したframe列である。
+圧縮は行わない。
+トランザクションは40Bの開始ヘッダー、payload、24Bのcommit footerで構成する。
+
+開始ヘッダーはmagic `RSSHGTX4`（8B）、sequence（u64）、payload_bytes（u64）、operation_count（u64）、tx_header_crc32c（u32）、reserved（u32=0）の順とする。
+tx_header_crc32cはbyte 32から35を0にした開始ヘッダー40Bを対象とする。
+40B揃った開始ヘッダーのCRC不一致は、宣言されたpayload長にかかわらず破損とする。
+sequenceは1から始まり、隙間なく増加する。
+footerはmagic `RSSHGCMT`（8B）、同じsequence（u64）、開始ヘッダーとpayload全体のCRC32C（u32）、reserved（u32=0）の順とする。
+完全なfooter、CRC一致、全operationの構造検証が揃ったframeだけを適用する。
+途中のoperationを先に公開しない。
+
+operationのprefixは48Bとする。
+opcode（u8）、reserved（7B=0）、正規化キー（32B）、data_bytes（u64）の順に並べる。
+opcode 1は局面snapshotの置換、2は局面削除、3は文書メタデータ全体の置換とし、その他は拒否する。
+削除のdata_bytesは0固定。
+snapshotのdataは次節の形式で、その長さはdata_bytesと完全一致する。
+opcode 3 はキー 32B を 0 に固定し、data に §2.4 の長さ 2 件、depth_kind と本文を置く。
+既定メタデータへの置換も長さ 20B として表し、本体の値を明示的に上書きする。
+メタデータ操作は1 transactionに最大1件とし、存在する場合は先頭に置く。
+残りの局面operationはキー昇順、重複不可とする。
+キー0のメタデータ操作を局面操作と同一視しない。
+全0の32Bはdecode時に先後の玉位置が一致して拒否されるため、正当な局面キーではない。
+局面キー0を有効値として扱う最適化を行わず、dispatchは必ずopcodeで決める。
+operation_countはメタデータ操作を含めて1以上とする。
+payloadの余剰byteは認めない。
+
+### 3.2 変更局面のsnapshot
+
+snapshotは以下の領域を隙間なく配置する。
+
+1. 候補手数k（u64）とコメント本文総byte数t（u64）。
+2. 次の固定 16B の候補手レコードを k 件。`mv.raw()` 昇順。
+3. コメントオフセットを`k + 2`件のu64で保持する。
+4. UTF-8本文をt B保持する。
+
+コメント0は局面、コメント`j + 1`は候補手jに対応する。
+オフセットは本文内の相対位置で、先頭0、末尾t、単調非減少とする。
+空区間はコメントなしを表す。
+これにより、差分にある局面でも候補手だけを読み、本文を飛ばせる。
+snapshot 長は `16 + 16k + 8(k + 2) + t` B となる。
+
+| byte offset | 型 | 意味 |
+| --- | --- | --- |
+| 0 | `u16` | `Move::raw()` |
+| 2 | `u8` | score kind |
+| 3 | `u8` | score bound |
+| 4 | `i32` | score value |
+| 8 | `u32` | depth |
+| 12 | `u16` | presence_flags。bit 0 は has_depth、その他は 0 |
+| 14 | `u16` | display_order |
+
+has_depth が 0 の場合、depth の数値領域も 0 とする。
+API では未設定を `None`、設定済みの 0 を `Some(0)` として区別する。
+score の意味と値域は圧縮本体と共通であり、不正な kind、bound、value の組合せを拒否する。
+ログの開始 magic は `RSSHGTX4`、footer の magic は `RSSHGCMT` とする。
+
+書込時には現在のsnapshotへ編集操作を適用した結果を保存する。
+更新されていない候補手とコメントも、この局面のsnapshot内に保持する。
+削除後に再追加した局面は、新しいsnapshotが指定する内容だけを持つ。
+削除前の候補手やコメントを本体から復活させない。
+
+### 3.3 openと検索
+
+readerはopen時にファイル長を取得し、その長さまでの完了frameを順に読む。
+末尾への新たな追記を追跡しない。
+ログを再生して`key -> 最新snapshotのoffset / 削除`の差分索引を構築する。
+索引は未統合の異なる変更局面数Dに比例する。
+最新メタデータのoffsetも1件だけ保持し、局面索引には混ぜない。
+候補手本文やコメント本文は索引に常駐させない。
+ログCRCの検証時には本文を含めたログ全byteを走査するが、固定サイズのbufferで処理する。
+
+検索は差分索引を先に調べる。
+削除なら不在、snapshotならその候補手領域を読む。
+差分にない場合だけ RAM 上のブロック先頭キーを二分探索し、対象ブロックを展開して検索する。
+参照コストは差分索引とブロック索引の検索、cache miss 時の 1 ブロックの I/O、展開と検証からなる。
+本体の局面キー全件を読込時に複製しない。
+seek用のファイルcursorを複数threadで無同期に共有しない。
+初期版では同期したread-at相当、またはhandle単位のcursor排他で正しさを優先する。
+
+### 3.4 保存と排他
+
+データファイルは1つとし、writerの排他にだけ隣接する`<filename>.lock`を使う。
+lockファイルはOSの排他ロックで保護し、存在するだけで「編集中」と判定しない。
+内容を定跡データとして使わず、通常終了時にもunlinkしない。
+パスは正規化して排他対象を一致させ、編集時は別hardlinkや別名を通じた同一実体への書込をサポートしない。
+ローカルファイルシステムを対象とし、ネットワーク共有のロック保証は対象外とする。
+
+writerはロック取得後に最新snapshotを読み、ロックを保持したまま編集と保存を行う。
+追加writerのopenはbusyを返し、既存writerを奪わない。
+readerはwriterと共存できる。
+保存処理を直列化し、未同期のframeは同時に最大1件とする。
+前のframeの同期が完了するまで次のframeを追記してはならない。
+writerは操作を検証してからframeを書き、footerを書いた後にファイルを同期する。
+同期が成功して初めて保存成功を返し、GUIのdirtyを解除する。
+書込または同期に失敗したwriterでは追加保存を禁止し、再openと状態照合を要求する。
+同期失敗時には「保存されなかった」と断定しない。
+完全frameが残った場合、再openではそのframeが見える可能性がある。
+
+### 3.5 中断と破損
+
+次の順で分類し、検証していない長さを使って末尾を未完了と判断しない。
+
+| 状態 | 分類と処理 |
+| --- | --- |
+| 末尾の開始ヘッダーが40B未満 | 未検証tail。保存中断と破損を識別できないため、自動復旧しない |
+| 40Bの開始ヘッダーのmagic、CRC、予約値、sequence、サイズ上限が不正 | 破損。payload長を信用しない |
+| 正常な開始ヘッダーに対しpayloadまたはfooterがcapture長より短い | 未完了tailとして診断する。ただし未同期だったことの証明ではない |
+| 必要な長さが揃っているがfooter、CRC、operation構造が不正 | 破損 |
+| 全条件を満たすframe | transaction全体を適用する |
+
+未完了tailではreaderはそれ以前のsnapshotを利用でき、検証済みprefixの終端とtailの範囲を返す。
+未検証tailと破損では通常openはエラーにし、同じ終端を救出用診断として返す。
+不正な箇所の後からmagicを探して再同期しない。
+単なる破損を未完了保存とみなして自動切捨てしない。
+開始ヘッダーCRCは長さの誤認を減らすが、CRC衝突、後発の切詰め、保存成功済み領域の破損を完全には識別できない。
+
+通常の編集openは未完了tailを検出すると書込を開始しない。
+明示的な`recover_tail`操作だけが、writerロック下で未完了tailを切り捨てて同期できる。
+切捨て前にtailの実byteと切捨て位置を隣接する復旧ファイルへ保存し、同期する。
+復旧ファイルの保存に失敗したら原本を切り詰めない。
+CRC不一致等の破損と、40B未満の未検証tailはこの復旧操作の対象外とする。
+GUIでは診断、対象byte範囲、保存済みデータの欠落も否定できないことを示してから実行する。
+
+### 3.6 検証済みprefixの別名救出
+
+`salvage_prefix`は破損した原本を保持し、完全に検証できる先頭snapshotを別の新規ファイルへ書き出す明示操作とする。
+未検証tailもこの対象に含める。
+本体ヘッダー、本体CRC、全件の意味検証が成功した場合に限り、先頭から最初の不正または未完了frameの直前までを救出する。
+本体自体が破損している場合は救出を拒否し、局所的に読めた局面を寄せ集めない。
+不正frameを越えて後続を再同期したり、部分的なtransactionを取り込んだりしない。
+旧本体と検証済みログを統合し、通常の構築処理でログなしの新しい本体を作り、検証と同期を行う。
+出力先の既存ファイルと原本を上書きせず、成功後も原本のrename、truncate、削除はしない。
+原本のwriterロックを保持し、通常編集openが失敗する場合でも診断用openから実行できるようにする。
+
+報告には原本のbyte長、検証済みprefixの終端、最終sequence、最初の異常位置、出力先を含める。
+破棄する範囲には保存成功済みのframeが含まれ得るため、「未確定データだけを捨てる」と説明しない。
+異常位置以降のtransaction数や失われる編集数は、検証できなければ不明と報告する。
+GUIではこの損失可能性を示してから救出し、利用者が出力を確認して開き直す。
+救出には本体全件の検証、別ファイルの再構築、そのための時間と空き容量が必要であることも案内する。
+通常の追記中断では未同期frameを最大1件に抑えるが、後発の破損で失われ得る編集数の上限は保証しない。
+
+## 4. compactionと初期構築
+
+### 4.1 compaction
+
+writerロックを保持し、同じディレクトリに一時ファイルを作る。
+本体とキー順の差分索引をmergeし、削除を除いた最新snapshotをストリーミング出力する。
+コメントのordinalとoffsetを再計算し、ログなしの新しい本体を作る。
+最新の title、description、depth_kind、候補手の display_order も保持する。
+旧本体のCRCと全件の意味検証を完了し、新しい出力も検証して同期する。
+領域順の制約により必要な複数passや一時領域は許容し、候補手とコメントの全件RAM展開で代用しない。
+コメント索引は順次mergeし、全件処理で各コメントを個別に二分探索する実装を避ける。
+その後に原本パスを原子的に置換し、必要なディレクトリ同期を行う。
+成功後のwriterは新ファイルを開き直す。
+sequenceは新しい本体に対して1から再開する。
+外部APIでsequenceだけを永続IDとして扱わせない。
+
+Windowsでは既存ファイルの置換とreaderのshare-deleteを含む専用の実証テストを必須とする。
+原本を先に削除する手順や、非原子的なcopy上書きへfallbackしない。
+置換不可なら原本を保持して失敗を返す。
+既存readerは開いた旧handleのsnapshotを参照し続け、新readerは置換後の本体を参照する。
+置換完了後にディレクトリ同期が失敗した場合は保存結果不明として再openを要求する。
+OSとファイルシステムの永続化保証を超えた電源断耐性は主張しない。
+
+本体とログを含む原本に加え、新しい本体と一時runのための空き容量が必要になる。
+キャンセルや置換前の失敗では原本を変更しない。
+一時ファイルの回収は自分が作成した固定パスだけを対象とする。
+自動実行や定期実行は追加しない。
+
+### 4.2 初期構築と全件操作
+
+小規模データは所有IRから構築してよいが、大規模importは順次入力と外部merge sortを用意する。
+初期版の構築時メモリ予算は256MiBを既定とし、一時runを保存先と同じボリュームへ置く。
+ソート済み入力はキー順を検査して直接処理できる。
+全件exportとcompactionはiteratorで行い、全件を`BookDatabase`へ展開することを必須にしない。
+未ソート入力の重複局面と重複候補手は、初期版では明示エラーにする。
+重複を集計する棋譜収集はbuilder側の明示ポリシーとして別に扱う。
+
+外部形式のadapterは先手視点や子局面評価からの変換規則を持ち、fixtureで検証する。
+SBKの状態単位の評価を各候補手へ複製して保存しない。
+未対応metadata、範囲外値、未確定の詰み符号化、PackedSfenで表現不能な局面を件数付きで報告する。
+表現不能局面は入力位置とSFENを報告し、既定ではimportを失敗させる。
+明示的なlossy変換でスキップした場合だけ、欠落件数と対象を報告して続行する。
+外部形式へ書き出す際に表現不能な値があれば、既定はエラーとする。
+明示的なlossy変換オプションを使った場合だけ欠落一覧を返して続行する。
+
+## 5. 入力上限と資源
+
+初期版は64bitのWindows、Linux、macOSを対象とする。
+32bitでの大容量対応は主張しない。
+件数とファイルoffsetはu64で計算し、加算、乗算、usize変換を検査する。
+読込前にファイル範囲と次の形式上限を確認し、不正長による巨大allocationを避ける。
+
+- 1局面の候補手は最大65,535件。
+- コメント1件はUTF-8で最大16MiB。
+- titleとdescriptionはそれぞれUTF-8で最大16MiB。
+- トランザクション1件は開始ヘッダーとfooterを含め最大256MiB。
+- ブロック局面数は 1..=16384。writer の既定と推奨値は 64。
+- ブロックの圧縮長、展開長、展開 window はそれぞれ最大 64MiB。
+
+16,384 局面はブロックごとの処理量を抑える実装上限であり、圧縮率や検索速度が最適になる値を示すものではない。
+64 局面を既定と推奨値とし、局面数が範囲内でもサイズ上限を超えたブロックは拒否する。
+
+上限超過を暗黙に切り詰めたり、1回の保存を複数transactionへ自動分割したりしない。
+大量importはstreaming builderを使う。
+GUIのdirtyが上限を超えた場合は、全件の別名書出し等の明示操作へ案内する。
+差分索引のDが増えればRAMも増えるため、「定跡サイズに関係なく一定RAM」とは表現しない。
+
+## 6. 容量と計算量
+
+ログなし本体のサイズは正確に次の式となる。
 
 ```text
-+-----------------------------------------------------------------------+
-| Header (22 bytes)                                                     |
-|   magic: b"RSHOGIBK" (8B) | version: u16 (2B) | flags: u16 (2B)       |
-|   key_bytes: u8 (1B)      | reserved: u8 (1B)                         |
-|   node_count: u32 (4B)    | move_count: u32 (4B)                      |
-+-----------------------------------------------------------------------+
-| keys    (node_count * key_bytes bytes)                                |
-+-----------------------------------------------------------------------+
-| offsets ((node_count + 1) * 4 bytes)                                  |
-+-----------------------------------------------------------------------+
-| moves   (move_count * 6 bytes)                                        |
-+-----------------------------------------------------------------------+
+128 + 56 * ceil(N / P) + Z + 32C + T + U bytes
 ```
 
-ファイル全体のバイト長は厳密に `22 + node_count * key_bytes + (node_count + 1) * 4 + move_count * 6` と一致しなければならず、不足または余剰バイトがある場合は `BookError::InvalidFormat` を返す。
+Z は圧縮ブロックの総 byte 長であり、評価値、候補手数と深さなど入力値に依存する。
+P=64 の場合、索引は 1 局面あたり約 0.875B となる。
+実ファイルの容量と検索時間は、代表入力で計測する。
 
-### ファイルヘッダ（22 バイト）
+本体のN、M、C、T、Uと、ログ総byte数L、異なる変更局面数Dに対して以下を目安とする。
 
-| オフセット | サイズ | 型 | フィールド名 | 内容と検証規則 |
-| :--- | :--- | :--- | :--- | :--- |
-| `0x00` | 8B | `[u8; 8]` | `magic` | 固定文字列 `b"RSHOGIBK"`。不一致時は `BookError::InvalidFormat("magic mismatch")`。 |
-| `0x08` | 2B | `u16` | `version` | `2` 固定。`2` 以外の値は `BookError::Unsupported("version mismatch")` を返す。 |
-| `0x0A` | 2B | `u16` | `flags` | `0x0003`（`FLAG_HAS_SCORE \| FLAG_HAS_DEPTH`）。ビット 0（score）とビット 1（depth）の両方が立っていない場合は `BookError::Unsupported`。 |
-| `0x0C` | 1B | `u8` | `key_bytes` | 1 キーあたりのバイト数。通常ビルドでは `8`（64-bit Zobrist）、`hash-128` ビルドでは `16`（128-bit Zobrist）。実行中ビルドのキー幅と異なる場合は `BookError::Unsupported`。 |
-| `0x0D` | 1B | `u8` | `reserved` | 予約領域（書き出し時は `0`）。 |
-| `0x0E` | 4B | `u32` | `node_count` | 登録局面数 `N`。 |
-| `0x12` | 4B | `u32` | `move_count` | 全候補手の合計数 `M`。 |
+| 操作 | コスト |
+| --- | --- |
+| open | ヘッダー、B 件のブロック索引、ログ L の走査と差分索引構築。索引 RAM は `O(B + D)` |
+| 局面取得 | `O(log(D + 1) + log(B + 1))` の索引検索と、cache miss 時の 1 ブロック読込、展開と検証 |
+| 本体のコメント取得 | 局面取得後に`O(log(C + 1) + 本文byte数)` |
+| 通常保存 | 変更局面の候補手とコメント、変更した文書メタデータの総byte数に比例 |
+| compaction / 全件export | `O(N + M + C + T + U + D + 最新差分のbyte数)`。CRC確認で旧本体とログの走査も必要 |
+| 未ソート入力の構築 | 外部sortの`O(N log N)`相当の比較と、候補手とコメントのI/O |
 
-### `keys` 配列（`node_count * key_bytes` バイト）
+二分探索の比較回数だけから検索時間を見積もらない。
 
-`node_count` 個の `BookKey` を `(low_u64, high_u64)` の辞書順による **厳密な昇順（重複なし）** で格納する。
 
-- `key_bytes == 8` の場合：各要素は `low_u64: u64`（8 バイト LE）。
-- `key_bytes == 16` の場合：各要素は `low_u64: u64`（8 バイト LE）に続けて `high_u64: u64`（8 バイト LE）の計 16 バイト。
+## 7. 検証と旧形式からの移行
 
-隣接するキーで `keys[i] >= keys[i + 1]` となる箇所が存在する場合は `BookError::InvalidFormat("keys must be strictly increasing")` となる。
+`NativeBook::open` はヘッダーと追記ログを検査し、本体は必要な範囲だけ読む。全本体の整合性を確認するには `validate_full` を実行する。検証は進捗通知とキャンセルに対応する。検証後に外部プロセスがファイル内容を直接書き換える操作はサポートしない。
 
-### `offsets` 配列（`(node_count + 1) * 4` バイト）
+reader は wire version 4 だけを受理し、旧 v2 の magic `RSHOGIBK` と固定長 v3 の `RSSHGBK3` を拒否する。
+v2 は局面のハッシュしか持たず、盤面を復元できないため、v2 単独から変換できない。
+元の棋譜、DB2016、SBK、または局面を含む入力から v4 を再生成する。
+固定長 v3 を読む互換層や専用変換ツールも設けないため、保存元の入力を使って再生成する。
+ShogiLens の旧 JSON は明示 import で取り込む。
 
-`node_count + 1` 個の `u32`（LE）を格納する。
-`i` 番目（`0 <= i < node_count`）の局面に対応する候補手スライスは `moves[offsets[i] as usize .. offsets[i + 1] as usize]` となる。
+rsshogi 1.5.0 の開発版では `Book`、`BookKey`、`BookMove`、`BookEntry`、`MemoryBook`、`StaticBook`、`BookBuilder` と旧 v2 変換 API を削除した。新 API と変換方針は [定跡アーキテクチャ](book-architecture.md)、Python の使用例は [定跡管理](../../python/book.md) を参照。
 
-`offsets` 配列は以下の不変条件を満たす必要がある。
-
-- 要素数が `node_count + 1` であること。
-- 先頭要素が `offsets[0] == 0` であること。
-- 末尾要素が `offsets[node_count] as usize == move_count` であること。
-- すべての `i` について単調非減少（`offsets[i] <= offsets[i + 1]`）であること。
-
-### `moves` 配列（`move_count * 6` バイト、`BookMove`）
-
-各候補手（`BookMove`）は 6 バイト固定長で連続配置される。
-
-| オフセット | サイズ | 型 | フィールド名 | 説明 |
-| :--- | :--- | :--- | :--- | :--- |
-| `0x00` | 2B | `u16` | `mv` | 16-bit 圧縮指し手（`Move::raw()`、YaneuraOu 互換ビットレイアウト）。 |
-| `0x02` | 2B | `i16` | `score` | 評価値（`Eval::raw()`、手番視点）。 |
-| `0x04` | 2B | `u16` | `depth` | 探索深さ。 |
-
-## 2. 候補手のソート順と生成経路の違い
-
-外側の `keys` 配列は常に昇順ソートされるが、同一局面内の候補手（`moves[offsets[i]..offsets[i+1]]`）の並び順は `StaticBook` の生成経路によって異なる。
-
-| 生成メソッド | 同一局面内の候補手の並び順 | 主な用途 |
-| :--- | :--- | :--- |
-| `BookBuilder::build_static()` | `(score 降順, depth 降順, mv.raw() 昇順)` に決定的にソートされる。 | 棋譜集合や挿入データから優先度順の定跡を構築する場合。 |
-| `StaticBook::from_memory_book_sorted(&memory_book)` | `(score 降順, depth 降順, mv.raw() 昇順)` に決定的にソートされる。 | `MemoryBook` から最善手先頭の `StaticBook` を得る場合。 |
-| `StaticBook::from_memory_book(&memory_book)` | `MemoryBook` に登録された候補手の順序をそのまま保持する。 | 呼び出し側で制御した候補手順序を維持したい場合。 |
-| `BookDatabase::to_static_book(&options)` | `BookDatabase` 内の候補手リスト（`candidates`）の順序をそのまま保持する。 | DB2016 や SBK など外部定跡の候補手順序を保って変換する場合。 |
-
-## 3. コード例
-
-### Python
+## 8. Python の使用例
 
 ```python
-from rsshogi.book import BookBuilder, StaticBook, book_key_from_position
-from rsshogi.core import Board
-from rsshogi.record import Record
+from rsshogi.core import Board, Move
+from rsshogi.book import (
+    NativeBook, NativeBookEditor, NativeBookMetadata,
+    NativeBound, NativeCandidate, NativeScore,
+)
 
-# 1. BookBuilder で Record（本手順と分岐）を取り込み StaticBook を生成する
-builder = BookBuilder()
-record = Record.from_kif_file("game.kif", encoding="utf-8")
-builder.extend_from_game_record(record, default_score=0, default_depth=16)
-
-static_book = builder.build_static()
-static_book.write_file("opening.book")
-
-# 2. ファイルから読み込んで初期局面の候補手を検索する
-loaded = StaticBook.from_file("opening.book")
 board = Board()
-key = book_key_from_position(board)
-entry = loaded.get(key)
-if entry is not None:
-    for bm in entry.moves:
-        print(bm.mv.to_usi(), bm.score, bm.depth)
+editor = NativeBookEditor.create("example.book", NativeBookMetadata("定跡集", depth_kind=1))
+editor.upsert_candidate(
+    board,
+    NativeCandidate(Move.from_usi("7g7f"), NativeScore.cp(25, NativeBound.Exact),
+                    depth=24),
+    comment="本線",
+)
+editor.set_position_comment(board, "初期局面")
+editor.save()
+editor.close()
+
+book = NativeBook.open("example.book")
+book.validate_full()
+entry = book.get(board)
+record = book.record(board)
 ```
-
-### Rust
-
-```rust
-use rsshogi::board::{self, Position};
-use rsshogi::book::{Book, BookBuilder, StaticBook, book_key_from_position};
-
-board::init();
-let pos = board::hirate_position();
-
-// BookBuilder からソート済み StaticBook を構築して保存
-let mut builder = BookBuilder::new();
-builder.extend_from_game_record(&record, 0, 16)?;
-let static_book = builder.build_static();
-static_book.write_file("opening.book")?;
-
-// StaticBook を読み込んで検索
-let loaded = StaticBook::from_file("opening.book")?;
-let key = book_key_from_position(&pos);
-if let Some(entry) = loaded.get(key) {
-    for bm in entry.moves() {
-        println!("move={} score={} depth={}", bm.mv().to_usi(), bm.score(), bm.depth());
-    }
-}
-```
-
-## 関連項目
-
-- [定跡 3 層アーキテクチャ](book-architecture.md)
-- [YaneuraOu 定跡フォーマット仕様（DB2016 / YBB）](yaneuraou.md)
-- [ShogiHome SBK フォーマット仕様](sbk.md)

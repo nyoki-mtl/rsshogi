@@ -1,5 +1,7 @@
 # rsshogi Python パッケージ
 
+Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
+
 `rsshogi` は、将棋局面の操作、合法手生成、1 手詰め判定、棋譜や定跡の入出力、深層学習データの操作を提供する Python パッケージである。
 Rust コアライブラリ `rsshogi` の PyO3 バインディングとして実装されている。
 
@@ -37,7 +39,7 @@ print(board.to_sfen())
 | `rsshogi.core` | `Board`、`PositionState`、`ValidationReport`、`Move`、`Move32`、`AperyMove`、`AperyMove32`、`to_move`、USI `position` 解析。 |
 | `rsshogi.types` | `Color`、`Square`、`PieceType`、`Piece`、`Bitboard`、`Hand`、`MoveType`、`RepetitionState`。 |
 | `rsshogi.record` | `Record`、`RecordEditor`、`RecordBuilder`、`RecordMetadata`、`MoveEntry`、`SpecialMoveEntry`、`GameResult`、KIF / KI2 / CSA / JKF / PACK / SBINPACK の入出力。 |
-| `rsshogi.book` | `MemoryBook`、`StaticBook`、`BookBuilder`、`YaneuraOuBook`（DB2016）、`SbkBook`（ShogiHome）。 |
+| `rsshogi.book` | `NativeBook`、`NativeBookEditor`、`NativeBookBuilder`、`YaneuraOuBook`（DB2016）、`SbkBook`（ShogiHome）。 |
 | `rsshogi.policy` | 2187 次元 Policy ラベルと 1496 次元コンパクトラベルの相互変換。 |
 | `rsshogi.sazpack` | AlphaZero 系自己対局教師データ（`SAZ2`）のエンコードとデコード。 |
 | `rsshogi.numpy` | `PackedSfenValue`（PSV）、`HuffmanCodedPos`（HCP）、`HuffmanCodedPosAndEval`（HCPE）の NumPy 構造化 `dtype`。 |

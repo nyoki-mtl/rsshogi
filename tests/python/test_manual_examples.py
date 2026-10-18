@@ -12,7 +12,7 @@ CASES = [
     ("compat.md", "mv32.to_csa() == '+7776FU'"),
     ("sbinpack.md", "len(pairs) == len(file_pairs) == 1 and meta == b'game-001'"),
     ("sazpack.md", "len(decoded_games) == len(loaded_games) == 1"),
-    ("formats/book.md", "entry is not None and len(entry.moves) > 0"),
+    ("formats/book.md", "entry is not None and len(entry.candidates) > 0"),
     ("formats/csa.md", "len(records_from_file) == len(records_from_str) == 2"),
     ("formats/index.md", "all((csa_text, ki2_text, jkf_text))"),
     ("formats/jkf.md", "len(data['moves']) > 1"),

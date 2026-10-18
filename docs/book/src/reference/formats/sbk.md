@@ -139,4 +139,4 @@ let sbk_bytes = db.to_sbk_bytes(&SbkWriteOptions::new())?;
 
 - [定跡 3 層アーキテクチャ](book-architecture.md)
 - [YaneuraOu 定跡フォーマット仕様（DB2016 / YBB）](yaneuraou.md)
-- [StaticBook バイナリフォーマット仕様](book.md)
+- [NativeBook バイナリフォーマット仕様](book.md)
