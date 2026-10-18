@@ -1,6 +1,6 @@
 # Native Book v4 バイナリ形式
 
-本章は rsshogi 1.5.0 が読み書きする圧縮配置（wire version 4）を説明する。
+本章は rsshogi 1.5.1 が読み書きする圧縮配置（wire version 4）を説明する。
 
 Native Book v4 は、局面と候補手をブロック単位で部分読込し、編集差分を単一の `.book` ファイルへ追記する形式である。
 Rust の `book` feature と Python の `rsshogi.book` から利用できる。

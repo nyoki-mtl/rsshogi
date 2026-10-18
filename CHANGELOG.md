@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-19
+
+### Fixed
+
+- `Position::is_pseudo_legal_move` と `Position::is_pseudo_legal_move32` は、
+  `generate_all_legal_moves == false` でも行き所のない桂の不成を拒否する。
+  先手の 1 段目と 2 段目、後手の 8 段目と 9 段目が対象。
+  1.2.3 の修正は `true` の判定と駒打ちに限られており、`false` の判定には修正漏れがあった。
+  `is_legal_move` / `is_legal_move32` と合法手生成は従来からこれらの手を拒否している。
+
+
 ## [1.5.0] - 2026-10-18
 
 Native Book の API と保存形式に破壊的変更を含む。
@@ -608,7 +619,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.0...v1.3.1

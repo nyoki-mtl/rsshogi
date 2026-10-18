@@ -109,6 +109,9 @@ impl Position {
                     {
                         return false;
                     }
+                    PieceType::KNIGHT if is_dead_end_destination(pt, to.rank(), us) => {
+                        return false;
+                    }
                     PieceType::BISHOP | PieceType::ROOK
                         if crate::types::square::is_promotable_move(us, from, to) =>
                     {
@@ -139,6 +142,8 @@ impl Position {
     /// `Move32` 版の pseudo-legal 判定。
     ///
     /// `piece_after_move()` による駒情報の整合性チェックを含む。
+    /// `generate_all_legal_moves` が `false` の場合は一部の不成を省く。
+    /// 行き所のない駒の不成は、この引数によらず拒否する。
     #[must_use]
     #[inline]
     pub fn is_pseudo_legal_move32(&self, mv: Move32, generate_all_legal_moves: bool) -> bool {
@@ -146,6 +151,9 @@ impl Position {
     }
 
     /// `Move` 版の pseudo-legal 判定。
+    ///
+    /// `generate_all_legal_moves` が `false` の場合は一部の不成を省く。
+    /// 行き所のない駒の不成は、この引数によらず拒否する。
     #[must_use]
     #[inline]
     pub fn is_pseudo_legal_move(&self, mv: Move, generate_all_legal_moves: bool) -> bool {
