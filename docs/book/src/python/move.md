@@ -128,6 +128,34 @@ assert amv32.to_apery_move() == amv
 | `MOVE_WIN` | `"win"` | 入玉宣言勝ちを表す定数である。 |
 | `MOVE_END` | `"end"` | 指し手終端を表す番兵定数である。 |
 
+### 対称変換（`Move` と `Move32`）
+
+`Move` と `Move32` は、学習データの対称性拡張向けに盤面の反転に対応した指し手を返すメソッドを持つ。
+いずれも自身を書き換えず新しいインスタンスを返し、特殊手定数（`is_normal()` が `False` の値）はそのまま返す。
+
+| メソッド | シグネチャ | 説明 |
+|---|---|---|
+| `flip_side` | `mv.flip_side() -> Move \| Move32` | 盤面を 180 度回転（先後反転）した指し手を返す。駒打ちは駒種を保ち打ち先だけを反転する。`Move32` では駒情報（`piece_after_move`）の手番も反転する。 |
+| `mirror_file` | `mv.mirror_file() -> Move \| Move32` | 筋を左右反転した指し手を返す。段は変わらないため成れる範囲も手番も変わらず、`Move32` の駒情報はそのまま保つ。 |
+
+どちらも 2 回適用すると元の指し手に戻る。
+盤面側の反転は [`Board.to_sfen_flipped()`](board.md#局面の初期化と入出力) と [`Board.to_packed_sfen_flipped()`](board.md#バイナリシリアライズと-apery-互換変換) を使用する。
+
+```python
+from rsshogi.core import Board, Move
+
+board = Board()
+mv = Move.from_usi("7g7f")
+
+assert mv.flip_side().to_usi() == "3c3d"
+assert mv.mirror_file().to_usi() == "3g3f"
+assert mv.flip_side().flip_side() == mv
+
+mv32 = board.move32_from_move(mv)
+assert mv32.flip_side().piece_after_move.color == mv32.piece_after_move.color.flip()
+assert mv32.mirror_file().piece_after_move == mv32.piece_after_move
+```
+
 ### 共通の特殊メソッド
 
 - `int(mv)`：`mv.value` と同じ内部整数値を返す。

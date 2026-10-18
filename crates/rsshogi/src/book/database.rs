@@ -2,16 +2,13 @@ use std::collections::HashSet;
 
 use crate::board::Position;
 use crate::board::position::PackedSfen;
-use crate::book::{
-    BookError, BookKey, BookMove, MemoryBook, SbkEntry, StaticBook, YaneuraOuBookEntry,
-    book_key_from_position,
-};
+use crate::book::{BookError, SbkEntry, YaneuraOuBookEntry};
 use crate::types::Move;
 
 /// 変換と編集のワークフロー向けの、所有権付き定跡データベース。
 ///
-/// [`BookMove`] より豊富な局面と指し手のメタデータを意図的に保持する型。
-/// [`MemoryBook`] や [`StaticBook`] への変換は明示的かつ不可逆であり、
+/// 外部形式の局面と指し手のメタデータを保持する変換用IR。
+/// Native Book v4 への変換は欠落を明示する方式であり、
 /// コメント、ponder 手、ソース ID、SBK グラフリンクなどの
 /// 外部フォーマット固有メタデータはネイティブ検索書籍に含まれない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,13 +26,11 @@ pub struct BookDatabaseEntry {
 
 /// リッチ定跡データベースが保持する局面識別情報。
 ///
-/// [`BookKey`] は派生したネイティブ検索キーとして保持する。
 /// 正規データは正規化 SFEN であり、SBK 相互運用のために Packed SFEN も
 /// 利用可能な場合は合わせて保持する。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookPosition {
     sfen: String,
-    key: BookKey,
     packed_sfen: Option<PackedSfen>,
     original_ply: Option<u32>,
 }
@@ -109,43 +104,6 @@ pub struct SbkEvalMetadata {
     nodes: Option<i64>,
     variation: Option<String>,
     engine_name: Option<String>,
-}
-
-/// [`BookDatabase`] からネイティブ検索書籍への不可逆変換オプション。
-///
-/// 変換はデータベースのエントリ順と候補手順を保持する。
-/// 異なるエントリが同じネイティブキーに解決した場合は、
-/// [`MemoryBook`] の既存のマルチマップ動作に合わせ、データベース順に手を追記する。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NativeBookConvertOptions {
-    missing_score: i16,
-    missing_depth: u16,
-    score_policy: NativeScorePolicy,
-    score_narrowing: I16NarrowingPolicy,
-    depth_narrowing: U16NarrowingPolicy,
-}
-
-/// リッチ候補値のどれをネイティブ [`BookMove::score`] に使うかを選択する。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeScorePolicy {
-    /// `BookCandidate::score` を使い、存在しない場合は `missing_score` を使う。
-    Score,
-    /// `BookCandidate::weight` を使い、存在しない場合は `missing_score` を使う。
-    Weight,
-}
-
-/// 符号付き 32 ビット値を符号付き 16 ビットのネイティブスコアへ変換するポリシー。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum I16NarrowingPolicy {
-    /// 範囲外の値を `i16::MIN..=i16::MAX` にクランプする。
-    Clamp,
-}
-
-/// 32 ビット深度を 16 ビットのネイティブ深度へ変換するポリシー。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum U16NarrowingPolicy {
-    /// 範囲外の値を `u16::MAX` にクランプする。
-    Clamp,
 }
 
 impl BookDatabase {
@@ -313,27 +271,6 @@ impl BookDatabase {
     pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
-
-    /// このリッチデータベースをネイティブな編集可能検索書籍へ変換する。
-    ///
-    /// ネイティブ [`BookMove`] が保持できないメタデータは変換時に失われる。
-    #[must_use]
-    pub fn to_memory_book(&self, options: NativeBookConvertOptions) -> MemoryBook {
-        let mut book = MemoryBook::new();
-        for entry in &self.entries {
-            let moves = entry.candidates.iter().map(|candidate| candidate.to_book_move(options));
-            book.extend_moves(entry.position.key, moves);
-        }
-        book
-    }
-
-    /// このリッチデータベースをネイティブなコンパクト読み取り専用検索書籍へ変換する。
-    ///
-    /// まず [`MemoryBook`] を構築し、その後 [`StaticBook`] のネイティブキー順にソートする。
-    #[must_use]
-    pub fn to_static_book(&self, options: NativeBookConvertOptions) -> StaticBook {
-        StaticBook::from_memory_book(&self.to_memory_book(options))
-    }
 }
 
 impl BookDatabase {
@@ -437,8 +374,7 @@ impl BookPosition {
     pub fn from_position(position: &Position, original_ply: Option<u32>) -> Self {
         Self {
             sfen: position.to_sfen(Some(1)),
-            key: book_key_from_position(position),
-            packed_sfen: Some(position.to_packed_sfen()),
+            packed_sfen: position.try_to_packed_sfen().ok(),
             original_ply,
         }
     }
@@ -454,12 +390,6 @@ impl BookPosition {
     #[must_use]
     pub fn sfen(&self) -> &str {
         &self.sfen
-    }
-
-    /// 派生したネイティブ検索キーを返す。
-    #[must_use]
-    pub const fn key(&self) -> BookKey {
-        self.key
     }
 
     /// 利用可能な場合に Packed SFEN 表現を返す。
@@ -533,20 +463,6 @@ impl BookCandidate {
     #[must_use]
     pub const fn metadata(&self) -> &BookMoveMetadata {
         &self.metadata
-    }
-
-    fn to_book_move(&self, options: NativeBookConvertOptions) -> BookMove {
-        let score = match options.score_policy {
-            NativeScorePolicy::Score => self.score,
-            NativeScorePolicy::Weight => self.weight,
-        }
-        .map(|score| narrow_i16(score, options.score_narrowing))
-        .unwrap_or(options.missing_score);
-        let depth = self
-            .depth
-            .map(|depth| narrow_u16(depth, options.depth_narrowing))
-            .unwrap_or(options.missing_depth);
-        BookMove::new(self.mv, score, depth)
     }
 }
 
@@ -793,47 +709,6 @@ impl SbkEvalMetadata {
     }
 }
 
-impl Default for NativeBookConvertOptions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl NativeBookConvertOptions {
-    /// デフォルトの変換オプションを生成する。
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            missing_score: 0,
-            missing_depth: 0,
-            score_policy: NativeScorePolicy::Score,
-            score_narrowing: I16NarrowingPolicy::Clamp,
-            depth_narrowing: U16NarrowingPolicy::Clamp,
-        }
-    }
-
-    /// リッチ候補手に選択スコアフィールドがない場合に使うネイティブスコアを設定する。
-    #[must_use]
-    pub const fn with_missing_score(mut self, missing_score: i16) -> Self {
-        self.missing_score = missing_score;
-        self
-    }
-
-    /// リッチ候補手に深度がない場合に使うネイティブ深度を設定する。
-    #[must_use]
-    pub const fn with_missing_depth(mut self, missing_depth: u16) -> Self {
-        self.missing_depth = missing_depth;
-        self
-    }
-
-    /// ネイティブスコアとして使うリッチ値のポリシーを設定する。
-    #[must_use]
-    pub const fn with_score_policy(mut self, score_policy: NativeScorePolicy) -> Self {
-        self.score_policy = score_policy;
-        self
-    }
-}
-
 fn ponder_to_option(ponder: Move) -> Option<Move> {
     if ponder == Move::MOVE_NONE { None } else { Some(ponder) }
 }
@@ -858,23 +733,11 @@ fn validate_entry(entry: &BookDatabaseEntry) -> Result<(), BookError> {
     Ok(())
 }
 
-fn narrow_i16(value: i32, policy: I16NarrowingPolicy) -> i16 {
-    match policy {
-        I16NarrowingPolicy::Clamp => value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
-    }
-}
-
-fn narrow_u16(value: u32, policy: U16NarrowingPolicy) -> u16 {
-    match policy {
-        U16NarrowingPolicy::Clamp => value.min(u32::from(u16::MAX)) as u16,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::board::{self, InitialPosition};
-    use crate::book::{Book, SbkBook, YaneuraOuBook};
+    use crate::book::{SbkBook, YaneuraOuBook};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1180,64 +1043,6 @@ mod tests {
         assert_eq!(move_metadata.next_state_id(), Some(9));
 
         fs::remove_file(path).expect("remove fixture");
-    }
-
-    #[test]
-    fn test_book_database_to_memory_book_clamps_native_values() {
-        board::init();
-        let position =
-            BookPosition::from_sfen(InitialPosition::Standard.to_sfen(), None).expect("position");
-        let key = position.key();
-        let candidate = BookCandidate::new(
-            Move::from_usi("7g7f").expect("move"),
-            None,
-            Some(i32::from(i16::MAX) + 1),
-            Some(u32::from(u16::MAX) + 1),
-            None,
-            None,
-            BookMoveMetadata::new(),
-        );
-        let database = BookDatabase::try_from_entries(vec![BookDatabaseEntry::new(
-            position,
-            vec![candidate],
-            BookEntryMetadata::new(),
-        )])
-        .unwrap();
-
-        let book = database.to_memory_book(NativeBookConvertOptions::default());
-        let entry = book.get(key).expect("native entry");
-
-        assert_eq!(entry.moves()[0].score(), i16::MAX);
-        assert_eq!(entry.moves()[0].depth(), u16::MAX);
-    }
-
-    #[test]
-    fn test_book_database_to_static_book_uses_native_lookup_key() {
-        board::init();
-        let position =
-            BookPosition::from_sfen(InitialPosition::Standard.to_sfen(), None).expect("position");
-        let key = position.key();
-        let database = BookDatabase::try_from_entries(vec![BookDatabaseEntry::new(
-            position,
-            vec![BookCandidate::new(
-                Move::from_usi("7g7f").expect("move"),
-                None,
-                None,
-                None,
-                Some(42),
-                None,
-                BookMoveMetadata::new(),
-            )],
-            BookEntryMetadata::new(),
-        )])
-        .unwrap();
-        let options = NativeBookConvertOptions::new().with_score_policy(NativeScorePolicy::Weight);
-
-        let book = database.to_static_book(options);
-        let entry = book.get(key).expect("static entry");
-
-        assert_eq!(entry.moves()[0].score(), 42);
-        assert_eq!(entry.moves()[0].depth(), 0);
     }
 
     fn temp_path(extension: &str) -> PathBuf {

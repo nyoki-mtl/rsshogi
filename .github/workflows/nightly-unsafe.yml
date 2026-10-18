@@ -43,6 +43,8 @@ jobs:
           cargo +nightly miri test -p rsshogi --lib types::bitboard::tests
           cargo +nightly miri test -p rsshogi --lib board::move_list::tests
           cargo +nightly miri test -p rsshogi --lib board::bitboard_set::tests
+          cargo +nightly miri test -p rsshogi --lib board::attack_tables::tests::unchecked
+          cargo +nightly miri test -p rsshogi --lib board::position::updates::tests
 
   address-sanitizer:
     name: address sanitizer

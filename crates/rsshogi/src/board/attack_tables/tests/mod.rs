@@ -398,7 +398,11 @@ fn test_check_candidate_bb_api() {
         (PieceType::SILVER, 3usize),
         (PieceType::GOLD, 4usize),
         (PieceType::BISHOP, 5usize),
-        (PieceType::ROOK, 6usize),
+        (PieceType::HORSE, 6usize),
+        (PieceType::PRO_PAWN, 4usize),
+        (PieceType::PRO_LANCE, 4usize),
+        (PieceType::PRO_KNIGHT, 4usize),
+        (PieceType::PRO_SILVER, 4usize),
     ];
 
     for ksq_idx in 0..Square::COUNT {
@@ -415,8 +419,10 @@ fn test_check_candidate_bb_api() {
         }
     }
 
+    // 玉は王手をかけられない。飛と龍は盤上のどこからでも王手になりうるので絞り込めない。
     assert_eq!(check_candidate_bb(Color::BLACK, PieceType::KING, SQ_55), Bitboard::EMPTY);
-    assert_eq!(check_candidate_bb(Color::WHITE, PieceType::HORSE, SQ_55), Bitboard::EMPTY);
+    assert_eq!(check_candidate_bb(Color::WHITE, PieceType::ROOK, SQ_55), Bitboard::ALL);
+    assert_eq!(check_candidate_bb(Color::BLACK, PieceType::DRAGON, SQ_55), Bitboard::ALL);
 }
 
 #[test]

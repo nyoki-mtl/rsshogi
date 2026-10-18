@@ -384,7 +384,7 @@ fn generate_checks_board_internal(
         | (golds & check_candidate_bb(us, PieceType::GOLD, ksq))
         | (bb.pieces_for(PieceType::BISHOP, us) & check_candidate_bb(us, PieceType::BISHOP, ksq))
         | (bb.pieces_for(PieceType::ROOK, us) | bb.pieces_for(PieceType::DRAGON, us))
-        | (bb.pieces_for(PieceType::HORSE, us) & check_candidate_bb(us, PieceType::ROOK, ksq));
+        | (bb.pieces_for(PieceType::HORSE, us) & check_candidate_bb(us, PieceType::HORSE, ksq));
 
     let y = pos.blockers_for_king(them) & bb.color_pieces(us);
 
@@ -513,6 +513,20 @@ pub fn generate_quiet_checks(pos: &Position, list: &mut impl MoveSink) {
 pub fn generate_quiet_checks_move32(pos: &Position, list: &mut Move32List) {
     let mut adapter = Move32SinkAdapter { pos, sink: list };
     generate_quiet_checks(pos, &mut adapter);
+}
+
+/// 手番に応じて専用の王手生成を呼び分ける。
+#[inline]
+pub(super) fn generate_checks_dispatch(
+    pos: &Position,
+    list: &mut impl MoveSink,
+    all: bool,
+    quiet_only: bool,
+) {
+    match pos.turn() {
+        Color::BLACK => generate_checks_for_color::<Black>(pos, list, all, quiet_only),
+        Color::WHITE => generate_checks_for_color::<White>(pos, list, all, quiet_only),
+    }
 }
 
 #[inline]

@@ -349,3 +349,24 @@ struct PsvSample {
     packed: [u8; 32],
     game_ply: u16,
 }
+
+#[test]
+fn packed_sfen_flipped_matches_the_sfen_flip_rule() {
+    const SFENS: &[&str] = &[
+        "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+        "l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1",
+        "6n1l/2+S1k4/2lp4p/1np1B2b1/3PP4/1N1S3rP/1P2+pPP+p1/1p1G5/3KG2r1 b GSN2L4Pgs2p 1",
+    ];
+
+    for sfen in SFENS {
+        let pos = Position::from_sfen(sfen).expect("valid fixture");
+        let expected = Position::from_sfen(&pos.to_sfen_flipped(None)).expect("valid flipped sfen");
+
+        assert_eq!(pos.to_packed_sfen_flipped(), expected.to_packed_sfen());
+
+        let unpacked = Position::sfen_unpack(&pos.to_packed_sfen_flipped())
+            .expect("flipped packed sfen unpacks");
+        // PackedSfen は手数を持たないため、unpack 後の手数は 0 になる。
+        assert_eq!(unpacked, expected.to_sfen(Some(0)));
+    }
+}

@@ -116,6 +116,47 @@ impl Move {
             self.from_sq().is_valid() && self.from_sq().raw() != self.to_sq().raw()
         }
     }
+
+    /// 盤面を 180 度回転（先後反転）した指し手を返す。
+    ///
+    /// 打ち手は駒種を保ち、打ち先だけを反転する。`Move` は手番を持たないため、
+    /// 反転後の手番は呼び出し側が管理する。`MOVE_NONE` や `MOVE_NULL` のような
+    /// 通常手でない値はそのまま返す。
+    #[must_use]
+    pub const fn flip(self) -> Self {
+        if !self.is_normal() {
+            return self;
+        }
+        if self.is_drop() {
+            return Self::drop(self.dropped_piece_unchecked(), self.to_sq().flip());
+        }
+        let from = self.from_sq().flip();
+        let to = self.to_sq().flip();
+        if self.is_promotion() { Self::promotion(from, to) } else { Self::normal(from, to) }
+    }
+
+    /// 盤面を左右反転した指し手を返す。
+    ///
+    /// 段は変わらないため手番も成れる範囲も変わらない。`MOVE_NONE` や `MOVE_NULL` の
+    /// ような通常手でない値はそのまま返す。
+    #[must_use]
+    pub const fn mirror_file(self) -> Self {
+        if !self.is_normal() {
+            return self;
+        }
+        if self.is_drop() {
+            return Self::drop(self.dropped_piece_unchecked(), self.to_sq().mirror_file());
+        }
+        let from = self.from_sq().mirror_file();
+        let to = self.to_sq().mirror_file();
+        if self.is_promotion() { Self::promotion(from, to) } else { Self::normal(from, to) }
+    }
+
+    /// 打ち手の駒種を検査なしで取り出す。`is_drop()` かつ `is_normal()` の文脈専用。
+    const fn dropped_piece_unchecked(self) -> PieceType {
+        PieceType::new(((self.0 >> 7) & MASK_7) as i8)
+    }
+
     #[must_use]
     pub fn from_usi(usi: &str) -> Option<Self> {
         if !usi.is_ascii() {
@@ -273,6 +314,40 @@ impl Move32 {
     #[must_use]
     pub const fn has_piece_info(self) -> bool {
         self.piece_after_move().is_valid() && !self.piece_after_move().is_empty()
+    }
+
+    /// 盤面を 180 度回転（先後反転）した指し手を返す。
+    ///
+    /// 升に加えて駒情報の手番も反転する。駒情報を持たない `Move32` は升だけを反転する。
+    /// `MOVE_NONE` や `MOVE_NULL` のような通常手でない値はそのまま返す。
+    #[must_use]
+    pub const fn flip(self) -> Self {
+        if !self.is_normal() {
+            return self;
+        }
+        let mv = self.to_move().flip();
+        if !self.has_piece_info() {
+            return Self::from_raw(mv.raw() as u32);
+        }
+        let piece = self.piece_after_move();
+        let flipped = Piece::from_parts(piece.color().flip(), piece.piece_type());
+        Self::from_move_with_piece(mv, flipped)
+    }
+
+    /// 盤面を左右反転した指し手を返す。
+    ///
+    /// 手番は変わらないため駒情報はそのまま保つ。`MOVE_NONE` や `MOVE_NULL` のような
+    /// 通常手でない値はそのまま返す。
+    #[must_use]
+    pub const fn mirror_file(self) -> Self {
+        if !self.is_normal() {
+            return self;
+        }
+        let mv = self.to_move().mirror_file();
+        if !self.has_piece_info() {
+            return Self::from_raw(mv.raw() as u32);
+        }
+        Self::from_move_with_piece(mv, self.piece_after_move())
     }
     pub const FROM_TO_TABLE_SIZE: usize = crate::types::moves::FROM_TO_TABLE_SIZE;
     #[must_use]
@@ -827,5 +902,70 @@ mod tests {
 
         let drop = position.move32_from_move(Move::from_usi("G*4g").expect("valid move"));
         assert_eq!(drop.to_ki2(&position), Some("▲４七金打".to_string()));
+    }
+
+    #[test]
+    fn flip_and_mirror_file_round_trip_and_preserve_move_kind() {
+        let from = Square::from_usi("7g").expect("valid square");
+        let to = Square::from_usi("7f").expect("valid square");
+
+        let normal = Move::normal(from, to);
+        assert_eq!(normal.flip().to_usi(), "3c3d");
+        assert_eq!(normal.mirror_file().to_usi(), "3g3f");
+        assert_eq!(normal.flip().flip(), normal);
+        assert_eq!(normal.mirror_file().mirror_file(), normal);
+
+        let promotion = Move::promotion(from, to);
+        assert!(promotion.flip().is_promotion());
+        assert_eq!(promotion.flip().flip(), promotion);
+        assert!(promotion.mirror_file().is_promotion());
+
+        let drop = Move::drop(PieceType::GOLD, to);
+        assert_eq!(drop.flip().to_usi(), "G*3d");
+        assert_eq!(drop.mirror_file().to_usi(), "G*3f");
+        assert_eq!(drop.flip().dropped_piece(), Some(PieceType::GOLD));
+        assert_eq!(drop.flip().flip(), drop);
+
+        for special in [Move::MOVE_NONE, Move::MOVE_NULL, Move::MOVE_RESIGN, Move::MOVE_WIN] {
+            assert_eq!(special.flip(), special);
+            assert_eq!(special.mirror_file(), special);
+        }
+    }
+
+    #[test]
+    fn move32_flip_inverts_piece_color_and_mirror_keeps_it() {
+        let from = Square::from_usi("7g").expect("valid square");
+        let to = Square::from_usi("7f").expect("valid square");
+
+        let normal = Move32::normal(from, to, Piece::B_PAWN);
+        let flipped = normal.flip();
+        assert_eq!(flipped.to_usi(), "3c3d");
+        assert_eq!(flipped.piece_after_move(), Piece::from_parts(Color::WHITE, PieceType::PAWN));
+        assert_eq!(flipped.flip(), normal);
+
+        let mirrored = normal.mirror_file();
+        assert_eq!(mirrored.to_usi(), "3g3f");
+        assert_eq!(mirrored.piece_after_move(), Piece::B_PAWN);
+        assert_eq!(mirrored.mirror_file(), normal);
+
+        let promotion = Move32::promotion(from, to, Piece::B_PAWN);
+        let flipped_promotion = promotion.flip();
+        assert!(flipped_promotion.is_promotion());
+        assert_eq!(
+            flipped_promotion.piece_after_move(),
+            Piece::from_parts(Color::WHITE, PieceType::PAWN.promote())
+        );
+        assert_eq!(flipped_promotion.flip(), promotion);
+
+        let drop = Move32::drop(PieceType::GOLD, to, Color::BLACK);
+        let flipped_drop = drop.flip();
+        assert_eq!(flipped_drop.to_usi(), "G*3d");
+        assert_eq!(flipped_drop.piece_after_move().color(), Color::WHITE);
+        assert_eq!(flipped_drop.flip(), drop);
+
+        for special in [Move32::MOVE_NONE, Move32::MOVE_NULL, Move32::MOVE_END] {
+            assert_eq!(special.flip(), special);
+            assert_eq!(special.mirror_file(), special);
+        }
     }
 }

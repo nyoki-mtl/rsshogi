@@ -31,9 +31,9 @@ from rsshogi.core import (
 
 | カテゴリ | メソッドとプロパティ |
 |---|---|
-| [局面の初期化と入出力](#局面の初期化と入出力) | `Board(sfen=None)`, `copy()`, `reset()`, `to_sfen()`, `set_sfen()`, `set_usi_position()`, `to_position_state()`, `set_position_state()`, `to_csa()`, `to_bod()`, `to_svg()` |
+| [局面の初期化と入出力](#局面の初期化と入出力) | `Board(sfen=None)`, `copy()`, `reset()`, `to_sfen()`, `to_sfen_flipped()`, `set_sfen()`, `set_usi_position()`, `to_position_state()`, `set_position_state()`, `to_csa()`, `to_bod()`, `to_svg()` |
 | [局面の妥当性検証](#局面の妥当性検証) | `validate()`, `is_valid()`, `validate_all()` |
-| [バイナリシリアライズと Apery 互換変換](#バイナリシリアライズと-apery-互換変換) | `to_packed_sfen()`, `set_packed_sfen()`, `to_psv()`, `to_hcp()`, `set_hcp()`, `to_hcpe()`, `apery_move32_from_move()`, `apery_move32_from_move32()` |
+| [バイナリシリアライズと Apery 互換変換](#バイナリシリアライズと-apery-互換変換) | `to_packed_sfen()`, `to_packed_sfen_flipped()`, `set_packed_sfen()`, `to_psv()`, `to_hcp()`, `set_hcp()`, `to_hcpe()`, `apery_move32_from_move()`, `apery_move32_from_move32()` |
 | [指し手の適用と取り消し](#指し手の適用と取り消し) | `apply_move()`, `apply_move32()`, `apply_usi()`, `apply_csa()`, `push_move()`, `push_move32()`, `push_usi()`, `push_usi_with_delta()`, `undo_move()`, `undo_move32()`, `pop()`, `last_move()`, `move32_from_move()`, `move_from_csa()` |
 | [盤上の駒、持ち駒、ビットボードの参照](#盤上の駒持ち駒ビットボードの参照) | `piece_on()`, `is_square_empty()`, `empties()`, `hand()`, `hand_counts()`, `king_square()`, `iter_pieces()`, `pieces()`, `pieces_by_type()`, `pieces_by_color()`, `pieces_for()`, `golds()`, `bishop_horse()`, `rook_dragon()` |
 | [利きと攻撃の判定](#利きと攻撃の判定) | `attackers_to()`, `attackers_to_color()`, `attackers_to_color_current()`, `attacks_by()`, `is_attacked_by()` |
@@ -59,6 +59,7 @@ Board(sfen: str | None = None) -> Board
 | `copy()` / `__copy__()` | なし | `Board` | 現在の盤面と着手履歴を複製した新しい `Board` を返す。 |
 | `reset()` | なし | `None` | 盤面を平手初期局面に戻し、着手履歴をクリアする。 |
 | `to_sfen()` | なし | `str` | 現在局面を SFEN 文字列として返す。 |
+| `to_sfen_flipped()` | なし | `str` | 現在局面を先後反転（盤面を 180 度回転し、駒色と手番を反転）した SFEN 文字列として返す。盤面自体は変更しない。 |
 | `set_sfen(sfen)` | `sfen: str` | `None` | 指定した SFEN 文字列で盤面を上書きする。不正な SFEN は `ValueError` を送出する。 |
 | `set_usi_position(position)` | `position: str` | `None` | USI の `position` コマンド文字列から初期局面と手順を読み込んで適用する。 |
 | `to_position_state()` | なし | `PositionState` | 現在局面を編集可能な `PositionState` として書き出す。 |
@@ -109,6 +110,7 @@ NumPy の構造化配列との連携手順は [NumPy 連携](numpy.md) を参照
 | メソッド | 引数 | 戻り値 | 説明 |
 |---|---|---|---|
 | `to_packed_sfen(out=None)` | `out`: 出力先バッファまたは `None` | `bytes \| None` | 現在局面を 32 バイトの `PackedSfen` に変換する。`out=None` なら `bytes` を返し、`out` 指定時はインプレース書き込みを行い `None` を返す。 |
+| `to_packed_sfen_flipped(out=None)` | `out`: 出力先バッファまたは `None` | `bytes \| None` | 先後反転した局面を 32 バイトの `PackedSfen` に変換する。SFEN 文字列を経由せずに学習データの先後反転を得るために使う。`out` の扱いは `to_packed_sfen()` と同じ。 |
 | `set_packed_sfen(psfen)` | `psfen`: 32 バイトデータ | `None` | 32 バイトの `PackedSfen` から盤面を復元する。 |
 | `to_psv(mv=None, score=0, game_result=None, game_ply=None, out=None)` | 教師データ各項目と `out` | `bytes \| None` | 現在局面から 40 バイトの `PackedSfenValue` を生成する。 |
 | `to_hcp(out=None)` | `out`: 出力先バッファまたは `None` | `bytes \| None` | 現在局面を 32 バイトの `HuffmanCodedPos` に変換する。 |

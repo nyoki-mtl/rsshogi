@@ -577,7 +577,7 @@ fn assert_rejected_candidate_is_not_mate(position: &Position, mv: Move32) {
 /// 現局面での一手詰めを返す。
 ///
 /// 非王手局面では打ち王手を盤上王手より先に走査し、最初の詰み確定で生成全体を停止する。
-/// 作業局面は最初の静的反証生存候補で [`Position::clone_for_search`] して遅延作成する。
+/// 作業局面は最初の静的反証生存候補で遅延作成する（複製は `clone_for_search_bounded`）。
 /// 王手中は board-first の候補列・判定経路を使う。生存候補が出た局面でも局面複製を避けたい
 /// 呼び出し側は [`solve_mate_in_one_in_place`] を直接使う。
 #[must_use]
@@ -597,9 +597,11 @@ fn solve_mate_in_one_accepted(position: &Position) -> Option<Move32> {
     let mut candidates = Move32List::new();
     let prep = prepare_mate_candidates(position, &mut candidates)?;
 
-    // 作業局面の clone + state stack 初期化はキー・キャッシュの全再計算を含み、候補 1 個の
-    // apply より重い。全候補が静的に棄却される局面で丸ごと省けるよう、最初の生存候補まで
-    // 遅延させる。
+    // 作業局面の複製は候補 1 個の apply より重い。全候補が静的に棄却される局面で丸ごと
+    // 省けるよう、最初の生存候補まで遅延させる。複製には非王手経路と同じ
+    // `clone_for_search_bounded` を使う。この関数は現 state のキー・キャッシュをそのまま
+    // 引き継ぐため、`init_stack` のような全再計算を伴わない。呼び出し元は入口で
+    // `is_in_check` を読んでおり、すでに同じ state を信頼している。
     let mut work: Option<Position> = None;
 
     for &mv in candidates.iter() {
@@ -609,11 +611,8 @@ fn solve_mate_in_one_accepted(position: &Position) -> Option<Move32> {
         if is_statically_refuted(position, &prep, mv) {
             continue;
         }
-        let work = work.get_or_insert_with(|| {
-            let mut cloned = position.clone();
-            cloned.init_stack();
-            cloned
-        });
+        let work =
+            work.get_or_insert_with(|| position.clone_for_search_bounded(MATE_WORK_HISTORY_PLY));
         work.apply_move32_with_gives_check(mv, true);
         if work.is_mated() {
             return Some(mv);

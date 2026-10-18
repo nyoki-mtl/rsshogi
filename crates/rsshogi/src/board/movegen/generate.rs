@@ -1,6 +1,7 @@
 use crate::board::{Move32List, MoveList, Position};
 use crate::types::Square;
 
+use super::checks::generate_checks_dispatch;
 use super::drops::generate_drops;
 use super::pieces::generate_board_moves;
 use super::{
@@ -13,6 +14,12 @@ pub(super) fn generate_into<T: MoveGenType>(
     list: &mut impl MoveSink,
 ) {
     if T::EVASIONS && pos.checkers().is_empty() {
+        return;
+    }
+    // 王手生成は王手候補表を使う専用経路の方が速い。王手中は generic 経路が候補を
+    // 王手回避手に絞り、専用経路は絞らないため、挙動が一致する非王手局面に限って委譲する。
+    if (T::IS_CHECKS || T::QUIET_CHECKS) && only_to.is_none() && pos.checkers().is_empty() {
+        generate_checks_dispatch(pos, list, T::GENERATE_ALL_LEGAL, T::QUIET_CHECKS);
         return;
     }
     generate_board_moves::<T>(pos, only_to, list);

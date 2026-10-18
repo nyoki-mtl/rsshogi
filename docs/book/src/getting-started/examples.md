@@ -58,7 +58,7 @@ for move in board.legal_moves():
 | 型 | 保持する情報 | 主な用途 |
 |---|---|---|
 | `Move` | 移動元、移動先、成りフラグ、駒打ちフラグ（16 bit）。 | 合法手リスト（`legal_moves()`）、定跡、棋譜の指し手、Policy ラベル変換。 |
-| `Move32` | `Move` の全情報 + 移動後の駒と捕獲した駒（32 bit）。 | `to_csa()` のように駒名を必要とする出力、`last_move()` の履歴参照、高速な `apply_move32` / `undo_move32`。 |
+| `Move32` | `Move` の全情報 + 移動後の色付き駒（32 bit）。 | `to_csa()` のように駒名を必要とする出力、`last_move()` の履歴参照、高速な `apply_move32` / `undo_move32`。 |
 
 ```python
 from rsshogi.core import Board

@@ -20,7 +20,7 @@ flowchart LR
     subgraph CoreIR["rsshogi メモリ表現"]
         Record["Record (棋譜ツリー)"]
         Position["Board / Position (局面)"]
-        BookIR["MemoryBook / BookDatabase"]
+        BookIR["BookDatabase"]
     end
 
     subgraph TrainingBin["学習用圧縮バイナリ"]
@@ -32,7 +32,7 @@ flowchart LR
     end
 
     subgraph BookFormats["定跡フォーマット"]
-        StaticBook["StaticBook v2 (.book)"]
+        NativeBook["Native Book v4 (.book)"]
         DB2016["YaneuraOu DB2016 (.db)"]
         YBB["YaneuraOu YBB (.ybb)"]
         SBK["ShogiHome SBK (.sbk)"]
@@ -45,14 +45,14 @@ flowchart LR
     USI <--> Record
     Record <--> SBIN
     Record <--> PACK
-    Record --> BookIR
     Position <--> HCP
     Position <--> PSV
     Position <--> SAZ
-    BookIR <--> StaticBook
+    BookIR --> NativeBook
     BookIR <--> DB2016
     BookIR <--> SBK
-    YBB --> BookIR
+    DB2016 --> NativeBook
+    SBK --> NativeBook
 ```
 
 ## 1. 棋譜フォーマット（KIF / KI2 / CSA / JKF）
@@ -105,19 +105,19 @@ let ki2_text = export_ki2(&record)?;
 let jkf_text = export_jkf(&record)?;
 ```
 
-## 2. 定跡フォーマット（StaticBook / YaneuraOu / SBK）
+## 2. 定跡フォーマット（Native Book / YaneuraOu / SBK）
 
 局面から候補手、評価値、探索深さ、採択回数（重み）へのマッピングを保持するフォーマット群である。
-`rsshogi` の 3 層アーキテクチャと変換規則の詳細は [定跡 3 層アーキテクチャ](book-architecture.md) を参照。
+`rsshogi` の アーキテクチャと変換規則の詳細は [定跡 アーキテクチャ](book-architecture.md) を参照。
 
-| 項目 | [StaticBook v2](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
+| 項目 | [Native Book v4](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
 | :--- | :--- | :--- | :--- | :--- |
-| 形式 | 独自固定長バイナリ（`.book`） | テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
-| 局面キー | `BookKey`（64/128-bit Zobrist） | 正規化 SFEN 文字列 | 32 バイト `PackedSfen` + `ply` | SFEN + `PackedSfen` 索引 + `state_id` |
-| 保持フィールド | `mv`, `score` (`i16`), `depth` (`u16`) | `mv`, `ponder`, `score` (`Option<i32>`), `depth` (`Option<u32>`), `count` (`Option<u64>`), `comment` | `mv`, `eval` (`i16`), `depth` (`Option<u16>`), `ply` (`u16`) | `mv`, `evaluation` (`Option<i32>`), `weight` (`Option<i32>`), `next_state_id`, `evals`, `comment` |
-| 読み込み方式 | メモリ常駐 + 二分探索 | ストリーミング走査または二分探索 | メモリ常駐 + `PackedSfen` 二分探索 | `PackedSfen` 二分探索 + オンデマンド Protobuf 復号 |
-| 書き出し対応 | ○（`StaticBook::write_file`） | ○（`BookDatabase::write_yaneuraou_db2016`） | ✕（読み取り専用） | ○（`BookDatabase::write_sbk`） |
-| Python 対応 | `StaticBook`, `MemoryBook`, `BookBuilder` | `YaneuraOuBook`（読み取り専用） | ✕（Rust のみ） | `SbkBook`（読み取り専用） |
+| 形式 | 不変本体 + 追記ログ（`.book`） | テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
+| 局面キー | 32B 正規形 `PackedSfen`（手数なし） | 正規化 SFEN 文字列 | 32 バイト `PackedSfen` + `ply` | SFEN + `PackedSfen` 索引 + `state_id` |
+| 保持フィールド | 指し手、未評価/cp/詰み/bound、任意 depth、depth_kind、表示順、コメント、title/description | `mv`, `ponder`, `score` (`Option<i32>`), `depth` (`Option<u32>`), `count` (`Option<u64>`), `comment` | `mv`, `eval` (`i16`), `depth` (`Option<u16>`), `ply` (`u16`) | `mv`, `evaluation` (`Option<i32>`), `weight` (`Option<i32>`), `next_state_id`, `evals`, `comment` |
+| 読み込み方式 | RAM のブロック索引 + 独立圧縮ブロックの部分読込 + 差分索引 | ストリーミング走査または二分探索 | メモリ常駐 + `PackedSfen` 二分探索 | `PackedSfen` 二分探索 + オンデマンド Protobuf 復号 |
+| 書き出し対応 | ○（`NativeBookEditor` / `NativeBookBuilder`） | ○（`BookDatabase::write_yaneuraou_db2016`） | ✕（読み取り専用） | ○（`BookDatabase::write_sbk`） |
+| Python 対応 | `NativeBook`, `NativeBookEditor`, `NativeBookBuilder` | `YaneuraOuBook`（読み取り専用） | ✕（Rust のみ） | `SbkBook`（読み取り専用） |
 
 ## 3. 学習および圧縮バイナリフォーマット
 
@@ -136,5 +136,5 @@ let jkf_text = export_jkf(&record)?;
 ## 関連項目
 
 - [Record と棋譜データモデル](../records.md)
-- [定跡 3 層アーキテクチャ](book-architecture.md)
+- [定跡 アーキテクチャ](book-architecture.md)
 - [局面圧縮の仕組み（HCP / PackedSfen）](../../internals/serialization/compression.md)

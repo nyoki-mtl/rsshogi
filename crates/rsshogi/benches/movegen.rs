@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rsshogi::board::{
-    self, CapturePlusPro, Captures, Evasions, Move32List, MoveList, NonEvasionsAll,
-    generate_legal_all_move32, generate_moves,
+    self, CapturePlusPro, Captures, Checks, Evasions, Move32List, MoveList, NonEvasionsAll,
+    QuietChecks, generate_legal_all_move32, generate_moves,
 };
 
 /// 指し手生成の代表的なベンチマーク局面。
@@ -64,6 +64,46 @@ fn bench_capture_plus_pro(c: &mut Criterion) {
             b.iter(|| {
                 let mut moves = MoveList::new();
                 generate_moves::<CapturePlusPro>(&pos, &mut moves);
+                black_box(moves.len())
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_checks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("checks");
+
+    for &(name, sfen) in BENCHMARK_POSITIONS {
+        let pos = board::position_from_sfen(sfen).unwrap();
+        if !pos.checkers().is_empty() {
+            continue;
+        }
+        group.bench_with_input(BenchmarkId::from_parameter(name), &sfen, |b, &sfen| {
+            let pos = board::position_from_sfen(sfen).unwrap();
+            b.iter(|| {
+                let mut moves = MoveList::new();
+                generate_moves::<Checks>(&pos, &mut moves);
+                black_box(moves.len())
+            });
+        });
+    }
+
+    group.finish();
+
+    let mut group = c.benchmark_group("quiet_checks");
+
+    for &(name, sfen) in BENCHMARK_POSITIONS {
+        let pos = board::position_from_sfen(sfen).unwrap();
+        if !pos.checkers().is_empty() {
+            continue;
+        }
+        group.bench_with_input(BenchmarkId::from_parameter(name), &sfen, |b, &sfen| {
+            let pos = board::position_from_sfen(sfen).unwrap();
+            b.iter(|| {
+                let mut moves = MoveList::new();
+                generate_moves::<QuietChecks>(&pos, &mut moves);
                 black_box(moves.len())
             });
         });
@@ -153,6 +193,7 @@ criterion_group!(
     bench_all_moves,
     bench_captures,
     bench_capture_plus_pro,
+    bench_checks,
     bench_evasions,
     bench_pinned_throughput,
     bench_legal_all_move32

@@ -24,13 +24,13 @@ Rust クレート `rsshogi` は **デフォルトで最小限のエンジンコ�
 | :--- | :--- |
 | （指定なし：`default = []`） | 盤面（`Board` / `Position`）、ビットボード、合法手生成、Zobrist ハッシュ、千日手および入玉宣言判定の最小コア。 |
 | `records` | `Record`、KIF / KI2 / CSA / JKF / USI / SFEN の読み書き、および `pack` / `sbinpack` / `sazpack`（`position-serialization`, `initial-positions`, `policy-labels` を含む）。 |
-| `book` | `MemoryBook`、`StaticBook`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`（`Record` から構築する `BookBuilder` を使う場合は `records` も併せて有効化する）。 |
+| `book` | `NativeBook`、`NativeBookEditor`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`。 |
 | `position-serialization` | `HuffmanCodedPos` (HCP)、`HuffmanCodedPosAndEval` (HCPE)、`PackedSfen`、`PackedSfenValue` (PSV)。 |
 | `policy-labels` | `rsshogi::labels::policy`（2187 クラス `MoveLabel` および 1496 クラス `CompactMoveLabel`）。 |
 | `initial-positions` | 平手および駒落ち定型初期局面の SFEN / `Handicap` サポート。 |
 | `svg` | 盤面の SVG 描画出力。 |
 | `validation` | 局面の詳細な整合性検査ユーティリティ。 |
-| `hash-128` | `ZobristKey` および `BookKey` を 64-bit から 128-bit に拡張する。 |
+| `hash-128` | `ZobristKey` を 64-bit から 128-bit に拡張する。 |
 | `python-data` | Python バインディング相当の全データ機能（`book`, `records`, `position-serialization`, `svg`, `validation`）を一括で有効化する。 |
 
 ```toml
@@ -56,7 +56,8 @@ rsshogi = { version = "0.1", features = ["records", "book"] }
 ### 16-bit の `Move` から 32-bit の `Move32` を復元するには？
 
 指し手を適用する前の局面 `board` に対して `board.move32_from_move(mv)` を呼び出す。
-`Move32` には「移動後の色付き駒（`Piece`）」と「捕獲した駒（`Piece`）」が含まれるため、現在局面の盤上駒情報を参照する必要がある。
+`Move32` の移動後の色付き駒（`Piece`）を補うため、現在局面の盤上駒情報を参照する必要がある。
+捕獲駒は `Move32` 自体には含めず、局面の状態スタックが保持する。
 CSA 文字列（例：`"+7776FU"`）から直接変換する場合は `board.move_from_csa("+7776FU")` または `Move32.from_csa("+7776FU")` を使用する。
 
 ### `AperyMove32` から `Move32` を復元するには？

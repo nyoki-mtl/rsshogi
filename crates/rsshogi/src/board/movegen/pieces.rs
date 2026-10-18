@@ -187,7 +187,16 @@ fn generate_destinations<T: MoveGenType>(
 ) {
     if T::QUIET_CHECKS || (!T::CAPTURES && T::QUIETS && !T::IS_CHECKS) {
         targets = targets.and_not(enemy);
-    } else if T::CAPTURES && !T::QUIETS && !T::IS_CAPTURE_PLUS_PRO && !T::IS_RECAPTURES {
+    } else if T::IS_CAPTURE_PLUS_PRO {
+        // 受理されるのは取る手と歩の成りだけなので、空マスを走査する前に落とす。
+        // 歩の成りは `to` が敵陣にある場合に限られる（1 マス前進なので
+        // `can_promote_move` の `from` 側条件は `to` 側条件に含まれる）。
+        targets &= if piece.piece_type() == PieceType::PAWN {
+            enemy | Bitboard::promotion_zone(facts.us)
+        } else {
+            enemy
+        };
+    } else if T::CAPTURES && !T::QUIETS && !T::IS_RECAPTURES {
         targets &= enemy;
     }
     while let Some(to) = targets.pop_lsb() {

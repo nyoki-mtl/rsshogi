@@ -39,7 +39,7 @@ pip install rsshogi-avx2
 | [`rsshogi.core`](board.md) | `Board`, `PositionState`, `ValidationReport`, `ValidationIssue`, `Move`, `Move32`, `AperyMove`, `AperyMove32`, `UsiPositionParts`, `to_move()`, `parse_usi_position()`, `parse_usi_position_parts()`, `normalize_usi_position()` | 盤面管理、局面検証、指し手表現、USI 局面文字列の解析を行う。 |
 | [`rsshogi.types`](types.md) | `Color`, `PieceType`, `Piece`, `Square`, `Bitboard`, `Hand`, `MoveType`, `RepetitionState` | 手番、駒、マス目、ビットボード、持ち駒などの基本型を提供する。 |
 | [`rsshogi.record`](record.md) | `Record`, `RecordEditor`, `RecordMetadata`, `RecordMetadataKey`, `MoveEntry`, `SpecialMoveEntry`, `RecordEntry`, `RecordNodeId`, `EngineInfo`, `TimeControl`, `GameResult`, `GameResultInfo`, `RecordBuilder`, `RecordMetadataBuilder`, `decode_pack()`, `write_pack()`, `decode_sbinpack()`, `write_sbinpack()` | 棋譜の解析、編集、書き出し、および学習用バイナリ変換を行う。 |
-| [`rsshogi.book`](book.md) | `MemoryBook`, `StaticBook`, `BookBuilder`, `BookKey`, `BookMove`, `BookEntry`, `YaneuraOuBook`, `SbkBook`, `book_key_from_position()`, `book_key_after()`, `book_builder_from_game_record()` | 内部バイナリ定跡の構築と検索、および外部定跡（DB2016 と SBK）の参照を行う。 |
+| [`rsshogi.book`](book.md) | `NativeBook`, `NativeBookEditor`, `NativeBookBuilder`, `NativeScore`, `YaneuraOuBook`, `SbkBook` | 定跡の部分参照、編集、構築と外部形式の読込。 |
 | [`rsshogi.usi`](usi.md) | `UsiInfo`, `UsiBestMove`, `UsiGoCommand`, `UsiScore`, `UsiBound`, `move_from_usi()`, `parse_info()`, `parse_bestmove()`, `parse_score()` | USI プロトコルの文字列解析とコマンド構築を行う。 |
 | [`rsshogi.policy`](policy.md) | `move_label()`, `compact_move_label()`, `move_label_to_compact()`, `compact_move_label_to_move_label()`, `is_structurally_valid_move_label()`, `MOVE_LABEL_COUNT`, `COMPACT_MOVE_LABEL_COUNT` | 方策ネットワーク（Policy Network）向けの指し手ラベル変換を行う。 |
 | [`rsshogi.sazpack`](sazpack.md) | `SazGame`, `SazPosition`, `SazPolicyEntry`, `SazWdl`, `write_sazpack()`, `write_sazpack_file()`, `decode_sazpack()`, `decode_sazpack_file()` | SAZ2 形式の自己対局教師データを読み書きする。 |
@@ -90,17 +90,11 @@ from rsshogi.record import (
     TimeControl,
 )
 from rsshogi.book import (
-    BookBuilder,
-    BookEntry,
-    BookKey,
-    BookMove,
-    MemoryBook,
+    NativeBook, NativeBookEditor, NativeBookBuilder,
+    NativeBookEntry, NativeBookPosition, NativeBookMetadata,
+    NativeScore, NativeBound, NativeCandidate,
     SbkBook,
-    StaticBook,
     YaneuraOuBook,
-    book_builder_from_game_record,
-    book_key_after,
-    book_key_from_position,
 )
 from rsshogi.usi import UsiBestMove, UsiBound, UsiGoCommand, UsiInfo, UsiScore
 from rsshogi.policy import (
@@ -181,14 +175,11 @@ from rsshogi.numpy import (
 
 ### 定跡データベース
 
+`NativeScore`、`NativeBound`、`NativeCandidate`、`NativeBookEntry`、`NativeBookPosition`、`NativeBookMetadata` は評価、候補手、局面 snapshot と文書属性を保持する。
+
 | クラス | モジュール | 説明 |
 |---|---|---|
-| [`MemoryBook`](book.md#memorybook) | `rsshogi.book` | メモリ上で候補手の追加と検索を行う定跡クラスである。 |
-| [`StaticBook`](book.md#staticbook) | `rsshogi.book` | バイナリ定跡ファイルの読み書きと高速検索を行う読み取り専用クラスである。 |
-| [`BookBuilder`](book.md#bookbuilder-と-book_builder_from_game_record) | `rsshogi.book` | 複数の棋譜や局面から定跡を集約して構築するビルダである。 |
-| [`BookKey`](book.md#bookkey-とキー計算関数) | `rsshogi.book` | 定跡の局面検索に使われるハッシュキー型である。 |
-| [`BookMove`](book.md#bookmove-と-bookentry) | `rsshogi.book` | 定跡内の 1 候補手（指し手、評価値、探索深さ）を表す型である。 |
-| [`BookEntry`](book.md#bookmove-と-bookentry) | `rsshogi.book` | 1 局面に対応する `BookKey` と候補手リストを保持する型である。 |
+| [`NativeBook`](book.md#native-book-v4) | `rsshogi.book` | v4 の圧縮ブロック部分参照 reader。編集は `NativeBookEditor`、初期構築は `NativeBookBuilder` を使う。 |
 | [`YaneuraOuBook`](book.md#やねうら王形式定跡yaneuraoubook) | `rsshogi.book` | やねうら王形式（DB2016 `.db`）の外部定跡ファイルを検索するリーダである。 |
 | [`YaneuraOuBookEntry`](book.md#yaneuraoubookentry--yaneuraoubookmove--yaneuraoubookdiagnostics) | `rsshogi.book` | DB2016 定跡の 1 局面分のエントリである。 |
 | [`YaneuraOuBookMove`](book.md#yaneuraoubookentry--yaneuraoubookmove--yaneuraoubookdiagnostics) | `rsshogi.book` | DB2016 定跡の 1 候補手データである。 |
@@ -237,9 +228,6 @@ from rsshogi.numpy import (
 | [`decode_sbinpack_file(path)`](record.md#sbinpack-形式の一括読み書き) | `rsshogi.record` | `sbinpack` ファイルから `(Record, bytes)` のリストを読み込む。 |
 | [`write_sbinpack(records, ...)`](record.md#sbinpack-形式の一括読み書き) | `rsshogi.record` | 複数の `Record` を `sbinpack` バイト列へシリアライズする。 |
 | [`write_sbinpack_file(path, records, ...)`](record.md#sbinpack-形式の一括読み書き) | `rsshogi.record` | 複数の `Record` を `sbinpack` ファイルへ書き出す。 |
-| [`book_key_from_position(board)`](book.md#bookkey-とキー計算関数) | `rsshogi.book` | 現在局面から定跡検索用の `BookKey` を計算する。 |
-| [`book_key_after(board, mv)`](book.md#bookkey-とキー計算関数) | `rsshogi.book` | 盤面を変更せずに 1 手進めた後の `BookKey` を計算する。 |
-| [`book_builder_from_game_record(record, ...)`](book.md#bookbuilder-と-book_builder_from_game_record) | `rsshogi.book` | 単一の `Record` から `MemoryBook` を構築する。 |
 | [`move_from_usi(usi)`](usi.md#定数と指し手変換rsshogiusi) | `rsshogi.usi` | 通常手に加えて `"resign"`、`"win"`、`"0000"`、`"none"` も `Move` に変換する。 |
 | [`parse_info(line)`](usi.md#定数と指し手変換rsshogiusi) | `rsshogi.usi` | USI `info` 行を解析して `UsiInfo` を返す。 |
 | [`parse_bestmove(line)`](usi.md#定数と指し手変換rsshogiusi) | `rsshogi.usi` | USI `bestmove` 行を解析して `UsiBestMove` を返す。 |
@@ -270,7 +258,7 @@ from rsshogi.numpy import (
 | PSV (`PackedSfenValue`) | 対応（局面） | 対応 | [`Board.to_psv()`](board.md#バイナリシリアライズと-apery-互換変換), [`Record.to_psv()`](record.md#書き出しインスタンスメソッド), [`PackedSfenValue`](numpy.md#packedsfenvalue) | やねうら王互換の 40 バイト固定長教師データ形式である。 |
 | HCP / HCPE | 対応（HCP） | 対応 | [`Board.to_hcp()`](board.md#バイナリシリアライズと-apery-互換変換), [`Board.set_hcp()`](board.md#バイナリシリアライズと-apery-互換変換), [`Board.to_hcpe()`](board.md#バイナリシリアライズと-apery-互換変換), [`HuffmanCodedPosAndEval`](numpy.md#huffmancodedposandeval) | Apery および `cshogi` 互換の 32 バイト局面 / 38 バイト教師データ形式である。 |
 | SAZ2 (`sazpack`) | 対応 | 対応 | [`decode_sazpack()`](sazpack.md#シリアライズとデシリアライズ関数), [`write_sazpack()`](sazpack.md#シリアライズとデシリアライズ関数) | AlphaZero 系自己対局の WDL、policy、探索統計を保持するバイナリ形式である。 |
-| 定跡バイナリ | 対応 | 対応 | [`StaticBook`](book.md#staticbook), [`MemoryBook`](book.md#memorybook) | `rsshogi` ネイティブのバイナリ定跡形式である。 |
+| Native Book v4 (`.book`) | 対応 | 対応 | [`NativeBook`](book.md#native-book-v4), `NativeBookEditor`, `NativeBookBuilder` | 部分参照、差分保存、初期構築に対応する。 |
 | DB2016 (`.db`) | 対応（参照） | 非対応 | [`YaneuraOuBook`](book.md#やねうら王形式定跡yaneuraoubook) | やねうら王のテキスト定跡形式を読み取り専用で検索する。 |
 | SBK (`.sbk`) | 対応（参照） | 非対応 | [`SbkBook`](book.md#sbk-形式定跡sbkbook) | ShogiHome 系のバイナリ定跡形式を読み取り専用で検索する。 |
 

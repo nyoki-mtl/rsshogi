@@ -1,151 +1,69 @@
-# 定跡（`rsshogi.book` / 外部定跡）
+# 定跡管理
 
-`rsshogi.book` は定跡（Opening Book）の構築、保存、検索を行うためのモジュールである。
-`rsshogi` 独自のバイナリ定跡（`MemoryBook` / `StaticBook`）に加えて、やねうら王形式のテキスト定跡（`YaneuraOuBook`）および SBK 形式のバイナリ定跡（`SbkBook`）の読み取り専用リーダーを提供する。
+本章は圧縮配置の Native Book v4 と Python API を説明する。
 
-```python
-from rsshogi.book import (
-    BookBuilder,
-    BookEntry,
-    BookKey,
-    BookMove,
-    MemoryBook,
-    SbkBook,
-    SbkDiagnostics,
-    SbkEntry,
-    SbkEval,
-    SbkMove,
-    SbkOpenProgress,
-    StaticBook,
-    YaneuraOuBook,
-    YaneuraOuBookDiagnostics,
-    YaneuraOuBookEntry,
-    YaneuraOuBookMove,
-    book_builder_from_game_record,
-    book_key_after,
-    book_key_from_position,
-)
-```
+Native Book v4 と外部定跡の reader を利用できる。形式の詳細は [バイナリ仕様](../reference/formats/book.md) と [定跡アーキテクチャ](../reference/formats/book-architecture.md) を参照。
 
-## 定跡クラスの使い分け
+## Native Book v4
 
-| 区分 | クラス | 特徴と用途 |
-|---|---|---|
-| ネイティブ定跡（編集用） | `MemoryBook` / `BookBuilder` | メモリ上で棋譜や探索結果から候補手を追加および集約する。 |
-| ネイティブ定跡（配布および検索用） | `StaticBook` | バイナリファイル（`.bin`）へ保存し、高速に検索する（仕様は [定跡バイナリ形式](../reference/formats/book.md) を参照）。 |
-| 外部定跡（DB2016 形式） | `YaneuraOuBook` | `#YANEURAOU-DB2016 1.00` 形式のテキスト定跡ファイルをインデックス化して検索する。 |
-| 外部定跡（SBK 形式） | `SbkBook` | 局面グラフ構造を持つ SBK バイナリ定跡ファイルを検索および遷移する。 |
-
-各定跡フォーマットの内部構造と設計方針については [定跡フォーマットのアーキテクチャ](../reference/formats/book-architecture.md) を参照。
-
----
-
-## ネイティブ定跡（`MemoryBook` / `StaticBook` / `BookBuilder`）
-
-### `BookKey` とキー計算関数
-
-`BookKey` は定跡検索に使用する局面の Zobrist ハッシュキーを表すイミュータブルなクラスである。
-配布版および既定のビルドでは 64 ビットの検索キーを使用し、`hash-128` feature を有効にしたカスタムビルドでは 128 ビットの検索キーを使用する。
-
-| プロパティ / 関数 | 型 / シグネチャ | 説明 |
-|---|---|---|
-| `key.low` | `int` | キーの下位 64 ビット符号なし整数。 |
-| `key.high` | `int` | キーの上位 64 ビット符号なし整数（既定の 64 ビットビルドでは常に `0`）。 |
-| `int(key)` | `int` | `(high << 64) \| low` の整数値を返す。 |
-| `book_key_from_position(board)` | `(board: Board) -> BookKey` | 現在の盤面から定跡検索用の `BookKey` を計算する。 |
-| `book_key_after(board, mv)` | `(board: Board, mv: Move) -> BookKey` | 現在の盤面で `mv` を 1 手進めた後の局面の `BookKey` を計算する（盤面自体は変更しない）。 |
-
-`BookKey` は `==` / `!=` による等値比較と `hash(key)` に対応しており、Python の `dict` のキーや `set` の要素として使用できる。
-
-### `BookMove` と `BookEntry`
+`NativeBook` はファイルの必要な部分を読む reader、`NativeBookEditor` は排他ロックを持つ編集用 writer、`NativeBookBuilder` は新規ファイルを構築する builder である。検証と保存は Rust core が行う。
 
 ```python
-BookMove(mv: Move, score: int, depth: int) -> BookMove
-```
-
-`BookMove` は定跡内の 1 つの候補手を表し、`BookEntry` は 1 局面に対する候補手のリストを保持する。
-
-| クラス | プロパティ / メソッド | 型 | 説明 |
-|---|---|---|---|
-| `BookMove` | `mv` | `Move` | 16 ビットの指し手。 |
-| `BookMove` | `score` | `int` | 評価値（`int16` 範囲のセンチポーン値）。 |
-| `BookMove` | `depth` | `int` | 探索深さ（`uint16` 範囲の非負整数）。 |
-| `BookEntry` | `key` | `BookKey` | 局面のハッシュキー。 |
-| `BookEntry` | `moves` | `list[BookMove]` | 登録されている候補手のリスト。 |
-| `BookEntry` | `len(entry)` | `int` | 候補手の件数。 |
-
-### `MemoryBook`
-
-```python
-MemoryBook() -> MemoryBook
-```
-
-メモリ上で候補手を追加および検索できる可変の定跡クラスである。
-
-| メソッド | 引数 | 戻り値 | 説明 |
-|---|---|---|---|
-| `insert_move(key, book_move)` | `key: BookKey`, `book_move: BookMove` | `None` | 指定した局面キーに候補手を追加する。 |
-| `get(key)` | `key: BookKey` | `BookEntry \| None` | 指定した局面キーの `BookEntry` を返す。未登録の場合は `None` を返す。 |
-| `contains(key)` | `key: BookKey` | `bool` | 指定した局面キーが登録されていれば `True` を返す。 |
-| `len(book)` | なし | `int` | 登録されている局面数を返す。 |
-
-### `StaticBook`
-
-バイナリ形式でシリアライズ可能な読み取り専用の定跡クラスである。
-
-| メソッド | 引数 | 戻り値 | 説明 |
-|---|---|---|---|
-| `StaticBook.from_file(path)` | `path: str \| PathLike` | `StaticBook` | バイナリ定跡ファイルから `StaticBook` を読み込む（クラスメソッド）。 |
-| `StaticBook.from_bytes(data)` | `data: bytes` | `StaticBook` | バイト列から `StaticBook` を復元する（クラスメソッド）。 |
-| `StaticBook.from_memory_book(book)` | `book: MemoryBook` | `StaticBook` | `MemoryBook` から `StaticBook` を構築する（クラスメソッド）。 |
-| `write_file(path)` | `path: str \| PathLike` | `None` | 定跡データをバイナリファイルへ書き出す。 |
-| `to_bytes()` | なし | `bytes` | 定跡データをバイト列へシリアライズする。 |
-| `get(key)` | `key: BookKey` | `BookEntry \| None` | 指定した局面キーの `BookEntry` を返す。未登録の場合は `None` を返す。 |
-| `contains(key)` | `key: BookKey` | `bool` | 指定した局面キーが登録されていれば `True` を返す。 |
-| `len(book)` | なし | `int` | 登録されている局面数を返す。 |
-
-### `BookBuilder` と `book_builder_from_game_record`
-
-```python
-BookBuilder() -> BookBuilder
-book_builder_from_game_record(
-    record: Record,
-    default_score: int = 0,
-    default_depth: int = 0,
-) -> MemoryBook
-```
-
-`BookBuilder` は複数の棋譜（本手順および変化手順）や個別の局面から定跡を構築するビルダークラスである。
-`into_memory()` または `build_static()` を呼び出すと、ビルダー内部のデータが取り出されてビルダー自身は空の状態に戻る。
-
-| メソッド | 引数 | 戻り値 | 説明 |
-|---|---|---|---|
-| `insert(key, mv, score, depth)` | `key: BookKey`, `mv: Move`, `score: int`, `depth: int` | `None` | 指定した `BookKey` に対して候補手を追加する。 |
-| `insert_for_position(board, mv, score, depth)` | `board: Board`, `mv: Move`, `score: int`, `depth: int` | `None` | `board` から自動的にキーを計算して候補手を追加する。 |
-| `extend_from_game_record(record, default_score=0, default_depth=0)` | `record: Record`, `default_score: int = 0`, `default_depth: int = 0` | `None` | 棋譜の本手順と変化手順を走査し、各手の `engine_info`（未設定時はデフォルト値）を用いて定跡へ取り込む。 |
-| `into_memory()` | なし | `MemoryBook` | 蓄積した定跡データを `MemoryBook` として取り出す。 |
-| `build_static()` | なし | `StaticBook` | 蓄積した定跡データを `StaticBook` として取り出す。 |
-
-```python
-from rsshogi.book import BookBuilder, StaticBook, book_key_from_position
 from rsshogi.core import Board, Move
-from rsshogi.record import Record
-
-builder = BookBuilder()
-record = Record.from_usi_main_line("startpos", ["7g7f", "3c3d"], evals=[30, -20])
-builder.extend_from_game_record(record, default_score=0, default_depth=12)
+from rsshogi.book import (
+    NativeBook, NativeBookEditor, NativeBookMetadata,
+    NativeBound, NativeCandidate, NativeScore,
+)
 
 board = Board()
-builder.insert_for_position(board, Move.from_usi("2g2f"), score=25, depth=14)
+editor = NativeBookEditor.create("example.book", NativeBookMetadata("定跡集", depth_kind=1))
+editor.upsert_candidate(
+    board,
+    NativeCandidate(Move.from_usi("7g7f"), NativeScore.cp(25, NativeBound.Exact),
+                    depth=24),
+    comment="本線",
+)
+editor.set_position_comment(board, "初期局面")
+editor.save()
+editor.close()
 
-static_book = builder.build_static()
-entry = static_book.get(book_key_from_position(board))
-if entry is not None:
-    for bm in entry.moves:
-        print(bm.mv.to_usi(), bm.score, bm.depth)
+book = NativeBook.open("example.book")
+book.validate_full()
+entry = book.get(board)
+record = book.record(board)
 ```
 
----
+新規構築では `NativeBookBuilder(path, metadata=None, block_positions=64)` の `block_positions` をキーワードで指定できる。
+範囲は 1..=16384、既定と推奨値は 64 である。
+保存値は `book.block_positions` で取得し、`editor.compact()` と `salvage_prefix()` でも元の値を維持する。
+
+```python
+from rsshogi.book import NativeBookBuilder, NativeBookEntry, NativeBookPosition
+
+builder = NativeBookBuilder("custom-blocks.book", block_positions=256)
+builder.push(NativeBookPosition(NativeBookEntry(board, [NativeCandidate(Move.from_usi("7g7f"))])))
+builder.finish()
+assert NativeBook.open("custom-blocks.book").block_positions == 256
+```
+
+評価は `NativeScore.unknown()`、`cp(value, bound)`、`mate(plies, bound)`、`mate_unknown(winning)` で区別する。視点は指す前の手番側で、詰み距離は正なら勝ち、負なら負け。`kind`、`value`、`bound`、`winning` で値を取得できる。
+
+`NativeCandidate(mv, score=None, depth=None, display_order=0)` の depth は任意の `u32` 値であり、`None` は未設定、0 は設定済みの値を表す。
+`NativeBookMetadata(title=None, description=None, depth_kind=0)` は文書全体の深さの意味を指定し、0 は未指定、1 は探索深さ、2 は定跡内の後退解析距離である。
+その他の `u32` 値も保存、再 open と compaction で保持する。
+メタデータは `book.metadata()` または `editor.metadata()` で取得し、`editor.set_metadata(...)` で置換する。
+
+`NativeBookEntry(board, candidates)` は候補手を検証し、raw 指し手順に整列する。表示順は `display_order` が別に保持する。`NativeBookPosition(entry, comment, move_comments)` は所有 snapshot で、`move_comments` は raw 指し手整数 (`int(move)`) から本文への辞書である。候補手ゼロの局面にもコメントを残せる。
+
+`upsert_candidate(..., comment=None)` は既存の候補手コメントを保持し、空文字は削除する。`reorder_candidate` は表示順位を変更する。`save()` は変更がなければ `False` を返し、追記しない。`close()` はロックを解放し、未保存の変更を破棄する。reader は open 時点の snapshot を保持するため、保存後の変更を読むには開き直す。
+
+`open` は完全検証を意味しない。由来不明のファイルは `validate_full()` で検証する。`get()` は検索データ、`record()` はコメント込みの局面を返す。`position_comment(board)` と `move_comment(board, mv)` は指定した本文だけを取得し、同じ局面のほかのコメント本文を読まない。`entries()` と `records()` は所有リストを返すため、大規模ファイルの全件展開では必要な RAM に注意する。Rust 側には streaming iterator がある。`tail()` は未完了 tail の `(offset, end)` または `None`、`io_stats()` は累積の要求 `(read_calls, read_bytes)` を返す。物理ディスクの I/O 量ではない。
+
+I/O 失敗は `OSError`、writer 競合は `BlockingIOError`、不正データは `ValueError`。`NativeBookLogError` は `offset`、`valid_end`、`sequence`、`reason` を持つ `ValueError` である。`NativeBookSaveUncertainError` は保存結果不明を表す `RuntimeError` で、editor の再 open が必要になる。
+
+`recover_tail(path)` は正常な開始ヘッダーを持つ未完了 tail を別ファイルへ保全してから復旧し、保全先を返す。未検証 tail や破損には使わない。`salvage_prefix(path, output)` は原本を変更せず、完全検証した本体とログの prefix を新規ファイルへ救出する。報告には原本長、検証済み末尾、sequence、異常 offset、出力先が含まれる。救出は本体全件の検証と再構築を伴い、時間と別ファイル分の空き容量が必要である。
+
+旧 `MemoryBook`、`StaticBook`、`BookBuilder` とハッシュキー API は 1.5.0 の開発版で削除した。旧 v2 単独から局面を復元できないため、元の棋譜や外部形式から再生成する。
 
 ## やねうら王形式定跡（`YaneuraOuBook`）
 
@@ -267,8 +185,6 @@ if entry is not None and len(entry) > 0:
 
 ## 関連項目
 
-- [定跡バイナリ形式](../reference/formats/book.md)
-- [定跡フォーマットのアーキテクチャ](../reference/formats/book-architecture.md)
-- [盤面管理（`Board`）](board.md)
-- [指し手クラス（`Move`）](move.md)
-- [棋譜管理（`Record`）](record.md)
+- [盤面管理](board.md)
+- [指し手](move.md)
+- [棋譜管理](record.md)

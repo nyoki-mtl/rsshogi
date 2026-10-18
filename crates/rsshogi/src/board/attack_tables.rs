@@ -341,6 +341,18 @@ pub fn rook_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
     Bitboard::from_raw_bits_unmasked(attacks)
 }
 
+/// `us` の `piece_type` が `king_sq` の玉に王手をかけうる移動元升の上位集合を返す。
+///
+/// 返す集合は駒の配置も利きの遮断も見ない静的な上限であり、その駒自身が王手をかける手
+/// （直接王手）の移動元を含むことだけを保証する。開き王手は対象外で、移動元が候補に
+/// 含まれない開き王手が存在する。王手生成では `Position::blockers_for_king` による
+/// 開き王手の候補と併用する。
+///
+/// - 歩・香・桂・銀・角・馬は専用の候補表を返す。成りによって王手になる移動元も含む。
+/// - 金と成駒（と金・成香・成桂・成銀）は金の候補表を返す。
+/// - 飛と龍は盤上のどこからでも王手になりうるため [`Bitboard::ALL`] を返す。
+///   絞り込みの効果がないことを表すのであって、候補が無いことを表すのではない。
+/// - 玉は王手をかけられないため [`Bitboard::EMPTY`] を返す。
 #[must_use]
 pub fn check_candidate_bb(us: Color, piece_type: PieceType, king_sq: Square) -> Bitboard {
     let index = match piece_type {
@@ -348,9 +360,15 @@ pub fn check_candidate_bb(us: Color, piece_type: PieceType, king_sq: Square) -> 
         PieceType::LANCE => 1,
         PieceType::KNIGHT => 2,
         PieceType::SILVER => 3,
-        PieceType::GOLD => 4,
+        PieceType::GOLD
+        | PieceType::PRO_PAWN
+        | PieceType::PRO_LANCE
+        | PieceType::PRO_KNIGHT
+        | PieceType::PRO_SILVER => 4,
         PieceType::BISHOP => 5,
-        PieceType::ROOK => 6,
+        PieceType::HORSE => 6,
+        // 飛と龍は筋・段のどこからでも王手になりうるので、絞り込めない。
+        PieceType::ROOK | PieceType::DRAGON => return Bitboard::ALL,
         _ => return Bitboard::EMPTY,
     };
     CHECK_CANDIDATE_BB[king_sq.to_index()][index][us.to_index()]

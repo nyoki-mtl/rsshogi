@@ -45,11 +45,11 @@ Bit:  15      14     13..7 (7 bits)            6..0 (7 bits)
 
 | 定数名 | 計算式 | 内部値（10 進） | `from` / `to` フィールド | 用途 |
 | :--- | :--- | :--- | :--- | :--- |
-| `Move::NONE` | `(0 << 7) + 0` | `0` | `from = 0, to = 0` | 未初期化または該当手なし。 |
-| `Move::NULL` | `(1 << 7) + 1` | `129` | `from = 1, to = 1` | Null Move Pruning 等のパス手。 |
-| `Move::RESIGN` | `(2 << 7) + 2` | `258` | `from = 2, to = 2` | 投了。 |
-| `Move::WIN` | `(3 << 7) + 3` | `387` | `from = 3, to = 3` | 入玉宣言勝ち。 |
-| `Move::END` | `(4 << 7) + 4` | `516` | `from = 4, to = 4` | 終端マーカー。 |
+| `Move::MOVE_NONE` | `(0 << 7) + 0` | `0` | `from = 0, to = 0` | 未初期化または該当手なし。 |
+| `Move::MOVE_NULL` | `(1 << 7) + 1` | `129` | `from = 1, to = 1` | Null Move Pruning 等のパス手。 |
+| `Move::MOVE_RESIGN` | `(2 << 7) + 2` | `258` | `from = 2, to = 2` | 投了。 |
+| `Move::MOVE_WIN` | `(3 << 7) + 3` | `387` | `from = 3, to = 3` | 入玉宣言勝ち。 |
+| `Move::MOVE_END` | `(4 << 7) + 4` | `516` | `from = 4, to = 4` | 終端マーカー。 |
 
 将棋の通常の盤上移動では移動元と移動先が必ず異なる（`from != to`）ため、ビット 14（駒打ちフラグ）が `0` でかつ `from == to` となる指し手は合法手および擬似合法手として絶対に生成されない。
 したがって、これらの特殊定数は通常の有効な指し手と一切衝突せず、`Move::is_normal(self)` は `from != to` または駒打ちフラグが立っているかを検査することで安全に有効手を識別できる。
@@ -89,8 +89,8 @@ Bit:  31..24 (8 bits)    23..20 (4 bits)          19..16 (4 bits)          15..0
 
 ## `complete_move32` と `apply_move32` における上位ビットの補完と検証
 
-`Move32` は、`Move32::from_move(mv)` によって上位ビットが `0`（`!mv.has_piece_info()`）のまま構築される場合と、`Move32::from_move_and_piece(mv, piece)` や `Move32List` 生成器によって上位ビットが設定済み（`mv.has_piece_info()`）で渡される場合の両方がある。
-`Position` の指し手適用メソッド（`apply_move32`、`try_apply_move32`、`complete_move32`）は、この上位ビットの有無に応じて以下のように動作する。
+`Move32` は、`Move32::from(mv)` によって上位ビットが `0`（`!mv.has_piece_info()`）のまま構築される場合と、`Move32::from_move_with_piece(mv, piece)` や `Move32List` 生成器によって上位ビットが設定済み（`mv.has_piece_info()`）で渡される場合の両方がある。
+`Position` の指し手適用メソッド（`apply_move32`、`try_apply_move32`）と内部の補完処理 `complete_move32` は、この上位ビットの有無に応じて以下のように動作する。
 
 1. **上位ビットが未設定（`!mv.has_piece_info()`）の場合**：
    `Position::complete_move32` が `self.move32_from_move(mv.to_move())` を呼び出し、現在の盤面（`self.piece_on(from)`）と手番から移動後の `Piece` を算出して上位ビットを埋める。
@@ -101,6 +101,21 @@ Bit:  31..24 (8 bits)    23..20 (4 bits)          19..16 (4 bits)          15..0
 
 不整合が検出された場合、`try_apply_move32`（および `try_apply_move32_with_facts`）は盤面を変更せずに `Err(MoveError::InvalidMove)` を返し、`apply_move32` は `.expect(...)` によりパニックする。
 これにより、別の局面で作られた不正な `Move32` が誤って適用されて内部のビットボードや Zobrist ハッシュが破損することを防いでいる。
+
+---
+
+## 指し手の先後反転と左右反転
+
+`Move::flip()` と `Move32::flip()` は、移動元と移動先を 180 度回転した指し手を返す。
+`7g7f` は `3c3d` となり、`Move32` では移動後の駒色も入れ替わる。
+`Move` は色を持たないため、呼び出し側が反転後の手番を管理する。
+`mirror_file()` は段と駒色を保って筋だけを反転し、`7g7f` を `3g3f` に変換する。
+駒打ちは駒種を保ち、打ち先を変換する。
+成りフラグを保ち、通常手でない値は変更しない。
+
+いずれも元の指し手を書き換えず、2 回適用すると元に戻る。
+Python では先後反転を `flip_side()`、左右反転を `mirror_file()` として公開する。
+使用例は [Python の指し手 API](../../python/move.md#対称変換move-と-move32) を参照する。
 
 ---
 

@@ -107,7 +107,10 @@ function Assert-NoDevOnlyPaths {
             $path -like "agent-docs/*" -or
             $path -like "release-notes/*" -or
             $path -like ".sandbox/*" -or
-            $path -like ".serena/*"
+            $path -like ".serena/*" -or
+            $path -eq "scripts/native-book-benchmark.ps1" -or
+            $path -eq "scripts/native_book_layout_probe.py" -or
+            $path -like "scripts/native_book_layout_probe/*"
         ) {
             Write-Error "dev-only path would be exported: $path"
             $found = $true
@@ -180,7 +183,10 @@ $removePaths = @(
     "agent-docs",
     "release-notes",
     ".sandbox",
-    ".serena"
+    ".serena",
+    "scripts/native-book-benchmark.ps1",
+    "scripts/native_book_layout_probe.py",
+    "scripts/native_book_layout_probe"
 )
 
 Require-CleanTree
@@ -225,7 +231,8 @@ foreach ($path in $publicPaths) {
 Invoke-Git checkout @checkoutArgs
 
 Write-Host "[4/5] Remove excluded paths from public snapshot"
-& git rm -r --ignore-unmatch -- @removePaths *> $null
+# Overlay 直後の除外対象は index に新規追加されているため、明示した対象だけ強制削除する。
+& git rm -r -f --ignore-unmatch -- @removePaths *> $null
 foreach ($path in $removePaths) {
     Remove-PathIfExists $path
 }

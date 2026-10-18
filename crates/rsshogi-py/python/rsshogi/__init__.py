@@ -23,8 +23,7 @@ Record file I/O:
     >>> record.write_kif("example_out.kif")
 
 Book (Opening Book):
-    >>> from rsshogi.book import StaticBook, MemoryBook, BookBuilder
-    >>> from rsshogi.book import book_key_from_position, book_key_after
+    >>> from rsshogi.book import NativeBook, NativeBookEditor, NativeBookBuilder
 
 Policy labels:
     >>> from rsshogi.policy import move_label, compact_move_label
@@ -41,7 +40,7 @@ AlphaZero training format (sazpack / SAZ2):
 from . import book, core, initial_positions, numpy, policy, record, sazpack, svg, types, usi
 
 # Version
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 __all__ = [
     # Submodules

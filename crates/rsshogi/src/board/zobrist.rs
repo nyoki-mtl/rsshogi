@@ -392,8 +392,8 @@ impl Zobrist {
     /// `count` は `Hand` のフィールド幅でマスクするため、`Hand::count` が返しうる
     /// 全ての値に対して定義される。物理的な最大枚数（歩 18 枚など）を超える枚数にも
     /// 一意のキーが割り当てられる。これは SFEN パーサが物理上限を超える持ち駒数を
-    /// 受理し、その検出を [`Position::validate`](crate::board::Position::validate) に
-    /// 委ねる設計に合わせたもので、局面構築時の全再計算が panic しないことを保証する。
+    /// 受理し、その検出を `Position::validate`（`validation` feature）に委ねる設計に
+    /// 合わせたもので、局面構築時の全再計算が panic しないことを保証する。
     #[inline]
     #[must_use]
     pub fn hand(color: Color, piece_type: PieceType, count: u32) -> ZobristKey {

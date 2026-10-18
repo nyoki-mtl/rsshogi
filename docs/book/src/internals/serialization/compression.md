@@ -5,6 +5,19 @@
 
 ---
 
+## 先後反転した局面の出力
+
+`Position::to_sfen_flipped()` は、盤面を 180 度回転し、駒色、持ち駒、手番を入れ替えた SFEN を返す。
+`Position::to_packed_sfen_flipped()` は同じ反転規則を使って `PackedSfen` を返す。
+表現不能な局面をエラーとして扱う場合は `try_to_packed_sfen_flipped()` を使う。
+元の局面と履歴は変更しない。
+
+PackedSfen の反転出力は SFEN 文字列の生成と再解析を経由しない。
+出力用の局面には盤面、持ち駒、手番と玉位置だけを設定し、bitboard や戦術キャッシュの再計算を行わない。
+Python では `Board.to_sfen_flipped()` と `Board.to_packed_sfen_flipped(out=None)` を使う。
+
+---
+
 ## 1. ビットストリーム I/O（`BitReader` / `BitWriter`）
 
 ハフマン符号化では、1 ビットのフラグから 7 ビットの座標、2〜8 ビットの可変長符号までがバイト境界（8 ビット単位）を跨いで隙間なく詰め込まれる。

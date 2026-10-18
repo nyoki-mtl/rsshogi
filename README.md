@@ -1,5 +1,9 @@
 # rsshogi
 
+この文書は rsshogi 1.5.0 を対象とする。
+Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
+旧定跡 API の削除を含むため、更新時は移行手順を確認する。
+
 [![crates.io](https://img.shields.io/crates/v/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://crates.io/crates/rsshogi) [![docs.rs](https://img.shields.io/docsrs/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://docs.rs/rsshogi) [![Documentation](https://img.shields.io/badge/docs-mdBook-1f6feb?style=flat-square&logo=readthedocs&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/) [![PyPI](https://img.shields.io/pypi/v/rsshogi?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/rsshogi/) [![Python](https://img.shields.io/pypi/pyversions/rsshogi?style=flat-square&logo=python&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/nyoki-mtl/rsshogi/blob/main/LICENSE)
 
 `rsshogi` は、将棋局面の表現、合法手生成、1 手詰め判定、棋譜や定跡の入出力、深層学習データの操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージである。
@@ -12,7 +16,7 @@
 
 ```toml
 [dependencies]
-rsshogi = "1.4.0"
+rsshogi = "1.5.0"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
@@ -20,7 +24,7 @@ rsshogi = "1.4.0"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.4.0", features = ["records", "book"] }
+rsshogi = { version = "1.5.0", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
