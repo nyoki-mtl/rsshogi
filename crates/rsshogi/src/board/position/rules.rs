@@ -187,6 +187,10 @@ impl Position {
     /// 捕獲または成りの指し手かどうか
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。指し手の分類方針は consumer 側で実装してください"
+    )]
     pub fn is_capture_or_promotion(&self, mv: Move32) -> bool {
         mv.is_promotion() || self.is_capture_move32(mv)
     }
@@ -194,6 +198,10 @@ impl Position {
     /// 歩の成り指し手かどうか
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。指し手の分類方針は consumer 側で実装してください"
+    )]
     pub fn is_pawn_promotion(&self, mv: Move32) -> bool {
         self.is_pawn_promotion_impl(mv)
     }
@@ -212,13 +220,21 @@ impl Position {
     /// 捕獲または歩の成り指し手かどうか
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。指し手の分類方針は consumer 側で実装してください"
+    )]
     pub fn is_capture_or_pawn_promotion(&self, mv: Move32) -> bool {
-        self.is_pawn_promotion(mv) || self.is_capture_move32(mv)
+        self.is_pawn_promotion_impl(mv) || self.is_capture_move32(mv)
     }
 
     /// 捕獲または価値のある駒の成り（歩・角・飛）かどうか
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。指し手の分類方針は consumer 側で実装してください"
+    )]
     pub fn is_capture_or_valuable_promotion(&self, mv: Move32) -> bool {
         self.is_capture_or_valuable_promotion_impl(mv)
     }
@@ -239,6 +255,10 @@ impl Position {
     /// MovePicker の capture 段階で生成される指し手かどうか
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。指し手の分類方針は consumer 側で実装してください"
+    )]
     pub fn is_capture_stage(&self, mv: Move32) -> bool {
         self.is_capture_move32(mv)
     }
@@ -420,7 +440,7 @@ impl Position {
             return;
         }
 
-        let limit = plies_from_null;
+        let limit = stack.repetition_scan_limit(current_idx, plies_from_null, current_board_key);
         let mut repetition_counter: i32 = 0;
         let mut repetition_distance: i32 = 0;
         let mut repetition_times: i32 = 0;
@@ -640,6 +660,13 @@ impl Position {
     ///
     /// 既定値は `Ply::MAX` で、null move 以降の全履歴を保持する。これより短い値は
     /// 長周期の千日手や連続王手を見逃しうるため、探索上の近似を明示的に選ぶ場合に限る。
+    ///
+    /// 1.6.0 から非推奨で、2.0.0 で削除予定。探索用の履歴保持方針は consumer 側で管理する。
+    /// 既存の挙動は維持する。通常の `clone()` には影響しない。
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。探索用の履歴保持方針は consumer 側で管理してください"
+    )]
     pub fn set_max_repetition_ply(ply: Ply) {
         MAX_REPETITION_PLY.store(ply, Ordering::Relaxed);
     }
@@ -650,9 +677,14 @@ impl Position {
     /// [`Position::set_max_repetition_ply`] で明示的に上限を下げた場合は、その範囲だけを残す。
     /// 返される局面の盤面・手駒・手番・ハッシュ・直近 state は元局面と等価で、
     /// `state_stack` だけが search 向けに切り詰められる。
+    /// 根以前の履歴の索引を構築し、一致候補がない場合の走査を省く。
+    /// 索引構築には確保を伴う。コピーの準備費用と、その後の走査の削減効果は別である。
+    /// 索引は通常の clone 間で共有し、保持範囲内の判定結果は変えない。
     #[must_use]
     pub fn clone_for_search(&self) -> Self {
-        self.clone_for_search_bounded(max_repetition_ply())
+        let mut result = self.clone_for_search_bounded(max_repetition_ply());
+        result.state_stack.prepare_repetition_index();
+        result
     }
 
     /// 指定範囲の反復判定履歴だけを保持した内部探索用 clone を返す。

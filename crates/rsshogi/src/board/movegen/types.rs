@@ -28,6 +28,10 @@ pub trait MoveGenType {
 
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。MoveGenType::GENERATE_ALL_LEGAL を使ってください"
+    )]
     fn is_generate_all_legal() -> bool {
         Self::GENERATE_ALL_LEGAL
     }

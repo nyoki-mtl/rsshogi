@@ -500,7 +500,7 @@ checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 
 [[package]]
 name = "rsshogi"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "criterion",
  "encoding_rs",
@@ -509,14 +509,13 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "shogi_core",
  "thiserror",
  "zstd",
 ]
 
 [[package]]
 name = "rsshogi-py"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "pyo3",
  "rsshogi",
@@ -585,12 +584,6 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
-
-[[package]]
-name = "shogi_core"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d0a7de4ff7c66bf0b6346bda1d530c94a496f8aa3317938923886c58191aa14"
 
 [[package]]
 name = "syn"

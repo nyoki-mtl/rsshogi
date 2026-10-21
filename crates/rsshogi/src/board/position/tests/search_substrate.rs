@@ -3,6 +3,7 @@ use crate::types::{Color, Move32, Piece, PieceType, Square};
 
 use super::MoveError;
 
+#[allow(deprecated)] // 1.x の探索専用 apply/undo の契約を検査する。
 fn assert_search_move_roundtrip(mut pos: super::Position, mv: Move32) {
     let before = generate_position_state(&pos);
     let key = pos.key();
@@ -61,6 +62,7 @@ fn prepared_search_moves_cover_normal_capture_promotion_drop_and_king() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用 apply/undo の契約を検査する。
 fn search_move_capacity_failure_does_not_mutate_position() {
     let mut pos = hirate_position();
     let initial_capacity = pos.state_stack().prepared_additional_capacity();
@@ -93,6 +95,7 @@ fn search_move_capacity_failure_does_not_mutate_position() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用 apply/undo の契約を検査する。
 fn search_null_preserves_game_ply_and_roundtrips() {
     let mut pos = hirate_position();
     pos.prepare_search_state_capacity(1).expect("prepare search null state");
@@ -124,6 +127,7 @@ fn ordinary_null_still_advances_game_ply() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用 apply/undo の契約を検査する。
 fn null_undo_underflow_is_atomic_for_ordinary_and_search_apis() {
     let mut ordinary =
         position_from_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 42")
@@ -151,6 +155,7 @@ fn null_undo_underflow_is_atomic_for_ordinary_and_search_apis() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用 apply/undo の契約を検査する。
 fn prepared_capacity_is_cloned_without_sharing_state_storage() {
     let mut original = hirate_position();
     original.prepare_search_state_capacity(65).expect("prepare capacity before clone");

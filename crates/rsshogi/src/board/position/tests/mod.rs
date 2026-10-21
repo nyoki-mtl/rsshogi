@@ -4,6 +4,7 @@ mod attacks;
 mod basics;
 mod cache_view;
 mod carry_over;
+mod clone;
 mod helpers;
 #[cfg(feature = "position-serialization")]
 mod huffman_coded_pos;

@@ -463,6 +463,10 @@ impl MoveBase for Move32 {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[deprecated(
+    since = "1.6.0",
+    note = "2.0.0 で削除予定。着手前の探索用情報の型は consumer 側で定義してください"
+)]
 pub struct Move32Metadata {
     piece_after_move: Piece,
     captured_piece: Piece,
@@ -471,6 +475,8 @@ pub struct Move32Metadata {
     is_drop: bool,
     from_to_index: u16,
 }
+// 1.x の互換実装内で型を参照する。
+#[allow(deprecated)]
 impl Move32Metadata {
     const NO_FROM_TO_INDEX: u16 = u16::MAX;
 
@@ -796,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // 1.x の Move32Metadata のレイアウトと index 表現を検査する。
     fn move32_metadata_uses_a_compact_optional_index_sentinel() {
         let metadata = Move32Metadata::new(Piece::B_PAWN, Piece::NONE, Some(123));
         let absent = Move32Metadata::with_from_to_index(

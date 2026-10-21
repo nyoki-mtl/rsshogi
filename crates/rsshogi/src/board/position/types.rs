@@ -377,6 +377,11 @@ impl MoveApplyFacts {
 
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。MoveApplyFacts の moved_piece_after と to を参照してください"
+    )]
+    #[allow(deprecated)] // 1.x の探索スタック用の型を返す互換変換を維持する。
     pub const fn search_stack_site(self) -> MoveStackSiteFacts {
         MoveStackSiteFacts { moved_piece: self.moved_piece_after, to: self.to }
     }
@@ -402,6 +407,10 @@ impl MoveApplyFacts {
 
 /// サーチスタックの継続サイトに必要な指し手適用後の情報。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[deprecated(
+    since = "1.6.0",
+    note = "2.0.0 で削除予定。探索スタック用の型は consumer 側で定義してください"
+)]
 pub struct MoveStackSiteFacts {
     pub moved_piece: Piece,
     pub to: Square,

@@ -1,7 +1,5 @@
 # rsshogi-avx2
 
-Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
-
 `rsshogi-avx2` は、AVX2 対応 x86_64 CPU 向けに最適化した `rsshogi` パッケージです。
 import 名は標準版と同じ `rsshogi` で、公開 API は共通です。
 

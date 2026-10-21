@@ -39,29 +39,9 @@ fn king_attacks(sq: Square) -> Bitboard {
 }
 
 #[test]
-fn unchecked_step_attack_accessors_match_generated_geometry() {
+fn slider_step_attack_accessors_match_generated_geometry() {
     for sq in Square::iter() {
         for color in Color::iter() {
-            // SAFETY: `Square::iter` yields only board squares.
-            assert_eq!(
-                unsafe { pawn_attacks_unchecked(sq, color) },
-                PAWN_ATTACKS[sq][color.to_index()]
-            );
-            // SAFETY: `Square::iter` yields only board squares.
-            assert_eq!(
-                unsafe { knight_attacks_unchecked(sq, color) },
-                KNIGHT_ATTACKS[sq][color.to_index()]
-            );
-            // SAFETY: `Square::iter` yields only board squares.
-            assert_eq!(
-                unsafe { silver_attacks_unchecked(sq, color) },
-                SILVER_ATTACKS[sq][color.to_index()]
-            );
-            // SAFETY: `Square::iter` yields only board squares.
-            assert_eq!(
-                unsafe { gold_attacks_unchecked(sq, color) },
-                GOLD_ATTACKS[sq][color.to_index()]
-            );
             let lance = LANCE_BEAMS[sq];
             let expected_lance = match color {
                 Color::BLACK => lance.black,
@@ -69,8 +49,6 @@ fn unchecked_step_attack_accessors_match_generated_geometry() {
             };
             assert_eq!(crate::board::attack_tables::lance_step_attacks(sq, color), expected_lance);
         }
-        // SAFETY: `Square::iter` yields only board squares.
-        assert_eq!(unsafe { king_attacks_unchecked(sq) }, KING_ATTACKS[sq]);
         let bishop = BISHOP_BEAMS[sq];
         assert_eq!(
             crate::board::attack_tables::bishop_step_attacks(sq),

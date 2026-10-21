@@ -5,6 +5,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-21
+
+`moved_piece_before` と `moved_piece_before_move`、通常の着手結果 `MoveApplyFacts`、
+`clone_for_search`、反復判定、容量確保 API は引き続き提供する。
+二歩の照会 `has_pawn_on_file` と利きの primitive `rook_rank_attacks` も維持する。
+
+### Deprecated
+
+- 探索用のキー予測、着手前メタデータ、探索スタック用の型、予約領域専用の着手、
+  履歴保持上限の設定と、未使用の補助 API を非推奨にした。
+  すべて 1.x 中は従来のシグネチャと動作を維持し、2.0.0 で削除予定とする。
+  対象と移行方法は [1.6.0 の移行ガイド](docs/book/src/getting-started/migration-1.6.md) を参照する。
+
+### Performance
+
+- `Position::clone()` の履歴チャンクの複製方法を改善した。
+  全履歴の独立した所有権と、事前確保済みの容量を維持する。
+- `Position::clone_from()` が複製先の履歴領域を再利用する。
+  全履歴と複製元の予約容量を維持し、複製先に余る領域は保持する。
+  同じ保存先へ局面を繰り返し複製する場合に利用できる。
+- `Position::clone_for_search()` が根履歴の board key 索引を準備する。
+  一致候補がない場合だけ根以前の千日手走査を省き、一致候補がある場合は従来の詳細判定を行う。
+  連続王手と持ち駒の優劣を含む判定の意味は変えない。
+  索引構築と照会には費用があり、すべての局面で高速化するものではない。
+- `rook_rank_attacks()` を専用実装から `rook_attacks()` と段マスクの合成に変更した。
+  戻り値は維持するが、従来実装との速度の同等性は保証しない。
+
+### Maintenance
+
+- bindings 内部の未使用 getter 3 件と開発用依存 `shogi_core` を削除した。
+- 計測、配置実験、外部データ照合用の example は source と再現手順を維持し、crates.io 配布から除外した。
+  `sfen_roundtrip` は配布に含める。
+- Python の配布物から `__pycache__` と `.pyc` を除外した。
+- 探索連携の文書を `MoveApplyFacts` と `current_state_cache()` の実装に合わせて修正した。
+
 ## [1.5.1] - 2026-10-19
 
 ### Fixed
@@ -619,7 +654,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.3.1...v1.4.0

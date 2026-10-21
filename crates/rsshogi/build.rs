@@ -35,8 +35,6 @@ use crate::types::SquareTable;\n\
 
     // 滑り駒の攻撃テーブル
     output.push_str(&generate_slider_beams());
-    output.push_str(&generate_rook_rank_extraction_masks());
-    output.push_str(&generate_bishop_diagonal_extraction_masks());
     output.push_str(&generate_check_candidate_table());
 
     // ファイルに書き込み
@@ -846,20 +844,12 @@ fn generate_slider_beams() -> String {
         let west_reversed = raw_bitboard_bits(west).reverse_bits();
         let _ = writeln!(
             output,
-            "    RookRayBits {{ e: {east}u128, w: {west}u128, e_raw: {east_raw}u128, s_raw: {south_raw}u128, n_reversed: {north_reversed}u128, w_reversed: {west_reversed}u128 }},"
+            "    RookRayBits {{ e_raw: {east_raw}u128, s_raw: {south_raw}u128, n_reversed: {north_reversed}u128, w_reversed: {west_reversed}u128 }},"
         );
     }
     output.push_str("]);\n\n");
 
     output
-}
-
-fn generate_rook_rank_extraction_masks() -> String {
-    String::new()
-}
-
-fn generate_bishop_diagonal_extraction_masks() -> String {
-    String::new()
 }
 
 fn generate_lance_beams(sq: i8) -> (u128, u128) {

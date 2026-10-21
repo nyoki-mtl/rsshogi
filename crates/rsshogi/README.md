@@ -1,7 +1,5 @@
 # rsshogi
 
-Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
-
 `rsshogi` は、将棋局面の操作、合法手生成、1 手詰め判定、棋譜や定跡の入出力を提供する Rust ライブラリである。
 
 ```rust

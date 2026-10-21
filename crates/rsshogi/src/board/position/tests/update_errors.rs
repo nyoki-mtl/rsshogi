@@ -17,6 +17,7 @@ fn assert_update_error(
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用着手が失敗した場合の状態不変性を検査する。
 fn fallible_updates_reject_invalid_moves_without_mutation() {
     let mut pos = hirate_position();
     for mv in [Move32::from_raw(0x4400), Move32::MOVE_NONE, Move32::from_raw(0xffff)] {
@@ -103,6 +104,7 @@ fn position_state_import_rejects_invalid_representation_before_mutation() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索専用着手が失敗した場合の状態不変性を検査する。
 fn ply_limits_reject_before_mutation_and_keep_maximum_ply_undoable() {
     let mut state = generate_position_state(&hirate_position());
     state.ply = u16::MAX - 1;

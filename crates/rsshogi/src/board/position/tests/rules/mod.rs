@@ -9,5 +9,6 @@ mod declaration_win;
 mod discovered_checks;
 mod drops;
 mod helpers;
+mod indexed_repetition;
 mod repetition;
 mod split_legality;

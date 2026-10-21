@@ -863,20 +863,10 @@ impl PyMoveType {
     pub(crate) fn from_move_type(inner: MoveType) -> Self {
         Self { inner }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> MoveType {
-        self.inner
-    }
 }
 
 impl PyRepetitionState {
     pub(crate) fn from_state(inner: RepetitionState) -> Self {
         Self { inner }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> RepetitionState {
-        self.inner
     }
 }

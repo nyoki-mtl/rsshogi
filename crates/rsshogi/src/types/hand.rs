@@ -95,6 +95,10 @@ impl Hand {
             None => hand,
         }
     }
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。checked_sub を使い、枚数不足時の扱いを呼び出し側で決めてください"
+    )]
     pub const fn sub_one(hand: Self, p: HandPiece) -> Self {
         match hand.checked_sub(p, 1) {
             Some(v) => v,
@@ -120,24 +124,31 @@ impl Hand {
             && a.count(HandPiece::ROOK) >= b.count(HandPiece::ROOK)
             && a.count(HandPiece::GOLD) >= b.count(HandPiece::GOLD)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn pawn_count(self) -> u32 {
         self.count(HandPiece::PAWN)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn lance_count(self) -> u32 {
         self.count(HandPiece::LANCE)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn knight_count(self) -> u32 {
         self.count(HandPiece::KNIGHT)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn silver_count(self) -> u32 {
         self.count(HandPiece::SILVER)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn bishop_count(self) -> u32 {
         self.count(HandPiece::BISHOP)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn rook_count(self) -> u32 {
         self.count(HandPiece::ROOK)
     }
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。Hand::count を使ってください")]
     pub const fn gold_count(self) -> u32 {
         self.count(HandPiece::GOLD)
     }

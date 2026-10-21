@@ -1,9 +1,5 @@
 # rsshogi
 
-この文書は rsshogi 1.5.1 を対象とする。
-Native Book は独立圧縮ブロックを持つ wire version 4 を使用する。
-旧定跡 API の削除を含むため、更新時は移行手順を確認する。
-
 `rsshogi` は、将棋局面の表現、合法手生成、1 手詰め判定、棋譜や定跡の入出力、深層学習向け教師データの操作を提供する MIT ライセンスの Rust ライブラリおよび Python パッケージである。
 探索エンジンや学習パイプラインの基盤として再利用できるよう、ヒープ確保を排した高速な局面操作プリミティブと、外部データ形式との厳密なバイナリ互換性を兼ね備える。
 
@@ -40,7 +36,7 @@ Rust では `Cargo.toml` に `rsshogi` を追加する。
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.5.1", features = ["records", "book"] }
+rsshogi = { version = "1.6.0", features = ["records", "book"] }
 ```
 
 ```rust

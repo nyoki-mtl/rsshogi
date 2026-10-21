@@ -1,6 +1,6 @@
 [package]
 name = "rsshogi"
-version = "1.5.1"
+version = "1.6.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -8,18 +8,23 @@ description = "Reusable Rust shogi primitives for board state, move generation, 
 repository = "https://github.com/nyoki-mtl/rsshogi"
 keywords = ["shogi"]
 categories = ["games"]
-exclude = ["src/bin/**"]
+exclude = [
+    "src/bin/**",
+    "examples/native_book_layout_probe.rs",
+    "examples/native_book_measure.rs",
+    "examples/native_book_ybb_verify.rs",
+    "examples/sazpack_measure.rs",
+    "examples/sbinpack_size_breakdown.rs",
+    "examples/sbk_open_measure.rs",
+]
 
-# We intend to publish only this crate to crates.io (B案).
-# Python bindings are provided separately via crates/rsshogi-py.
+# crates.io には本クレートを公開し、Python bindings は別パッケージで配布する。
 publish = true
 
 [dependencies]
 thiserror = "2"
 log = "0.4"
-# data-only crates: records feature 専用（非 data 利用ゼロを grep 確認済み）。
-# optional 化して `records` の dep: でのみ引くことで、エンジンビルド（data 系 off）では
-# これらの crate を一切コンパイルしない（task 0421 / Decision 4 の compile 削減の要）。
+# 棋譜処理用の依存は、records feature を有効にした場合だけコンパイルする。
 encoding_rs = { version = "0.8", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -30,11 +35,9 @@ zstd = { version = "0.13", optional = true, default-features = false }
 default = []
 hash-128 = []
 
-# ─── Data ecosystem features (task 0421 / Decision 4: Option B-split) ───
-# エンジン consumer（nnue/dfpn/az）は default（data 系 off）でビルドし、
-# py が必要分を opt-in する。粒度は consumer の実利用に合わせる。
+# 棋譜、定跡、学習データ用の機能は用途に応じて個別に有効化する。
 
-# policy-labels: labels::policy::CompactMoveLabel 等。py + az が使用（az 単独有効化のため独立）。
+# policy-labels: labels::policy::CompactMoveLabel 等の Policy ラベル変換。
 policy-labels = []
 
 # position-serialization: packed_sfen / huffman_coded_pos / bit_io。records が require。
@@ -73,7 +76,6 @@ python-data = ["book", "records", "position-serialization", "svg", "validation"]
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
-shogi_core = "0.1.5"
 proptest = { version = "1.4", default-features = false, features = ["std"] }
 # 統合テスト（tests/perft.rs・tests/movegen_integration.rs）が JSON 期待値の
 # deserialize で使う。lib の serde は records feature の optional dep だが、テストは
