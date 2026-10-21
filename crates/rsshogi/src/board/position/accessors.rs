@@ -2,9 +2,11 @@ use super::Position;
 use super::types::{BoardArray, Ply};
 use crate::board::bitboard_set::BitboardSet;
 use crate::board::zobrist::ZobristKey;
-use crate::types::{
-    Bitboard, Color, File, Hand, Move, Move32, Move32Metadata, MoveBase, Piece, PieceType, Square,
-};
+use crate::types::{Bitboard, Color, File, Hand, Move, Move32, MoveBase, Piece, PieceType, Square};
+
+// 1.x の互換 API の返り値。
+#[allow(deprecated)]
+use crate::types::Move32Metadata;
 
 impl Position {
     /// 指定マスのPieceを取得。
@@ -219,6 +221,11 @@ impl Position {
     /// 1 回で取りたいときに使う。
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。着手前の探索用情報は consumer 側で構築してください"
+    )]
+    #[allow(deprecated)] // 1.x のメタデータ返却実装で非推奨の型と alias を維持する。
     pub fn move32_metadata(&self, mv: Move32) -> Move32Metadata {
         let piece_after =
             if mv.has_piece_info() { mv.piece_after_move() } else { self.moved_piece_after(mv) };
@@ -242,6 +249,11 @@ impl Position {
     /// `Move32` を探索向けに分類したメタデータを返す。
     #[must_use]
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。着手前の探索用情報は consumer 側で構築してください"
+    )]
+    #[allow(deprecated)] // 1.x のメタデータ返却実装で非推奨の型と alias を維持する。
     pub fn classify_move32(&self, mv: Move32) -> Move32Metadata {
         self.move32_metadata(mv)
     }
@@ -328,6 +340,10 @@ impl Position {
 
     /// 指定した複数の駒種のビットボードを取得。
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。pieces_by_type の結果の論理和を使ってください"
+    )]
     pub fn pieces_by_types(&self, piece_types: &[PieceType]) -> Bitboard {
         let mut out = Bitboard::EMPTY;
         for &piece_type in piece_types {
@@ -338,6 +354,10 @@ impl Position {
 
     /// 指定した複数の駒種のビットボードを取得（配列版）。
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。pieces_by_type の結果の論理和を使ってください"
+    )]
     pub fn pieces_by_types_array<const N: usize>(&self, piece_types: [PieceType; N]) -> Bitboard {
         let mut out = Bitboard::EMPTY;
         for &piece_type in &piece_types {
@@ -390,6 +410,10 @@ impl Position {
 
     /// 指定色・複数駒種のビットボードを取得。
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。pieces_for の結果の論理和を使ってください"
+    )]
     pub fn pieces_for_types(&self, piece_types: &[PieceType], color: Color) -> Bitboard {
         let mut out = Bitboard::EMPTY;
         for &piece_type in piece_types {
@@ -400,6 +424,10 @@ impl Position {
 
     /// 指定色・複数駒種のビットボードを取得（配列版）。
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。pieces_for の結果の論理和を使ってください"
+    )]
     pub fn pieces_for_types_array<const N: usize>(
         &self,
         piece_types: [PieceType; N],

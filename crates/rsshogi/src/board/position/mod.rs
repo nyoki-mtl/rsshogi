@@ -157,18 +157,23 @@ pub use huffman_coded_pos::{HuffmanCodedPos, HuffmanCodedPosError};
 #[cfg(feature = "position-serialization")]
 pub use packed_sfen::{PackedSfen, PackedSfenError, PackedSfenSink};
 
+// 1.x の公開パスを維持する。
+#[allow(deprecated)]
+pub use types::MoveStackSiteFacts;
+
 pub use types::{
     BoardArray, CapturedPieceDelta, DeclarationDetail, DeclarationEvaluation, MoveApplyFacts,
-    MoveDelta32, MoveError, MoveStackSiteFacts, PackedPiece, Ply, ValidationError, ValidationIssue,
-    ValidationReport,
+    MoveDelta32, MoveError, PackedPiece, Ply, ValidationError, ValidationIssue, ValidationReport,
 };
 
 // ANCHOR: position_struct
 /// 将棋の盤面状態を管理する構造体
 ///
 /// キャッシュ効率のため、頻繁にアクセスされるデータを先頭に配置
+///
+/// [`Clone::clone_from`] は複製先の履歴領域を再利用する。
+/// 複製元の予約容量も継承し、複製先に余る領域は以後の再利用のために保持する。
 #[repr(C, align(64))]
-#[derive(Clone)]
 pub struct Position {
     /// `Piece` を81要素並べた盤面
     pub(super) board: BoardArray,
@@ -201,6 +206,40 @@ pub struct Position {
     pub(super) king_square: [Square; Color::COUNT],
 }
 // ANCHOR_END: position_struct
+
+impl Clone for Position {
+    #[inline]
+    // derive と同じフィールド単位の Clone を維持し、通常の複製のコード生成を揃える。
+    #[allow(clippy::clone_on_copy)]
+    fn clone(&self) -> Self {
+        Self {
+            board: Clone::clone(&self.board),
+            bitboards: Clone::clone(&self.bitboards),
+            hands: Clone::clone(&self.hands),
+            side_to_move: Clone::clone(&self.side_to_move),
+            entering_king_rule: Clone::clone(&self.entering_king_rule),
+            entering_king_point: Clone::clone(&self.entering_king_point),
+            ply: Clone::clone(&self.ply),
+            st_index: Clone::clone(&self.st_index),
+            state_stack: Clone::clone(&self.state_stack),
+            king_square: Clone::clone(&self.king_square),
+        }
+    }
+
+    #[inline]
+    fn clone_from(&mut self, source: &Self) {
+        self.state_stack.clone_from(&source.state_stack);
+        self.board = source.board;
+        self.bitboards = source.bitboards;
+        self.hands = source.hands;
+        self.side_to_move = source.side_to_move;
+        self.entering_king_rule = source.entering_king_rule;
+        self.entering_king_point = source.entering_king_point;
+        self.ply = source.ply;
+        self.st_index = source.st_index;
+        self.king_square = source.king_square;
+    }
+}
 
 impl Default for Position {
     fn default() -> Self {
@@ -377,7 +416,7 @@ impl Position {
         self.st_index
     }
 
-    /// recursive search で使用する追加 state slot を事前確保する。
+    /// 通常の着手を含む追加 state slot を事前確保する。
     ///
     /// 現在の head から `additional_states` 回の連続 push が `StateStack` の
     /// chunk を増設しないことを保証する。予約 token は管理しないため、undo 後は
@@ -398,7 +437,7 @@ impl Position {
         }
     }
 
-    /// 次の search state を allocation なしで積めるかを返す。
+    /// 次の state を allocation なしで積めるかを返す。
     ///
     /// strict reservation の残量ではなく、現在の head の次に物理 slot があるかを表す。
     #[must_use]

@@ -46,8 +46,6 @@ struct BishopRayBits {
 
 #[derive(Clone, Copy)]
 struct RookRayBits {
-    e: u128,
-    w: u128,
     e_raw: u128,
     s_raw: u128,
     n_reversed: u128,
@@ -91,26 +89,28 @@ const fn build_file_attack_table() -> [[u16; 512]; 9] {
 
 const FILE_ATTACKS: [[u16; 512]; 9] = build_file_attack_table();
 
-/// Returns the pseudo-legal pawn attacks from `sq` for `color`.
+/// 指定色の歩の、指定マスからの利きを返す。
 ///
 /// # Safety
 ///
-/// `sq` must be a valid board square.
+/// `sq` は盤上の有効なマスでなければならない。
 #[must_use]
 #[inline]
+#[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。PAWN_ATTACKS を参照してください")]
 pub unsafe fn pawn_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     // SAFETY: the caller guarantees `sq` is in the 81-entry generated table;
     // `Color` has exactly two valid discriminants and indexes its two entries.
     unsafe { *PAWN_ATTACKS.as_slice().get_unchecked(sq.to_index()).get_unchecked(color.to_index()) }
 }
 
-/// Returns the pseudo-legal knight attacks from `sq` for `color`.
+/// 指定色の桂の、指定マスからの利きを返す。
 ///
 /// # Safety
 ///
-/// `sq` must be a valid board square.
+/// `sq` は盤上の有効なマスでなければならない。
 #[must_use]
 #[inline]
+#[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。KNIGHT_ATTACKS を参照してください")]
 pub unsafe fn knight_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     // SAFETY: the caller guarantees `sq` is in the 81-entry generated table;
     // `Color` has exactly two valid discriminants and indexes its two entries.
@@ -119,13 +119,14 @@ pub unsafe fn knight_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     }
 }
 
-/// Returns the pseudo-legal silver attacks from `sq` for `color`.
+/// 指定色の銀の、指定マスからの利きを返す。
 ///
 /// # Safety
 ///
-/// `sq` must be a valid board square.
+/// `sq` は盤上の有効なマスでなければならない。
 #[must_use]
 #[inline]
+#[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。SILVER_ATTACKS を参照してください")]
 pub unsafe fn silver_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     // SAFETY: the caller guarantees `sq` is in the 81-entry generated table;
     // `Color` has exactly two valid discriminants and indexes its two entries.
@@ -134,43 +135,35 @@ pub unsafe fn silver_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     }
 }
 
-/// Returns the pseudo-legal gold attacks from `sq` for `color`.
+/// 指定色の金の、指定マスからの利きを返す。
 ///
 /// # Safety
 ///
-/// `sq` must be a valid board square.
+/// `sq` は盤上の有効なマスでなければならない。
 #[must_use]
 #[inline]
+#[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。GOLD_ATTACKS を参照してください")]
 pub unsafe fn gold_attacks_unchecked(sq: Square, color: Color) -> Bitboard {
     // SAFETY: the caller guarantees `sq` is in the 81-entry generated table;
     // `Color` has exactly two valid discriminants and indexes its two entries.
     unsafe { *GOLD_ATTACKS.as_slice().get_unchecked(sq.to_index()).get_unchecked(color.to_index()) }
 }
 
-/// Returns the pseudo-legal king attacks from `sq`.
+/// 玉の、指定マスからの利きを返す。
 ///
 /// # Safety
 ///
-/// `sq` must be a valid board square.
+/// `sq` は盤上の有効なマスでなければならない。
 #[must_use]
 #[inline]
+#[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。KING_ATTACKS を参照してください")]
 pub unsafe fn king_attacks_unchecked(sq: Square) -> Bitboard {
     // SAFETY: the caller guarantees `sq` is in the 81-entry generated table.
     unsafe { *KING_ATTACKS.as_slice().get_unchecked(sq.to_index()) }
 }
 
 #[inline]
-fn nearest_blocker(ray_bits: u128, occupied_bits: u128, increasing: bool) -> Option<usize> {
-    let blockers = ray_bits & occupied_bits;
-    if blockers == 0 {
-        return None;
-    }
-
-    let index = if increasing { blockers.trailing_zeros() } else { 127 - blockers.leading_zeros() };
-    Some(index as usize)
-}
-
-#[inline]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
     let blockers = ray_bits & occupied_bits;
     ray_bits & (blockers ^ blockers.wrapping_sub(1))
@@ -317,16 +310,11 @@ pub fn rook_file_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
     Bitboard::from_packed_bits(attacks)
 }
 
+/// 指定マスからの飛車の横利きを返す。
 #[must_use]
 #[inline]
 pub fn rook_rank_attacks(sq: Square, occupied: Bitboard) -> Bitboard {
-    let beams = ROOK_RAY_BITS[sq.to_index()];
-    let occupied_bits = occupied.packed_bits();
-    let east = increasing_ray_attacks(beams.e, occupied_bits);
-    let west = nearest_blocker(beams.w, occupied_bits, false)
-        .map_or(beams.w, |blocker| beams.w ^ ROOK_RAY_BITS[blocker].w);
-    let attacks = east | west;
-    Bitboard::from_packed_bits(attacks)
+    rook_attacks(sq, occupied) & Bitboard::rank_mask(sq.rank())
 }
 
 #[must_use]

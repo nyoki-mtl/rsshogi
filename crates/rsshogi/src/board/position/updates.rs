@@ -202,6 +202,10 @@ impl Position {
     ///
     /// `mv` は合法手、`gives_check` はその手の王手判定結果でなければならない。
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。探索専用の着手と履歴管理は consumer 側で実装してください"
+    )]
     pub fn try_apply_search_move32_with_facts(
         &mut self,
         mv: Move32,
@@ -768,6 +772,10 @@ impl Position {
     /// allocation なしで利用できる次の物理 slot がない場合は、局面を変更せず
     /// [`MoveError::StateCapacityExceeded`] を返す。
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。探索専用の着手と履歴管理は consumer 側で実装してください"
+    )]
     pub fn try_apply_search_null_move(&mut self) -> Result<(), MoveError> {
         if !self.state_stack().has_prepared_next() {
             return Err(MoveError::StateCapacityExceeded);
@@ -864,6 +872,10 @@ impl Position {
     ///
     /// 巻き戻せる state がない場合は [`MoveError::StackUnderflow`] を返す。
     #[inline]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。探索専用の着手と履歴管理は consumer 側で実装してください"
+    )]
     pub fn undo_search_null_move(&mut self) -> Result<(), MoveError> {
         self.undo_null_move_impl::<false>()
     }

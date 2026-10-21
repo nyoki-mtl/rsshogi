@@ -1,5 +1,6 @@
 use super::helpers::apply_usi_move;
 use super::*;
+use crate::types::HandPiece;
 
 const fn is_promoted_piece(piece: Piece) -> bool {
     matches!(
@@ -211,7 +212,7 @@ fn test_apply_move_variants() {
     let state_stack = capture_pos.state_stack();
     let state = state_stack.current();
     assert_eq!(state.cold.captured_piece(), captured);
-    assert_eq!(capture_pos.hand(Color::BLACK).pawn_count(), 1);
+    assert_eq!(capture_pos.hand(Color::BLACK).count(HandPiece::PAWN), 1);
 
     let sfen = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPP1PPPP/1B5R1/LNSGKGSNL b P 1";
     let mut drop_pos = crate::board::position_from_sfen(sfen).unwrap();
@@ -221,7 +222,10 @@ fn test_apply_move_variants() {
     drop_pos.apply_move32(mv);
     let placed_piece = drop_pos.piece_on(to);
     assert_eq!(placed_piece, Piece::B_PAWN);
-    assert_eq!(drop_pos.hand(Color::BLACK).pawn_count(), initial_hand.pawn_count() - 1);
+    assert_eq!(
+        drop_pos.hand(Color::BLACK).count(HandPiece::PAWN),
+        initial_hand.count(HandPiece::PAWN) - 1
+    );
     assert_eq!(drop_pos.state_stack().current().cold.captured_piece(), Piece::NONE);
 
     let sfen = "lnsgkgsnl/1r5b1/2R6/ppppppppp/9/9/PPPPPPPPP/1B7/LNSGKGSNL b - 1";
@@ -246,6 +250,7 @@ fn test_apply_move_variants() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x のメタデータ API の分類結果を検査する。
 fn test_move32_metadata_classifies_capture_drop_and_promotion() {
     let start = crate::board::hirate_position();
     let quiet = start.move32_from_move(Move::from_usi("7g7f").expect("valid move"));

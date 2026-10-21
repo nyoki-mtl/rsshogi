@@ -8,24 +8,40 @@
 ## 1. `StateStack` の 64 要素チャンク分割ストレージ
 
 単純な `Vec<StateInfo>` で履歴スタックを実装すると、探索深さや長手数の棋譜で `Vec` の容量（capacity）を超えた瞬間にヒープの再確保と全要素のメモリコピーが発生し、さらに既存要素への参照アドレスが無効化される。
-`rsshogi` の `StateStack` は、固定長 64 要素の配列チャンク `Box<[StateInfo; 64]>`（`STATE_CHUNK_CAPACITY = 64`）を束ねたセグメント構造を採用している。
+`StateStack` は、固定長 64 要素の配列を `Box` に格納するセグメント構造を採用している。
+履歴は添字で参照し、着手で head を進め、undo で戻す。
 
 ```rust
-pub(crate) const STATE_CHUNK_CAPACITY: usize = 64;
-const STATE_CHUNK_SHIFT: usize = 6;
-const STATE_CHUNK_MASK: usize = STATE_CHUNK_CAPACITY - 1;
-
-pub(crate) struct StateStack {
-    chunks: Vec<Box<[StateInfo; STATE_CHUNK_CAPACITY]>>,
-    len: usize,
+pub struct StateStack {
+    repetition_index: Option<Arc<RepetitionIndex>>,
+    chunks: Vec<Box<[StateInfo; 64]>>,
+    head: StateIndex,
 }
 ```
 
 ### セグメント構造の利点
 
-1. **インデックス計算がビットシフトとマスクのみで完結する**：チャンクサイズが 2 のべき乗（`64 = 2^6`）であるため、深さ `index` の要素は `chunks[index >> 6][index & 63]` で除算なしに直接参照できる。
-2. **アドレス安定性とヒープ再確保の排除**：新しいチャンクが必要になった場合でも既存の `Box<[StateInfo; 64]>` は一切移動しない。また、`pop()` 時は `self.len -= 1` とするだけで確保済みのチャンクを解放せずに保持するため、探索木の昇降でヒープアロケーションは一度も発生しない。
-3. **履歴末尾の高速部分複製（`clone_suffix`）**：並列探索のワーカー起動や 1 手詰めソルバの作業局面生成で使われる `Position::clone_for_search_bounded(max_back_plies)` は、`StateStack::clone_suffix` を呼び出す。何百手もの全対局履歴をコピーするのではなく、直近の必要な手数分（および `plies_from_null` の範囲）だけを新しい `StateStack` へ切り出してコピーし、巻き戻し不可能な過去のチャンク複製コストを省いている。
+1. **添字による直接参照**：深さ `index` の要素をチャンクとチャンク内の位置に分けて参照する。
+   千日手判定も同じ添字を使い、同一手番の履歴を直接読む。
+2. **アドレス安定性と容量の再利用**：新しいチャンクが増えても既存の配列は移動しない。
+   undo 後も確保済みチャンクを保持し、事前確保した範囲では追加確保を行わない。
+3. **必要な履歴の独立した複製**：`clone_for_search()` は null move 以降の保持対象を複製する。
+   通常の `clone()` は全履歴と予約容量を維持する。
+
+通常の `Position::clone()` は boxed chunk を直接複製し、履歴を私有する独立した局面を作る。
+`clone_for_search()` が構築する board key の索引は clone 間で共有するが、履歴本体は共有しない。
+索引に一致候補がない場合だけ根以前の走査を省き、一致した場合は従来の詳細判定を行う。
+
+`Position::clone_from(&source)` は複製先の boxed chunk を再利用し、有効な履歴だけを上書きする。
+複製元の予約容量を収容できるだけの chunk があれば、新たに確保しない。
+不足する chunk は確保し、複製先に余る chunk は以後の再利用のために保持する。
+盤面、全履歴、入玉設定、反復索引は複製元に合わせて置き換える。
+複製先に以前の view や pointer を保持している場合は、状態の意味が変わるため再取得を要する。
+
+`set_max_repetition_ply()` は 1.6.0 から非推奨で、2.0.0 で削除予定である。
+既定値は `Ply::MAX` であり、長い履歴を自動的に短縮しない。
+明示的な上限を下げると長周期の千日手や連続王手を見逃し得るため、その近似方針は consumer 側で管理する。
+`clone_for_search()` 自体は引き続き提供する。
 
 ---
 
@@ -36,8 +52,8 @@ pub(crate) struct StateStack {
 ```rust
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StateInfo {
-    pub(crate) hot: StateHot,
     pub(crate) cold: StateColdPayload,
+    pub(crate) hot: StateHot,
 }
 ```
 
@@ -101,12 +117,15 @@ pub(crate) struct StateInfo {
 ## 4. Null Move（パス手）の 2 経路設計
 
 手番だけを相手に渡す Null Move（パス手）には、用途に応じて **`ply`（対局手数）を進める経路** と **`ply` を進めない探索専用経路** の 2 種類が実装されている。
-内部的には共通のジェネリック実装 `apply_null_move_internal<const ADVANCE_GAME_PLY: bool>` / `undo_null_move_internal<const ADVANCE_GAME_PLY: bool>` によって分岐なしでコンパイルされる。
+内部的には共通のジェネリック実装 `apply_null_move_impl<const ADVANCE_GAME_PLY: bool>` と `undo_null_move_impl<const REWIND_GAME_PLY: bool>` で処理する。
 
 | API ペア | 定数パラメータ | 動作の違いと主な用途 |
 | :--- | :--- | :--- |
-| `apply_null_move` / `undo_null_move` | `ADVANCE_GAME_PLY = true` | `self.ply` を `+1` / `-1` する。王手がかかっている局面での呼び出しはアサーション違反となる。外部からの手番反転テストや汎用パス処理で使用する。 |
-| `try_apply_search_null_move` / `undo_search_null_move` | `ADVANCE_GAME_PLY = false` | **`self.ply` を一切変化させない**。王手中は `false` を返して安全に棄却する。探索エンジンの Null Move Pruning において、実対局の手数（`ply`）を汚さずに手番だけを切り替えるために使用する。 |
+| `apply_null_move` / `undo_null_move` | `true` | 対局手数を `+1` / `-1` する。王手がかかっていない局面で適用する。戻り値は `Result<(), MoveError>`。 |
+| `try_apply_search_null_move` / `undo_search_null_move` | `false` | 対局手数を変えない。適用には予約済み slot と王手がかかっていない局面が必要。戻り値は `Result<(), MoveError>` で、容量不足は `StateCapacityExceeded`。1.6.0 から非推奨で、2.0.0 で削除予定。 |
+
+事前確保した容量内の無確保動作は、通常の `apply_move32` と undo でも検査している。
+容量確保 API は維持し、探索専用の着手経路とは廃止対象を分ける。
 
 いずれの経路でも、新しい `StateInfo` が `StateStack` にプッシュされ、`key` と `board_key` には手番ハッシュ `Zobrist::side()` が XOR され、`plies_from_null` と `continuous_check` は `0` にリセットされる。
 これにより、Null Move を挟んだ前後の局面で誤って連続王手や不正な千日手遡及が発生しないことが保証される。

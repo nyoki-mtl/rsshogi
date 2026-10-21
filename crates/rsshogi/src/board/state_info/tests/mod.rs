@@ -3,8 +3,48 @@ use crate::board::test_support::move_from_usi_expect;
 use crate::board::zobrist::Zobrist;
 use crate::types::{Color, Hand, MOVE_NONE, Piece, PieceType};
 
+#[test]
+fn repetition_index_filters_only_old_candidates_and_respects_null_boundary() {
+    let mut stack = StateStack::new();
+    for i in 0..=8 {
+        if i > 0 {
+            stack.push_empty();
+        }
+        stack.current_mut().hot.board_key = ZobristKey::from_u64(i as u64);
+        stack.current_mut().hot.plies_from_null = i;
+    }
+    stack.prepare_repetition_index();
+    let hit = ZobristKey::from_u64(2);
+    let miss = ZobristKey::from_u64(99);
+    assert_eq!(stack.repetition_scan_limit(12, 12, hit), 12);
+    assert_eq!(stack.repetition_scan_limit(12, 12, miss), 4);
+    assert_eq!(stack.repetition_scan_limit(12, 3, miss), 3);
+
+    let mut clone = stack.clone();
+    assert!(Arc::ptr_eq(
+        stack.repetition_index.as_ref().unwrap(),
+        clone.repetition_index.as_ref().unwrap()
+    ));
+    assert!(stack.clone_suffix(4).repetition_index.is_none());
+    stack.pop().unwrap();
+    assert!(stack.repetition_index.is_none());
+    assert!(clone.repetition_index.is_some());
+    assert_eq!(stack.repetition_scan_limit(11, 11, miss), 11);
+    // SAFETY: clone は深さ 8 の stack を保持する。
+    unsafe { clone.pop_unchecked() };
+    assert!(clone.repetition_index.is_none());
+
+    stack.current_mut().hot.plies_from_null = 2;
+    stack.prepare_repetition_index();
+    assert_eq!(stack.repetition_scan_limit(11, 6, hit), 4);
+    assert_eq!(stack.repetition_scan_limit(11, 6, ZobristKey::from_u64(6)), 6);
+    stack.reset_sfen();
+    assert!(stack.repetition_index.is_none());
+}
+
 #[allow(clippy::cognitive_complexity)]
 fn assert_state_info_matches(actual: &StateInfo, expected: &StateInfo) {
+    assert_eq!(actual.cold.undo, expected.cold.undo);
     assert_eq!(actual.board_key, expected.board_key);
     assert_eq!(actual.key, expected.key);
     assert_eq!(actual.pawn_key, expected.pawn_key);
@@ -21,6 +61,25 @@ fn assert_state_info_matches(actual: &StateInfo, expected: &StateInfo) {
     assert_eq!(actual.repetition_type, expected.repetition_type);
     assert_eq!(actual.last_move(), expected.last_move());
     assert_eq!(actual.last_moved_piece_type(), expected.last_moved_piece_type());
+}
+
+#[test]
+fn clone_from_reuses_chunks_and_replaces_repetition_index() {
+    let mut source = StateStack::new();
+    source.prepare_additional(130);
+    source.prepare_repetition_index();
+    let mut target = StateStack::new();
+    target.prepare_additional(260);
+    let pointers: Vec<_> = target.chunks.iter().map(|chunk| chunk.as_ptr()).collect();
+    target.clone_from(&source);
+    assert_eq!(pointers, target.chunks.iter().map(|chunk| chunk.as_ptr()).collect::<Vec<_>>());
+    assert!(Arc::ptr_eq(
+        source.repetition_index.as_ref().unwrap(),
+        target.repetition_index.as_ref().unwrap()
+    ));
+    source.repetition_index = None;
+    target.clone_from(&source);
+    assert!(target.repetition_index.is_none());
 }
 
 #[test]
@@ -372,6 +431,31 @@ fn test_state_stack_clone_does_not_preserve_pointer_identity() {
     let cloned_ptr = std::ptr::from_ref(&cloned[idx]);
 
     assert_ne!(original, cloned_ptr, "cloned StateStack must be a different allocation");
+}
+
+#[test]
+fn clone_preserves_prepared_chunks_and_independent_entries() {
+    let mut stack = StateStack::new();
+    for value in 1..=70 {
+        stack.push_empty();
+        stack.current_mut().plies_from_null = value;
+    }
+    assert!(stack.prepare_additional(130));
+    let mut cloned = stack.clone();
+    assert_eq!(cloned.chunk_count(), stack.chunk_count());
+    assert_eq!(cloned.prepared_additional_capacity(), stack.prepared_additional_capacity());
+    for index in 0..=stack.current_index() {
+        assert_state_info_matches(&cloned[index], &stack[index]);
+        assert_ne!(std::ptr::from_ref(&cloned[index]), std::ptr::from_ref(&stack[index]));
+    }
+    cloned.current_mut().repetition_counter = 99;
+    assert_eq!(stack.current().repetition_counter, 0);
+    let chunks = cloned.chunk_count();
+    for _ in 0..130 {
+        cloned.push_for_move();
+    }
+    assert_eq!(cloned.chunk_count(), chunks);
+    assert_eq!(stack.current_index(), 70);
 }
 
 /// chunk 境界をまたぐ index 計算が正しく動作することを検証。

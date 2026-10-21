@@ -109,12 +109,6 @@ fn bench_key_probe(c: &mut Criterion) {
     c.bench_function("key_probe", |b| {
         b.iter(|| std::hint::black_box(std::hint::black_box(&pos).key()));
     });
-
-    c.bench_function("key_after_probe", |b| {
-        let mv = moves[0];
-        let probe = base.clone();
-        b.iter(|| std::hint::black_box(std::hint::black_box(&probe).key_after(mv)));
-    });
 }
 
 /// perft を apply / undo の総合指標として測る。

@@ -395,6 +395,7 @@ fn test_apply_move32_with_delta_promotion_move() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索スタック用変換と実際の着手結果の一致を検査する。
 fn test_apply_move32_with_facts_normal_move() {
     let mut pos = crate::board::hirate_position();
     let mv = move_from_usi(&pos, "7g7f");
@@ -487,6 +488,7 @@ fn test_apply_move32_with_facts_promotion_move() {
 }
 
 #[test]
+#[allow(deprecated)] // 1.x の探索スタック用変換と実際の着手結果の一致を検査する。
 fn test_apply_move32_with_facts_king_move() {
     let sfen = "4k4/9/9/9/9/9/9/9/4K4 b - 1";
     let mut pos = crate::board::position_from_sfen(sfen).unwrap();

@@ -23,7 +23,9 @@ use super::position::Position;
 use crate::board::zobrist::{Zobrist, ZobristKey};
 use crate::types::Bitboard;
 use crate::types::{Color, Hand, MOVE_NONE, Move32, Piece, PieceType, RepetitionState};
+use std::collections::HashSet;
 use std::ops::{Deref, DerefMut, Index};
+use std::sync::Arc;
 
 /// `StateInfo` 内でのスタック位置を表す型
 pub type StateIndex = usize;
@@ -108,6 +110,10 @@ impl CheckSquares {
     /// 圧縮表現を `PieceType::COUNT` 長の完全配列へ展開する。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。CheckSquares::get で必要な駒種を参照してください"
+    )]
     pub fn to_full_array(self) -> [Bitboard; PieceType::COUNT] {
         std::array::from_fn(|idx| self.get(PieceType::new(i8::try_from(idx).unwrap_or(i8::MAX))))
     }
@@ -732,6 +738,7 @@ type StateChunk = Box<[StateInfo; STATE_CHUNK_CAPACITY]>;
 ///
 /// - `pop` / `pop_unchecked` で外れた entry の参照
 /// - `reset_sfen` / `reset_with_position` 後の任意 entry の参照
+/// - `clone_from` によって内容を置き換えた複製先の entry の参照
 /// - `clone` / `clone_for_search` 後の別インスタンス間の pointer identity
 /// - `drop` 後の任意 entry の参照
 ///
@@ -741,6 +748,8 @@ type StateChunk = Box<[StateInfo; STATE_CHUNK_CAPACITY]>;
 /// 旧 entry は live ではあっても current ではなくなる。
 #[derive(Debug)]
 pub struct StateStack {
+    /// 探索開始時に固定した履歴。通常の clone 間では読み取り専用で共有する。
+    repetition_index: Option<Arc<RepetitionIndex>>,
     /// chunk のリスト。各 chunk は `Box` 配下の固定長配列で、grow しても再配置されない。
     chunks: Vec<StateChunk>,
 
@@ -749,7 +758,52 @@ pub struct StateStack {
 }
 // ANCHOR_END: state_stack_struct
 
+/// 根以前の反復候補を除外するための索引。
+///
+/// 持ち駒の優劣比較も候補に残すため、持ち駒を含まない board key を使う。
+/// 集合への一致だけでは反復と判定せず、必ず通常の履歴走査に戻す。
+#[derive(Debug)]
+struct RepetitionIndex {
+    root: StateIndex,
+    boards: HashSet<ZobristKey>,
+}
+
 impl StateStack {
+    #[cfg(test)]
+    pub(crate) fn reference_clone(&self) -> Self {
+        Self {
+            chunks: self.chunks.clone(),
+            head: self.head,
+            repetition_index: self.repetition_index.clone(),
+        }
+    }
+
+    /// 現在の根までの履歴を索引化する。
+    pub(crate) fn prepare_repetition_index(&mut self) {
+        let root = self.current_index();
+        let first = root.saturating_sub(usize::from(self.hot(root).plies_from_null));
+        let boards = (first..=root).map(|i| self.hot(i).board_key).collect();
+        self.repetition_index = Some(Arc::new(RepetitionIndex { root, boards }));
+    }
+
+    /// 索引で一致候補がない場合だけ、走査を根以後の経路に限定する。
+    #[inline]
+    pub(crate) fn repetition_scan_limit(
+        &self,
+        current: StateIndex,
+        plies: Ply,
+        key: ZobristKey,
+    ) -> Ply {
+        let Some(index) = &self.repetition_index else { return plies };
+        let Some(depth) = current.checked_sub(index.root) else { return plies };
+        // null move の境界が根以後にある場合、元の範囲ですでに十分短い。
+        if depth >= usize::from(plies) || index.boards.contains(&key) {
+            return plies;
+        }
+        // depth < plies なので Ply に収まる。
+        Ply::try_from(depth).expect("depth below plies must fit in Ply")
+    }
+
     #[inline(always)]
     const fn locate(idx: StateIndex) -> (usize, usize) {
         (idx / STATE_CHUNK_CAPACITY, idx % STATE_CHUNK_CAPACITY)
@@ -826,11 +880,12 @@ impl StateStack {
     #[must_use]
     pub fn new() -> Self {
         let chunks = vec![Self::new_chunk()];
-        Self { chunks, head: 0 }
+        Self { chunks, head: 0, repetition_index: None }
     }
 
     /// 探索開始時のリセット（root state のみ初期化し、追加 chunk は破棄）
     pub(crate) fn reset_sfen(&mut self) {
+        self.repetition_index = None;
         self.head = 0;
         self.chunks.truncate(1);
         self.chunks[0][0].reset_sfen();
@@ -1053,6 +1108,7 @@ impl StateStack {
 
         let popped = self.head;
         self.head = popped - 1;
+        self.invalidate_repetition_index_before_root();
         Some(popped)
     }
 
@@ -1064,7 +1120,16 @@ impl StateStack {
     pub(crate) unsafe fn pop_unchecked(&mut self) -> StateIndex {
         let popped = self.head;
         self.head = popped - 1;
+        self.invalidate_repetition_index_before_root();
         popped
+    }
+
+    /// 根より前の履歴を変更できる状態では、固定した集合を再利用しない。
+    #[inline]
+    fn invalidate_repetition_index_before_root(&mut self) {
+        if self.repetition_index.as_ref().is_some_and(|index| self.head < index.root) {
+            self.repetition_index = None;
+        }
     }
 
     /// 現在の深さ（スタックに積まれている `StateInfo` の数）を取得
@@ -1086,8 +1151,23 @@ impl Index<StateIndex> for StateStack {
 
 impl Clone for StateStack {
     fn clone(&self) -> Self {
-        let chunks = self.chunks.iter().map(|chunk| Box::new((**chunk).clone())).collect();
-        Self { chunks, head: self.head }
+        let chunks = self.chunks.clone();
+        Self { chunks, head: self.head, repetition_index: self.repetition_index.clone() }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        // 予約容量も継承し、複製先に余る chunk は次回のために保持する。
+        while self.chunks.len() < source.chunks.len() {
+            self.chunks.push(Self::new_chunk());
+        }
+        let (last_chunk, last_offset) = Self::locate(source.head);
+        for (target, source) in self.chunks[..last_chunk].iter_mut().zip(&source.chunks) {
+            target.as_mut_slice().clone_from_slice(source.as_slice());
+        }
+        self.chunks[last_chunk][..=last_offset]
+            .clone_from_slice(&source.chunks[last_chunk][..=last_offset]);
+        self.head = source.head;
+        self.repetition_index.clone_from(&source.repetition_index);
     }
 }
 

@@ -109,11 +109,14 @@ impl Position {
 
     /// `mv` を適用した後の盤面キー（持ち駒を含まない）を、局面を変更せずに求める。
     ///
-    /// 千日手判定用の第 2 キーを先読みしたい消費者向け。局面全体のキーは
-    /// [`Position::key_after`] を使う。
+    /// 持ち駒を含まない着手後の盤面キーを予測する互換 API。
     /// `mv` は現局面の合法手でなければならない。合法性は検査しない。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。キー予測は consumer 側で実装し、着手後のキーは key または board_key を参照してください"
+    )]
     pub fn board_key_after(&self, mv: Move32) -> ZobristKey {
         self.board_key_after_impl(mv)
     }
@@ -121,6 +124,10 @@ impl Position {
     /// `Move` 版の [`Position::board_key_after`]。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。キー予測は consumer 側で実装し、着手後のキーは key または board_key を参照してください"
+    )]
     pub fn board_key_after_move(&self, mv: Move) -> ZobristKey {
         self.board_key_after_impl(mv)
     }
@@ -156,16 +163,15 @@ impl Position {
 
     /// `mv` を適用した後の局面キーを、局面を変更せずに求める。
     ///
-    /// 主な用途は探索エンジンの置換表 prefetch で、
-    /// `key_after` でキーを確定 → engine 側で TT を prefetch → [`Position::apply_move32`]
-    /// の順に使う。prefetch の発行 API は本 crate には置かない
-    /// （置換表は engine の所有物であり、rsshogi は prefetch すべきアドレスを知り得ない）。
-    ///
     /// 戻り値は `mv` を適用した後の [`Position::key`] と一致する。
     /// `mv` は現局面の合法手でなければならない。合法性は検査しないため、
     /// 非合法手を渡した場合の戻り値は意味を持たない。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。キー予測は consumer 側で実装し、着手後のキーは key または board_key を参照してください"
+    )]
     pub fn key_after(&self, mv: Move32) -> ZobristKey {
         self.key_after_impl(mv)
     }
@@ -173,6 +179,10 @@ impl Position {
     /// `Move` 版の [`Position::key_after`]。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。キー予測は consumer 側で実装し、着手後のキーは key または board_key を参照してください"
+    )]
     pub fn key_after_move(&self, mv: Move) -> ZobristKey {
         self.key_after_impl(mv)
     }
@@ -182,6 +192,10 @@ impl Position {
     /// 盤上の駒も持ち駒も動かないため、手番キーとの XOR だけで求まる。
     #[inline]
     #[must_use]
+    #[deprecated(
+        since = "1.6.0",
+        note = "2.0.0 で削除予定。key() ^ Zobrist::side() を使ってください"
+    )]
     pub fn key_after_null(&self) -> ZobristKey {
         self.key() ^ Zobrist::side()
     }

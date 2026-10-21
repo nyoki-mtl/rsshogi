@@ -134,10 +134,14 @@ pub use movegen::{
     generate_moves_to_move32_into, generate_quiet_checks, generate_recaptures,
     generate_recaptures_all, generate_recaptures_all_move32, generate_recaptures_move32,
 };
+// 1.x の公開パスを維持する。
+#[allow(deprecated)]
+pub use position::MoveStackSiteFacts;
+
 pub use position::{
     BoardArray, CapturedPieceDelta, DeclarationDetail, DeclarationEvaluation, MoveApplyFacts,
-    MoveDelta32, MoveStackSiteFacts, PackedPiece, PartialKeys, Ply, Position, StateCacheView,
-    StateHistory, StateHistoryEntry, ValidationIssue, ValidationReport,
+    MoveDelta32, PackedPiece, PartialKeys, Ply, Position, StateCacheView, StateHistory,
+    StateHistoryEntry, ValidationIssue, ValidationReport,
 };
 #[cfg(feature = "position-serialization")]
 pub use position::{

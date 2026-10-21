@@ -39,7 +39,7 @@ Position
 | :--- | :--- | :--- |
 | `apply_move(mv)` / `apply_move32(mv)` | `()` | 指し手が合法であることを前提とする探索ループ向け API。内部で `try_apply_move32` を呼び、不正な指し手に対しては `.expect(...)` でパニックする。 |
 | `try_apply_move(mv)` / `try_apply_move32(mv)` | `Result<(), MoveError>` | 外部入力や棋譜再生など、不正な指し手が混入し得る境界向け API。盤面を変更する前に移動元、移動先、持ち駒、上位駒ビットの整合性を検証し、違反時は `Err(MoveError)` を返す。 |
-| `try_apply_move32_with_facts(mv)` | `Result<MoveFacts, MoveError>` | 局面更新と同時に、探索の枝刈りや延長判定で必要となる事実情報（捕獲駒、王手フラグ、成りフラグ等）をまとめた `MoveFacts` を返す。 |
+| `try_apply_move32_with_facts(mv)` | `Result<MoveApplyFacts, MoveError>` | 局面更新と同時に、捕獲駒、王手や成りのフラグ、更新後のキー、巻き戻し用の差分などをまとめた `MoveApplyFacts` を返す。 |
 | `apply_move32_with_gives_check(mv, gives_check)` | `()` | 呼び出し側（指し手生成や `gives_check` 事前判定）でその手が王手になるか否かがすでに判明している場合に、局面更新時の王手再計算を省略する高速パス。 |
 
 ---
@@ -58,4 +58,4 @@ Position
 
 - **[StateStack と StateInfo の設計](state-management.md)**：64 要素チャンクによる `StateStack` のヒープ再確保回避、`StateHot` と `StateColdPayload` の分離、`TacticalCache` と `CheckSquares` の 9 スロット圧縮、および Null Move の 2 経路を解説する。
 - **[Zobrist ハッシュと差分更新](zobrist.md)**：`StateHot` を唯一の真実の源（Single Source of Truth）とする O(1) 巻き戻し、128 ビットハッシュとの乱数列互換性を保つ 4 回抽選 PRNG、および 72 スロット持ち駒テーブルを解説する。
-- **[探索エンジン連携プリミティブ](search-integration.md)**：`MoveFacts`、`StateCacheView`、`key_after_move` と投機的プリフェッチ、千日手や連続王手の千日手判定、および `clone_for_search_bounded` を解説する。
+- **[探索エンジン連携プリミティブ](search-integration.md)**：`MoveApplyFacts`、`StateCacheView`、consumer 側のキー予測と prefetch の責務、千日手や連続王手の判定、および `clone_for_search()` による独立した探索用コピーを解説する。

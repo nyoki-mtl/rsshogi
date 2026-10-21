@@ -76,9 +76,12 @@ pub use game_result::GameResult;
 pub use hand::{HAND_BIT_MASK, HAND_BORROW_MASK, Hand, HandPiece};
 pub use ki2::{Ki2Notation, Ki2ResolveError, ParseKi2NotationError};
 pub(crate) use moves::MoveBase;
+// 1.x の公開パスを維持する。
+#[allow(deprecated)]
+pub use moves::Move32Metadata;
+
 pub use moves::{
     AperyMove, AperyMove32, MOVE_END, MOVE_NONE, MOVE_NULL, MOVE_RESIGN, MOVE_WIN, Move, Move32,
-    Move32Metadata,
 };
 pub use piece::{Piece, PieceType};
 pub use rank::{Rank, is_promotable_rank};

@@ -200,6 +200,7 @@ impl Position {
 
     /// 指し手が空き王手になる候補かを判定する。
     #[must_use]
+    #[deprecated(since = "1.6.0", note = "2.0.0 で削除予定。blockers_for_king を参照してください")]
     pub fn is_discovery_check_on_king(&self, c: Color, mv: crate::types::Move32) -> bool {
         self.blockers_for_king(c).test(mv.to_move().from_sq())
     }

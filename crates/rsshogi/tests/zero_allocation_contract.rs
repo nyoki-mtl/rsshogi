@@ -101,6 +101,81 @@ fn apply_and_undo_do_not_allocate() {
     });
 }
 
+#[allow(deprecated)] // 1.x の search null move で予約容量と clone 後の無確保契約を検査する。
+fn prepared_clone_keeps_allocation_free_capacity() {
+    let mut source = hirate_position();
+    source.prepare_search_state_capacity(130).unwrap();
+    let mut cloned = source.clone();
+    let original_key = source.key();
+    assert_no_allocation("prepared clone capacity", || {
+        for _ in 0..130 {
+            cloned.try_apply_search_null_move().unwrap();
+        }
+        for _ in 0..130 {
+            cloned.undo_search_null_move().unwrap();
+        }
+    });
+    assert_eq!(cloned.key(), original_key);
+    assert_eq!(source.key(), original_key);
+    assert_eq!(source.state_stack_depth(), 0);
+}
+
+fn prepared_normal_moves_do_not_allocate() {
+    let mut source = Position::from_sfen("4k4/9/9/9/9/9/9/9/4K4 b - 1").unwrap();
+    source.prepare_search_state_capacity(130).unwrap();
+    let original_key = source.key();
+    let original_ply = source.game_ply();
+    let mut setup = source.clone();
+    let moves: Vec<_> = ["5i6i", "5a6a", "6i5i", "6a5a"]
+        .into_iter()
+        .cycle()
+        .take(130)
+        .map(|usi| {
+            let mv = setup.move32_from_move(rsshogi::types::Move::from_usi(usi).unwrap());
+            assert!(setup.is_legal_move32(mv));
+            setup.apply_move32(mv);
+            mv
+        })
+        .collect();
+    let mut cloned = source.clone();
+    assert_no_allocation("prepared normal moves", || {
+        for &mv in &moves {
+            assert!(cloned.has_prepared_search_state());
+            cloned.apply_move32(mv);
+        }
+        for &mv in moves.iter().rev() {
+            cloned.undo_move32(mv).unwrap();
+        }
+    });
+    assert_eq!(cloned.key(), original_key);
+    assert_eq!(cloned.game_ply(), original_ply);
+    assert_eq!(cloned.state_stack_depth(), 0);
+}
+
+fn clone_from_reuses_prepared_capacity() {
+    let mut source = hirate_position();
+    source.prepare_search_state_capacity(130).unwrap();
+    let mut target = hirate_position();
+    target.prepare_search_state_capacity(260).unwrap();
+    for indexed in [false, true] {
+        if indexed {
+            source = source.clone_for_search();
+        }
+        assert_no_allocation("prepared clone_from", || {
+            for _ in 0..8 {
+                target.clone_from(&source);
+            }
+            for _ in 0..130 {
+                target.apply_null_move().unwrap();
+            }
+            for _ in 0..130 {
+                target.undo_null_move().unwrap();
+            }
+        });
+        assert_eq!(target.key(), source.key());
+    }
+}
+
 fn mate_in_one_in_place_does_not_allocate() {
     let mut fixtures: Vec<Position> = positions();
     for pos in &mut fixtures {
@@ -147,6 +222,9 @@ fn hot_paths_do_not_allocate() {
     move_generation_does_not_allocate();
     fresh_move_lists_live_on_the_stack();
     apply_and_undo_do_not_allocate();
+    prepared_clone_keeps_allocation_free_capacity();
+    prepared_normal_moves_do_not_allocate();
+    clone_from_reuses_prepared_capacity();
     mate_in_one_in_place_does_not_allocate();
     is_mated_does_not_allocate();
 }

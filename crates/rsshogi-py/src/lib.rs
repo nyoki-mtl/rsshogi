@@ -216,11 +216,6 @@ impl PyMove {
     pub(crate) fn from_move(inner: Move) -> Self {
         Self { inner }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> Move {
-        self.inner
-    }
 }
 
 #[pyclass(from_py_object, name = "AperyMove")]

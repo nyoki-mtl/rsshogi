@@ -36,7 +36,7 @@ flowchart TD
 1. まず `KingNeighborhood::new` で敵玉周辺のビットボード情報を構築する。
 2. `generate_checks_all_move32_drop_first_into` を用いて、**持ち駒を打つ王手から順番に** 1 手ずつストリーム供給する。実戦の 1 手詰めは頭金や腹銀などの「駒打ち王手」で決まる割合が非常に高いため、盤上移動の王手を生成する前に詰みを発見して早期リターンできる確率が劇的に高まる。
 3. 各王手候補に対して盤面非破壊の `refute_candidate`（静的反駁）を実行する。もし全局面の王手がすべて静的反駁で棄却されれば、**`Position` のクローンも `apply_move32` も 1 回も実行されることなく** `None` が返る。
-4. 静的反駁を生き残った最初の候補手が現れた時点で初めて `pos.clone_for_search_bounded(16)` を遅延生成（`lazy_work.get_or_insert_with(...)`）し、`work.apply_move32(mv)` と `work.is_mated()` を呼ぶ。
+4. 静的反駁を生き残った最初の候補手が現れた時点で初めて内部 API の `pos.clone_for_search_bounded(16)` で作業局面を遅延生成（`lazy_work.get_or_insert_with(...)`）し、`work.apply_move32(mv)` と `work.is_mated()` を呼ぶ。
 
 ### 経路 2：リスト生成と In-Place 検証（`solve_mate_in_one_in_place`）
 

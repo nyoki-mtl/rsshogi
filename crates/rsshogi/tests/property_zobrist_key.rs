@@ -1,8 +1,7 @@
 //! Zobrist キーの代数的な契約を、実際の局面走査で固定する。
 //!
-//! 対象は 3 つ。
+//! 対象は 2 つ。
 //!
-//! - `key_after` / `board_key_after` が、実際に手を適用した後のキーと一致すること
 //! - 合成キーが「盤面キー ^ 持ち駒寄与の全再計算」に分解できること
 //! - apply / undo でキーが往復すること
 
@@ -46,56 +45,6 @@ fn legal_moves(pos: &Position) -> Vec<Move32> {
     let mut moves = MoveList::new();
     generate_moves::<LegalAll>(pos, &mut moves);
     moves.iter().map(|&mv| pos.move32_from_move(mv)).filter(|&mv| pos.is_legal_move32(mv)).collect()
-}
-
-#[test]
-fn key_after_matches_the_key_produced_by_applying_the_move() {
-    board::init();
-
-    for sfen in SCENARIOS {
-        let base = position_from_sfen(sfen).expect("valid sfen");
-        let moves = legal_moves(&base);
-        assert!(!moves.is_empty(), "scenario must have legal moves: {sfen}");
-
-        for mv in moves {
-            let predicted_key = base.key_after(mv);
-            let predicted_board_key = base.board_key_after(mv);
-            let predicted_board_key_from_move = base.board_key_after_move(mv.to_move());
-
-            let mut pos = base.clone();
-            pos.apply_move32(mv);
-
-            assert_eq!(predicted_key, pos.key(), "key_after mismatch for {mv:?} in {sfen}");
-            assert_eq!(
-                predicted_board_key,
-                pos.board_key(),
-                "board_key_after mismatch for {mv:?} in {sfen}"
-            );
-            assert_eq!(
-                predicted_board_key_from_move,
-                pos.board_key(),
-                "board_key_after_move mismatch for {mv:?} in {sfen}"
-            );
-        }
-    }
-}
-
-#[test]
-fn key_after_null_matches_the_key_produced_by_applying_a_null_move() {
-    board::init();
-
-    for sfen in SCENARIOS {
-        let mut pos = position_from_sfen(sfen).expect("valid sfen");
-        if pos.is_in_check() {
-            // null move は王手中には適用できない。
-            continue;
-        }
-
-        let predicted = pos.key_after_null();
-        pos.apply_null_move().expect("null move");
-
-        assert_eq!(predicted, pos.key(), "key_after_null mismatch in {sfen}");
-    }
 }
 
 #[test]

@@ -284,7 +284,7 @@ const fn increasing_ray_attacks(ray_bits: u128, occupied_bits: u128) -> u128 {
 | `bishop_attacks(sq, occupied)` | 正方向 2 本（`ne`, `se`）と負方向 2 本（`sw_reversed`, `nw_reversed`）を `paired_increasing_attacks` + `reverse_bits` で計算 | 角の 4 方向利き計算。 |
 | `rook_attacks(sq, occupied)` | 正方向 2 本（`e_raw`, `s_raw`）と負方向 2 本（`n_reversed`, `w_reversed`）を `paired_increasing_attacks` + `reverse_bits` で計算 | 飛車の 4 方向一括利き計算。 |
 | `rook_file_attacks(sq, occupied)` | `(occupied.packed_bits() >> file_start) & 0x1ff` による `FILE_ATTACKS` テーブル参照 | 飛車の縦方向のみの利き抽出（1 手詰めソルバの差分利き計算等）。 |
-| `rook_rank_attacks(sq, occupied)` | インデックス増加方向（`beams.e`）は `increasing_ray_attacks`、減少方向（`beams.w`）は最寄りブロッカー `blocker`（MSB）を求めて `beams.w ^ ROOK_RAY_BITS[blocker].w` で影の部分を打ち消す Classical アプローチ | 飛車の横方向のみの利き抽出。 |
+| `rook_rank_attacks(sq, occupied)` | `rook_attacks(sq, occupied) & Bitboard::rank_mask(sq.rank())` | 飛車の横方向のみの利き抽出。 |
 | `horse_attacks(sq, occupied)` | `bishop_attacks(sq, occupied) \| king_attacks(sq)` | 馬の利き計算。 |
 | `dragon_attacks(sq, occupied)` | `rook_attacks(sq, occupied) \| king_attacks(sq)` | 龍の利き計算。 |
 
