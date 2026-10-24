@@ -12,7 +12,7 @@
 
 ```toml
 [dependencies]
-rsshogi = "1.6.0"
+rsshogi = "1.7.0"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
@@ -20,12 +20,13 @@ rsshogi = "1.6.0"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.6.0", features = ["records", "book"] }
+rsshogi = { version = "1.7.0", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
 
-1.6.0 は公開済み API の互換性を維持する。
+1.7.0 は Rust に YBB の入出力、DB2016 の逐次出力、反転局面の生成、定跡の反転検索、履歴と設定を保持する `Position::clone_compact()` を追加する。
+Native Book 変換 API と `NativeBookBuilder` のエラー分類は破壊的変更を含むため、[1.7.0 への移行](docs/book/src/getting-started/migration-1.7.md) を参照。
 非推奨 API は 2.0.0 で削除予定であり、対象と移行方法は [移行ガイド](docs/book/src/getting-started/migration-1.6.md) を参照。
 
 ### Python

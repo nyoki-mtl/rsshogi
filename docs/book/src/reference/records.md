@@ -54,7 +54,7 @@
 | :--- | :--- | :--- | :--- |
 | KIF | `None` | `GameResult::Invalid` | 終局特殊手なしで手順のみを保持する。 |
 | CSA | `None` | `GameResult::Invalid` | `%TORYO` 等の終局行がない場合は未決着手順として保持する。 |
-| KI2 | `Some(SpecialMove::Interrupt)` | `GameResult::Paused` | KI2 形式では要約行（`までN手で...`）がない棋譜を中断局として扱う。 |
+| KI2 | `Some(SpecialMove::Interrupt)` | `GameResult::Paused` | 指し手列中の終局表記と要約行（`までN手で...`）の両方がない場合に中断局として扱う。 |
 | JKF | `None` | `GameResult::Invalid` | 末尾に `"special"` フィールドを持つ手がない場合は未決着として保持する。 |
 
 KIF、KI2、CSA、JKF の各エクスポータは、`main_terminal` が `None` の `Record` であってもエラーにせず、終局行を省略して手順のみを書き出すことができる。

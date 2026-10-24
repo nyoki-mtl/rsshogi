@@ -237,7 +237,7 @@ impl Position {
     /// 反転は SFEN と PackedSfen の両方の出力に使うため、規則をここ 1 箇所に置く。
     /// 出力に必要な盤面・持ち駒・手番・玉位置だけを設定する。
     /// bitboard と state stack は局面に同期しないので、指し手を適用する用途には使わない。
-    pub(in crate::board) fn flipped(&self) -> Self {
+    pub(in crate::board) fn flipped_for_serialization(&self) -> Self {
         let mut flipped = Self::empty();
 
         for (sq, piece) in self.board.iter() {
@@ -255,6 +255,21 @@ impl Position {
         flipped.hands[Color::WHITE.to_index()] = self.hands[Color::BLACK.to_index()];
         flipped.set_side_to_move(self.turn().flip());
         flipped.ply = self.ply;
+        flipped
+    }
+
+    /// 盤面を 180 度回転し、駒色、持ち駒、手番を反転した新しい根局面を返す。
+    ///
+    /// 手数と入玉規則を保持し、先後別の入玉点数を交換する。
+    /// bitboard、キー、王手情報を再構築するため、通常の合法手生成と着手に使える。
+    /// 着手履歴と千日手履歴、予約済みの履歴容量は引き継がない。
+    #[must_use]
+    pub fn to_flipped(&self) -> Self {
+        let mut flipped = self.flipped_for_serialization();
+        flipped.entering_king_rule = self.entering_king_rule;
+        flipped.entering_king_point = [self.entering_king_point[1], self.entering_king_point[0]];
+        flipped.rebuild_bitboards();
+        flipped.reset_state_stack_to_current_position();
         flipped
     }
 }

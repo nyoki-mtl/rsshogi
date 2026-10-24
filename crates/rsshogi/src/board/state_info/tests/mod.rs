@@ -4,6 +4,35 @@ use crate::board::zobrist::Zobrist;
 use crate::types::{Color, Hand, MOVE_NONE, Piece, PieceType};
 
 #[test]
+fn clone_compact_shares_only_existing_index_and_invalidates_it_locally() {
+    let mut stack = StateStack::new();
+    stack.prepare_additional(256);
+    for _ in 0..70 {
+        stack.push_empty();
+    }
+    assert!(stack.clone_compact().repetition_index.is_none());
+    stack.prepare_repetition_index();
+    let mut compact = stack.clone_compact();
+    assert_eq!(compact.chunk_count(), 2);
+    assert_eq!(stack.chunk_count(), 5);
+    assert!(Arc::ptr_eq(
+        stack.repetition_index.as_ref().unwrap(),
+        compact.repetition_index.as_ref().unwrap()
+    ));
+    for index in 0..=stack.head {
+        assert_state_info_matches(&stack[index], &compact[index]);
+        assert_ne!(std::ptr::from_ref(&stack[index]), std::ptr::from_ref(&compact[index]));
+    }
+    compact.pop().unwrap();
+    assert!(compact.repetition_index.is_none());
+    assert!(stack.repetition_index.is_some());
+    compact.push_empty();
+    compact.current_mut().hot.board_key = ZobristKey::from_u64(123);
+    assert_ne!(compact[70].board_key, stack[70].board_key);
+    assert!(stack.repetition_index.is_some());
+}
+
+#[test]
 fn repetition_index_filters_only_old_candidates_and_respects_null_boundary() {
     let mut stack = StateStack::new();
     for i in 0..=8 {

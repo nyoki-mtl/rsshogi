@@ -739,7 +739,7 @@ type StateChunk = Box<[StateInfo; STATE_CHUNK_CAPACITY]>;
 /// - `pop` / `pop_unchecked` で外れた entry の参照
 /// - `reset_sfen` / `reset_with_position` 後の任意 entry の参照
 /// - `clone_from` によって内容を置き換えた複製先の entry の参照
-/// - `clone` / `clone_for_search` 後の別インスタンス間の pointer identity
+/// - `clone` / `clone_for_search` / `clone_compact` 後の別インスタンス間の pointer identity
 /// - `drop` 後の任意 entry の参照
 ///
 /// なお「物理アドレスが安定している」ことは、その entry が
@@ -848,6 +848,13 @@ impl StateStack {
         }
         cloned.head = new_head;
         cloned
+    }
+
+    /// 全有効履歴を保持し、余剰 chunk を引き継がずに複製する。
+    pub(crate) fn clone_compact(&self) -> Self {
+        let (last_chunk, _) = Self::locate(self.head);
+        let chunks = self.chunks[..=last_chunk].to_vec();
+        Self { chunks, head: self.head, repetition_index: self.repetition_index.clone() }
     }
 
     /// 次の state slot を allocation なしで利用できるかを返す。

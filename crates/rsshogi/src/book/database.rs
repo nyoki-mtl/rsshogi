@@ -9,8 +9,9 @@ use crate::types::Move;
 ///
 /// 外部形式の局面と指し手のメタデータを保持する変換用IR。
 /// Native Book v4 への変換は欠落を明示する方式であり、
-/// コメント、ponder 手、ソース ID、SBK グラフリンクなどの
-/// 外部フォーマット固有メタデータはネイティブ検索書籍に含まれない。
+/// 局面コメントと候補手コメントは保持する。
+/// ponder 手、ソース ID、SBK グラフリンクなどの
+/// 外部フォーマット固有メタデータの破棄には明示的な許可が必要となる。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BookDatabase {
     entries: Vec<BookDatabaseEntry>,
@@ -400,8 +401,8 @@ impl BookPosition {
 
     /// ソース手数メタデータが存在する場合に返す。
     ///
-    /// DB2016 行は現在、省略された手数を外部リーダーで `0` として公開するため、
-    /// そのリーダーからのインポートでは `Some(0)` として保持される。
+    /// DB2016 からのインポートでは、省略された手数を `None`、
+    /// 明示的な `0` を `Some(0)` として区別する。
     #[must_use]
     pub const fn original_ply(&self) -> Option<u32> {
         self.original_ply

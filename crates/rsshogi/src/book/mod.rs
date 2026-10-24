@@ -23,9 +23,12 @@ pub use sbk::{
     SbkBook, SbkDiagnostics, SbkEntries, SbkEntry, SbkEval, SbkMove, SbkOpenProgress,
     SbkWriteOptions,
 };
-pub use writer::YaneuraOuDb2016WriteOptions;
+pub use writer::{YaneuraOuDb2016WriteOptions, YaneuraOuDb2016Writer};
 pub use yaneuraou::{
     YaneuraOuAccessMode, YaneuraOuBook, YaneuraOuBookDiagnostics, YaneuraOuBookEntries,
     YaneuraOuBookEntry, YaneuraOuBookMove, YaneuraOuBookOpenOptions, YaneuraOuValidationProgress,
 };
-pub use ybb::{YbbBook, YbbBookOpenOptions, YbbEntry, YbbMove};
+pub use ybb::{
+    YbbBook, YbbBookOpenOptions, YbbEntries, YbbEntry, YbbMove, YbbStorageMode, YbbValidationMode,
+    YbbValidationProgress, YbbWriteOptions, YbbWriter,
+};

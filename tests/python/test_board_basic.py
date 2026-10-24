@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 rsshogi = pytest.importorskip("rsshogi")
@@ -402,6 +404,14 @@ def test_game_record_from_ki2() -> None:
     record = rsshogi.record.Record.from_ki2_str(ki2)
     assert record.move_count == 1
     assert record.moves[0].move.to_usi() == "7g7f"
+
+
+@pytest.mark.parametrize("terminal,special", [("切れ負け", "TIME_UP"), ("反則負け", "ILLEGAL_MOVE")])
+def test_ki2_summary_preserves_terminal_reason(terminal: str, special: str) -> None:
+    record = rsshogi.record.Record.from_ki2_str(f"▲２六歩 △{terminal}\nまで1手で先手の勝ち")
+    assert json.loads(record.to_jkf())["moves"][-1]["special"] == special
+    reparsed = rsshogi.record.Record.from_ki2_str(record.to_ki2())
+    assert json.loads(reparsed.to_jkf())["moves"][-1]["special"] == special
 
 
 def test_apply_usi_and_csa() -> None:

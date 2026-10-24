@@ -10,7 +10,7 @@ Rust で実装された高速な将棋コアライブラリ（`rsshogi` クレ�
 ### Python パッケージは `rsshogi` と `rsshogi-avx2` のどちらを入れるべきか？
 
 - **通常環境（ARM64 や汎用 x86_64）**：`python -m pip install rsshogi` を使用する。
-- **AVX2 / BMI2 対応の x86_64 CPU 環境**：`python -m pip install rsshogi-avx2` を使用すると、飛び駒の利き計算やビットボード演算が高速化される。
+- **AVX2 対応の x86_64 CPU 環境**：`python -m pip install rsshogi-avx2` を使用すると、AVX2 命令を有効にしたビルドを利用できる。
 
 両者は同じ `rsshogi` モジュール名を提供するため、同一の仮想環境にはどちらか一方のみをインストールする。
 切り替え手順の詳細は [インストール](../getting-started/installation.md) を参照。
@@ -22,12 +22,12 @@ Rust クレート `rsshogi` は **デフォルトで最小限のエンジンコ�
 
 | Cargo feature 名 | 有効化される機能と依存関係 |
 | :--- | :--- |
-| （指定なし：`default = []`） | 盤面（`Board` / `Position`）、ビットボード、合法手生成、Zobrist ハッシュ、千日手および入玉宣言判定の最小コア。 |
-| `records` | `Record`、KIF / KI2 / CSA / JKF / USI / SFEN の読み書き、および `pack` / `sbinpack` / `sazpack`（`position-serialization`, `initial-positions`, `policy-labels` を含む）。 |
+| （指定なし：`default = []`） | 盤面（`Position`）、ビットボード、合法手生成、1 手詰め判定（`mate`）、Zobrist ハッシュ、千日手および入玉宣言判定の最小コア。 |
+| `records` | `Record`、KIF / KI2 / CSA / JKF / USI / SFEN の読み書き、および `HuffmanCodedPosAndEval` (HCPE) / `pack` / `sbinpack` / `sazpack`（`position-serialization`, `initial-positions`, `policy-labels` を含む）。 |
 | `book` | `NativeBook`、`NativeBookEditor`、`YaneuraOuBook`、`YbbBook`、`SbkBook`、`BookDatabase`。 |
-| `position-serialization` | `HuffmanCodedPos` (HCP)、`HuffmanCodedPosAndEval` (HCPE)、`PackedSfen`、`PackedSfenValue` (PSV)。 |
+| `position-serialization` | `HuffmanCodedPos` (HCP)、`PackedSfen`、`PackedSfenValue` (PSV)。 |
 | `policy-labels` | `rsshogi::labels::policy`（2187 クラス `MoveLabel` および 1496 クラス `CompactMoveLabel`）。 |
-| `initial-positions` | 平手および駒落ち定型初期局面の SFEN / `Handicap` サポート。 |
+| `initial-positions` | 平手および駒落ち定型初期局面の SFEN / `InitialPosition` サポート。 |
 | `svg` | 盤面の SVG 描画出力。 |
 | `validation` | 局面の詳細な整合性検査ユーティリティ。 |
 | `hash-128` | `ZobristKey` を 64-bit から 128-bit に拡張する。 |
@@ -35,7 +35,7 @@ Rust クレート `rsshogi` は **デフォルトで最小限のエンジンコ�
 
 ```toml
 [dependencies]
-rsshogi = { version = "0.1", features = ["records", "book"] }
+rsshogi = { version = "1.7.0", features = ["records", "book"] }
 ```
 
 ## 2. 盤面と指し手 API

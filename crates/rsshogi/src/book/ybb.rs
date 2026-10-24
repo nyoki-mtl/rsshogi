@@ -1,21 +1,37 @@
-use std::fs;
+use std::borrow::Cow;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::board::{PackedSfen, Ply, Position};
-use crate::book::BookError;
+use crate::book::{
+    BookControl, BookDatabase, BookDatabaseEntry, BookEntryMetadata, BookError, BookMoveMetadata,
+};
 use crate::types::{Move, Square};
 
 const MAGIC: &[u8; 16] = b"YANE-BINBOOK-V1\0";
 const HEADER_BYTES: usize = 32;
 const INDEX_BYTES: usize = 44;
+const SCAN_BUFFER_BYTES: usize = 64 * 1024;
 
+/// YBB のキー順索引と候補手を参照する reader。
+///
+/// 既定ではファイル全体を検査してメモリに保持する。
+/// [`YbbStorageMode::File`] を指定するとファイルを保持して部分読み込みする。
+/// ファイル参照時の clone は同じハンドルと排他的な読み込みカーソルを共有する。
 #[derive(Debug, Clone)]
 pub struct YbbBook {
-    bytes: Vec<u8>,
-    rows: Vec<IndexRow>,
-    move_area: usize,
+    storage: YbbStorage,
+    move_area: u64,
     has_depth: bool,
     options: YbbBookOpenOptions,
+}
+
+#[derive(Debug, Clone)]
+enum YbbStorage {
+    Memory { bytes: Vec<u8>, rows: Vec<IndexRow> },
+    File { file: Arc<Mutex<File>>, file_bytes: u64, row_count: usize },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -26,16 +42,49 @@ struct IndexRow {
     move_count: u16,
 }
 
+/// YBB のデータ保持方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum YbbStorageMode {
+    /// ファイル全体と復号した索引をメモリに保持する。
+    #[default]
+    Memory,
+    /// ファイルを保持し、参照した索引行と候補手だけを読み込む。
+    ///
+    /// reader とその clone の利用中は、ファイルを変更しないこと。
+    File,
+}
+
+/// YBB の open 時と参照時の検査方針。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum YbbValidationMode {
+    /// open 時に全索引の整列、各行の範囲、全候補手の符号化を検査する。
+    #[default]
+    Full,
+    /// 各行の範囲と候補手の符号化を参照時に検査する。
+    ///
+    /// 検索には整列済み索引が必要である。全索引の整列は
+    /// [`YbbBook::validate_full`] または全件走査で検査する。
+    OnAccess,
+}
+
+/// YBB の検索、データ保持方式、検査方針の設定。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct YbbBookOpenOptions {
     ignore_ply: bool,
     flipped: bool,
+    storage_mode: YbbStorageMode,
+    validation_mode: YbbValidationMode,
 }
 
 impl YbbBookOpenOptions {
     #[must_use]
     pub const fn new() -> Self {
-        Self { ignore_ply: false, flipped: false }
+        Self {
+            ignore_ply: false,
+            flipped: false,
+            storage_mode: YbbStorageMode::Memory,
+            validation_mode: YbbValidationMode::Full,
+        }
     }
 
     #[must_use]
@@ -50,6 +99,20 @@ impl YbbBookOpenOptions {
         self
     }
 
+    /// データ保持方式を指定する。検査方針は変更しない。
+    #[must_use]
+    pub const fn with_storage_mode(mut self, storage_mode: YbbStorageMode) -> Self {
+        self.storage_mode = storage_mode;
+        self
+    }
+
+    /// 検査方針を指定する。データ保持方式は変更しない。
+    #[must_use]
+    pub const fn with_validation_mode(mut self, validation_mode: YbbValidationMode) -> Self {
+        self.validation_mode = validation_mode;
+        self
+    }
+
     #[must_use]
     pub const fn ignore_ply(self) -> bool {
         self.ignore_ply
@@ -59,8 +122,40 @@ impl YbbBookOpenOptions {
     pub const fn flipped(self) -> bool {
         self.flipped
     }
+
+    #[must_use]
+    pub const fn storage_mode(self) -> YbbStorageMode {
+        self.storage_mode
+    }
+
+    #[must_use]
+    pub const fn validation_mode(self) -> YbbValidationMode {
+        self.validation_mode
+    }
 }
 
+/// YBB の全件検査の進捗。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YbbValidationProgress {
+    processed_row_count: u64,
+    total_row_count: u64,
+}
+
+impl YbbValidationProgress {
+    /// 検査済みの索引行数を返す。
+    #[must_use]
+    pub const fn processed_row_count(self) -> u64 {
+        self.processed_row_count
+    }
+
+    /// 検査対象の索引行数を返す。
+    #[must_use]
+    pub const fn total_row_count(self) -> u64 {
+        self.total_row_count
+    }
+}
+
+/// 保存時のキーと手数、候補手を持つ YBB の 1 行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YbbEntry {
     packed_sfen: PackedSfen,
@@ -70,27 +165,49 @@ pub struct YbbEntry {
 }
 
 impl YbbEntry {
+    /// 保存時の向きで局面行を生成する。
+    ///
+    /// キーは reader と同様にバイト列として扱い、局面の復元や合法手検査は行わない。
+    /// 候補手の符号化と個数を検査し、候補手順と重複を保持する。
+    /// 各候補手の `mv()` を保存する指し手とし、`raw_move()` もその値に揃える。
+    pub fn new(
+        packed_sfen: PackedSfen,
+        ply: Ply,
+        mut moves: Vec<YbbMove>,
+    ) -> Result<Self, BookError> {
+        validate_move_count(moves.len())?;
+        for candidate in &mut moves {
+            *candidate = YbbMove::new(candidate.mv, candidate.eval, candidate.depth)?;
+        }
+        Ok(Self { packed_sfen, ply, flipped: false, moves })
+    }
+
+    /// 保存時の向きの局面キーを返す。
     #[must_use]
     pub const fn packed_sfen(&self) -> PackedSfen {
         self.packed_sfen
     }
 
+    /// 索引行に保存された手数を返す。
     #[must_use]
     pub const fn ply(&self) -> Ply {
         self.ply
     }
 
+    /// 反転検索によるヒットかどうかを返す。
     #[must_use]
     pub const fn flipped(&self) -> bool {
         self.flipped
     }
 
+    /// 保存順の候補手を返す。
     #[must_use]
     pub fn moves(&self) -> &[YbbMove] {
         &self.moves
     }
 }
 
+/// YBB の候補手と手番視点の評価値、任意の深さ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YbbMove {
     mv: Move,
@@ -100,21 +217,35 @@ pub struct YbbMove {
 }
 
 impl YbbMove {
+    /// 指し手の符号化を検査して候補手を生成する。
+    ///
+    /// 局面に対する合法性は検査しない。
+    pub fn new(mv: Move, eval: i16, depth: Option<u16>) -> Result<Self, BookError> {
+        if !is_valid_raw_move(mv.raw()) {
+            return Err(BookError::InvalidData(format!("invalid YBB raw move: {:#06x}", mv.raw())));
+        }
+        Ok(Self { mv, raw_move: mv.raw(), eval, depth })
+    }
+
+    /// 問い合わせ局面の向きに変換した指し手を返す。
     #[must_use]
     pub const fn mv(self) -> Move {
         self.mv
     }
 
+    /// 保存時の向きの指し手の生値を返す。
     #[must_use]
     pub const fn raw_move(self) -> u16 {
         self.raw_move
     }
 
+    /// 指す前の手番視点の評価値を返す。
     #[must_use]
     pub const fn eval(self) -> i16 {
         self.eval
     }
 
+    /// 保存された深さを返す。深さなしの形式では `None` を返す。
     #[must_use]
     pub const fn depth(self) -> Option<u16> {
         self.depth
@@ -122,82 +253,87 @@ impl YbbMove {
 }
 
 impl YbbBook {
+    /// ファイル全体を読み込み、索引順と候補手の符号化を検査する。
     pub fn open(path: impl AsRef<Path>) -> Result<Self, BookError> {
         Self::open_with_options(path, YbbBookOpenOptions::new())
     }
 
+    /// 検索、データ保持方式、検査方針を指定して開く。
+    ///
+    /// データ保持方式によらず、ヘッダーと索引領域の長さを検査する。
+    /// [`YbbValidationMode::Full`] では全件を検査してから返す。
+    /// [`YbbValidationMode::OnAccess`] では行の範囲と候補手の符号化を参照時に検査する。
+    /// 後者の検索には整列済みファイルを用いる。I/O 失敗もエラーとして返す。
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rsshogi::book::{
+    ///     BookControl, YbbBook, YbbBookOpenOptions, YbbStorageMode, YbbValidationMode,
+    /// };
+    ///
+    /// let book = YbbBook::open_with_options(
+    ///     "large.ybb",
+    ///     YbbBookOpenOptions::new()
+    ///         .with_storage_mode(YbbStorageMode::File)
+    ///         .with_validation_mode(YbbValidationMode::OnAccess),
+    /// )?;
+    /// book.validate_full_with_control(|progress| {
+    ///     println!("{}/{}", progress.processed_row_count(), progress.total_row_count());
+    ///     BookControl::Continue
+    /// })?;
+    /// # Ok::<(), rsshogi::book::BookError>(())
+    /// ```
     pub fn open_with_options(
         path: impl AsRef<Path>,
         options: YbbBookOpenOptions,
     ) -> Result<Self, BookError> {
-        let bytes = fs::read(path)?;
-        if bytes.len() < HEADER_BYTES {
-            return Err(BookError::InvalidFormat("truncated YBB header"));
-        }
-        if &bytes[..16] != MAGIC {
-            return Err(BookError::InvalidFormat("invalid YBB magic"));
-        }
-        let count = read_u64(&bytes[16..24])?;
-        let flags = read_u64(&bytes[24..32])?;
-        if flags & !1 != 0 {
-            return Err(BookError::Unsupported("unknown YBB header flags"));
-        }
-        let count_usize = usize::try_from(count)
-            .map_err(|_| BookError::InvalidFormat("YBB record count overflows usize"))?;
-        let index_bytes = count_usize
-            .checked_mul(INDEX_BYTES)
-            .ok_or(BookError::InvalidFormat("YBB index size overflow"))?;
-        let move_area = HEADER_BYTES
-            .checked_add(index_bytes)
-            .ok_or(BookError::InvalidFormat("YBB index end overflow"))?;
-        if move_area > bytes.len() {
-            return Err(BookError::InvalidFormat("truncated YBB index"));
-        }
-        let has_depth = flags & 1 != 0;
-        let move_record_bytes = if has_depth { 6usize } else { 4usize };
-        let mut rows: Vec<IndexRow> = Vec::with_capacity(count_usize);
-        for index in 0..count_usize {
-            let start = HEADER_BYTES + index * INDEX_BYTES;
-            let packed_sfen = PackedSfen::from_bytes(
-                bytes[start..start + 32].try_into().expect("fixed YBB index slice"),
-            );
-            let moves_offset = read_u64(&bytes[start + 32..start + 40])?;
-            let ply = read_u16(&bytes[start + 40..start + 42])?;
-            let move_count = read_u16(&bytes[start + 42..start + 44])?;
-            let byte_count = usize::from(move_count)
-                .checked_mul(move_record_bytes)
-                .ok_or(BookError::InvalidFormat("YBB move count overflow"))?;
-            let offset = usize::try_from(moves_offset)
-                .map_err(|_| BookError::InvalidFormat("YBB move offset overflows usize"))?;
-            let end = offset
-                .checked_add(byte_count)
-                .ok_or(BookError::InvalidFormat("YBB move range overflow"))?;
-            if end > bytes.len() - move_area {
-                return Err(BookError::InvalidFormat("truncated YBB move data"));
+        let book = if options.storage_mode() == YbbStorageMode::File {
+            let mut file = File::open(path)?;
+            let file_bytes = file.metadata()?.len();
+            let mut header = [0; HEADER_BYTES];
+            if file_bytes < HEADER_BYTES as u64 {
+                return Err(BookError::InvalidFormat("truncated YBB header"));
             }
-            let row = IndexRow { packed_sfen, moves_offset, ply, move_count };
-            if let Some(previous) = rows.last()
-                && previous.packed_sfen.cmp_bytes(&row.packed_sfen).is_gt()
-            {
-                return Err(BookError::InvalidFormat("YBB index is not sorted"));
+            file.read_exact(&mut header)?;
+            let (row_count, move_area, has_depth) = parse_header(&header, file_bytes)?;
+            Self {
+                storage: YbbStorage::File {
+                    file: Arc::new(Mutex::new(file)),
+                    file_bytes,
+                    row_count,
+                },
+                move_area,
+                has_depth,
+                options,
             }
-            rows.push(row);
-        }
-        let book = Self { bytes, rows, move_area, has_depth, options };
-        for row in &book.rows {
-            let _ = book.decode_moves(*row, false)?;
+        } else {
+            let bytes = fs::read(path)?;
+            let (row_count, move_area, has_depth) = parse_header(&bytes, bytes.len() as u64)?;
+            let mut rows = Vec::with_capacity(row_count);
+            for index in 0..row_count {
+                let start = HEADER_BYTES + index * INDEX_BYTES;
+                rows.push(decode_index_row(&bytes[start..start + INDEX_BYTES])?);
+            }
+            Self { storage: YbbStorage::Memory { bytes, rows }, move_area, has_depth, options }
+        };
+        if options.validation_mode() == YbbValidationMode::Full {
+            book.validate_full()?;
         }
         Ok(book)
     }
 
     #[must_use]
     pub const fn len(&self) -> u64 {
-        self.rows.len() as u64
+        match &self.storage {
+            YbbStorage::Memory { rows, .. } => rows.len() as u64,
+            YbbStorage::File { row_count, .. } => *row_count as u64,
+        }
     }
 
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.len() == 0
     }
 
     #[must_use]
@@ -210,6 +346,58 @@ impl YbbBook {
         self.options
     }
 
+    /// 全索引の整列、各行の範囲、全候補手の符号化を検査する。
+    ///
+    /// データ保持方式と open 時の検査方針によらず全行を検査し、設定は変更しない。
+    /// キーの局面復元と候補手の合法性は検査しない。
+    pub fn validate_full(&self) -> Result<(), BookError> {
+        self.validate_full_with_control(|_| BookControl::Continue)
+    }
+
+    /// 進捗通知とキャンセル付きで全件を検査する。
+    ///
+    /// 開始時と各行の検査後にコールバックを呼ぶ。`Cancel` には
+    /// [`BookError::Cancelled`] を返し、reader の設定と検索結果は変更しない。
+    /// 空の定跡でも開始時に通知する。コールバック中にファイルのロックは保持しない。
+    pub fn validate_full_with_control(
+        &self,
+        mut control: impl FnMut(YbbValidationProgress) -> BookControl,
+    ) -> Result<(), BookError> {
+        let total_row_count = self.len();
+        if control(YbbValidationProgress { processed_row_count: 0, total_row_count })
+            == BookControl::Cancel
+        {
+            return Err(BookError::Cancelled);
+        }
+        for (index, entry) in self.iter_entries().enumerate() {
+            let _ = entry?;
+            if control(YbbValidationProgress {
+                processed_row_count: index as u64 + 1,
+                total_row_count,
+            }) == BookControl::Cancel
+            {
+                return Err(BookError::Cancelled);
+            }
+        }
+        Ok(())
+    }
+
+    /// 検索オプションを適用せず、索引順に全行を返す。
+    ///
+    /// 手数違いと重複行、候補手順を保持し、各行を保存時の向きで復号する。
+    /// ファイル参照時は各行を読み込むときに範囲と候補手を検査し、索引の逆順も通知する。
+    /// 索引と候補手領域を別々にバッファリングし、iterator ごとの読み込み位置を持つ。
+    /// 追加メモリは行数に比例せず、候補手領域の非連続な offset にも対応する。
+    pub fn iter_entries(&self) -> YbbEntries<'_> {
+        YbbEntries {
+            book: self,
+            index: 0,
+            previous: None,
+            index_buffer: ScanBuffer::default(),
+            move_buffer: ScanBuffer::default(),
+        }
+    }
+
     pub fn lookup_position(&self, pos: &Position) -> Result<Option<YbbEntry>, BookError> {
         let packed = packed_sfen_for_lookup(pos, "position")?;
         if let Some(entry) = self.lookup(packed, pos.game_ply(), false)? {
@@ -218,11 +406,10 @@ impl YbbBook {
         if !self.options.flipped() {
             return Ok(None);
         }
-        let flipped_sfen = pos.to_sfen_flipped(Some(i32::from(pos.game_ply())));
-        let flipped = Position::from_sfen(&flipped_sfen).map_err(|error| {
+        let flipped = pos.try_to_packed_sfen_flipped().map_err(|error| {
             BookError::InvalidData(format!("cannot flip YBB position: {error}"))
         })?;
-        self.lookup(packed_sfen_for_lookup(&flipped, "flipped position")?, pos.game_ply(), true)
+        self.lookup(flipped, pos.game_ply(), true)
     }
 
     pub fn lookup_packed_sfen(
@@ -240,11 +427,10 @@ impl YbbBook {
         position.set_packed_sfen(&packed_sfen, false, ply).map_err(|error| {
             BookError::InvalidData(format!("invalid YBB PackedSfen lookup key: {error}"))
         })?;
-        let flipped_sfen = position.to_sfen_flipped(Some(i32::from(ply)));
-        let flipped = Position::from_sfen(&flipped_sfen).map_err(|error| {
+        let flipped = position.try_to_packed_sfen_flipped().map_err(|error| {
             BookError::InvalidData(format!("cannot flip YBB lookup key: {error}"))
         })?;
-        self.lookup(flipped.to_packed_sfen(), ply, true)
+        self.lookup(flipped, ply, true)
     }
 
     fn lookup(
@@ -253,63 +439,479 @@ impl YbbBook {
         ply: Ply,
         flipped: bool,
     ) -> Result<Option<YbbEntry>, BookError> {
-        let Ok(mut index) =
-            self.rows.binary_search_by(|row| row.packed_sfen.cmp_bytes(&packed_sfen))
-        else {
-            return Ok(None);
-        };
-        while index > 0 && self.rows[index - 1].packed_sfen == packed_sfen {
-            index -= 1;
+        // 同じキーの先頭を求め、手数違いと重複行の選択を両経路で揃える。
+        let mut left = 0;
+        let mut right = self.len() as usize;
+        while left < right {
+            let middle = left + (right - left) / 2;
+            if self.index_row(middle)?.packed_sfen.cmp_bytes(&packed_sfen).is_lt() {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
         }
-        let end = self.rows[index..]
-            .iter()
-            .position(|row| row.packed_sfen != packed_sfen)
-            .map_or(self.rows.len(), |relative| index + relative);
-        let row = if self.options.ignore_ply() {
-            self.rows[index]
-        } else {
-            let Some(row) = self.rows[index..end].iter().find(|row| row.ply == ply) else {
-                return Ok(None);
-            };
-            *row
+        for index in left..self.len() as usize {
+            let row = self.index_row(index)?;
+            if row.packed_sfen != packed_sfen {
+                break;
+            }
+            if self.options.ignore_ply() || row.ply == ply {
+                return Ok(Some(YbbEntry {
+                    packed_sfen: row.packed_sfen,
+                    ply: row.ply,
+                    flipped,
+                    moves: self.decode_moves(row, flipped)?,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    fn index_row(&self, index: usize) -> Result<IndexRow, BookError> {
+        let row = match &self.storage {
+            YbbStorage::Memory { rows, .. } => rows
+                .get(index)
+                .copied()
+                .ok_or(BookError::InvalidFormat("YBB index out of range"))?,
+            YbbStorage::File { row_count, .. } => {
+                if index >= *row_count {
+                    return Err(BookError::InvalidFormat("YBB index out of range"));
+                }
+                // ヘッダー検査で全索引の終端が u64 に収まることを確認済みである。
+                let offset = HEADER_BYTES as u64 + index as u64 * INDEX_BYTES as u64;
+                let mut bytes = [0; INDEX_BYTES];
+                self.read_file_exact(offset, &mut bytes)?;
+                decode_index_row(&bytes)?
+            }
         };
-        Ok(Some(YbbEntry {
-            packed_sfen: row.packed_sfen,
-            ply: row.ply,
-            flipped,
-            moves: self.decode_moves(row, flipped)?,
-        }))
+        move_range(row, self.move_area, self.storage_bytes(), self.has_depth)?;
+        Ok(row)
+    }
+
+    fn storage_bytes(&self) -> u64 {
+        match &self.storage {
+            YbbStorage::Memory { bytes, .. } => bytes.len() as u64,
+            YbbStorage::File { file_bytes, .. } => *file_bytes,
+        }
+    }
+
+    fn read_file_exact(&self, offset: u64, bytes: &mut [u8]) -> Result<(), BookError> {
+        let YbbStorage::File { file, file_bytes, .. } = &self.storage else {
+            unreachable!("file reads require file-backed YBB storage");
+        };
+        if offset.checked_add(bytes.len() as u64).is_none_or(|end| end > *file_bytes) {
+            return Err(BookError::InvalidFormat("YBB read exceeds captured length"));
+        }
+        let mut file =
+            file.lock().map_err(|_| BookError::InvalidData("YBB file lock poisoned".into()))?;
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(bytes)?;
+        Ok(())
     }
 
     fn decode_moves(&self, row: IndexRow, flipped: bool) -> Result<Vec<YbbMove>, BookError> {
-        let record_bytes = if self.has_depth { 6usize } else { 4usize };
-        let offset = usize::try_from(row.moves_offset)
-            .map_err(|_| BookError::InvalidFormat("YBB move offset overflows usize"))?;
-        let start = self.move_area + offset;
-        let mut moves = Vec::with_capacity(usize::from(row.move_count));
-        for index in 0..usize::from(row.move_count) {
-            let base = start + index * record_bytes;
-            let raw_move = read_u16(&self.bytes[base..base + 2])?;
-            if !is_valid_raw_move(raw_move) {
-                return Err(BookError::InvalidData(format!(
-                    "invalid YBB raw move: {raw_move:#06x}"
-                )));
+        let (start, byte_count) =
+            move_range(row, self.move_area, self.storage_bytes(), self.has_depth)?;
+        let bytes = match &self.storage {
+            YbbStorage::Memory { bytes, .. } => {
+                Cow::Borrowed(&bytes[start as usize..start as usize + byte_count])
             }
-            let eval = read_i16(&self.bytes[base + 2..base + 4])?;
-            let depth = if self.has_depth {
-                Some(read_u16(&self.bytes[base + 4..base + 6])?)
-            } else {
-                None
-            };
-            let mv = if flipped {
-                flip_move(Move::from_raw(raw_move))
-            } else {
-                Move::from_raw(raw_move)
-            };
-            moves.push(YbbMove { mv, raw_move, eval, depth });
-        }
-        Ok(moves)
+            YbbStorage::File { .. } => {
+                let mut bytes = vec![0; byte_count];
+                self.read_file_exact(start, &mut bytes)?;
+                Cow::Owned(bytes)
+            }
+        };
+        decode_moves(&bytes, row.move_count, self.has_depth, flipped)
     }
+}
+
+fn decode_moves(
+    bytes: &[u8],
+    move_count: u16,
+    has_depth: bool,
+    flipped: bool,
+) -> Result<Vec<YbbMove>, BookError> {
+    let record_bytes = if has_depth { 6usize } else { 4usize };
+    let mut moves = Vec::with_capacity(usize::from(move_count));
+    for index in 0..usize::from(move_count) {
+        let base = index * record_bytes;
+        let raw_move = read_u16(&bytes[base..base + 2])?;
+        if !is_valid_raw_move(raw_move) {
+            return Err(BookError::InvalidData(format!("invalid YBB raw move: {raw_move:#06x}")));
+        }
+        let eval = read_i16(&bytes[base + 2..base + 4])?;
+        let depth = if has_depth { Some(read_u16(&bytes[base + 4..base + 6])?) } else { None };
+        let mv =
+            if flipped { flip_move(Move::from_raw(raw_move)) } else { Move::from_raw(raw_move) };
+        moves.push(YbbMove { mv, raw_move, eval, depth });
+    }
+    Ok(moves)
+}
+
+/// 共有ファイルのカーソルに依存せず、連続する参照をまとめて読み込む。
+#[derive(Default)]
+struct ScanBuffer {
+    start: u64,
+    bytes: Vec<u8>,
+}
+
+impl ScanBuffer {
+    fn get(&mut self, book: &YbbBook, start: u64, len: usize) -> Result<&[u8], BookError> {
+        if len == 0 {
+            return Ok(&[]);
+        }
+        let end = start
+            .checked_add(len as u64)
+            .filter(|&end| end <= book.storage_bytes())
+            .ok_or(BookError::InvalidFormat("YBB scan exceeds captured length"))?;
+        if start < self.start || end > self.start + self.bytes.len() as u64 {
+            // 最大候補手数の行も一度に読める。通常行では64 KiBを再利用する。
+            let read_bytes =
+                (SCAN_BUFFER_BYTES.max(len) as u64).min(book.storage_bytes() - start) as usize;
+            self.bytes.resize(read_bytes, 0);
+            // 読み込み失敗後に部分更新した buffer を有効と見なさない。
+            self.start = u64::MAX;
+            if let Err(error) = book.read_file_exact(start, &mut self.bytes) {
+                self.bytes.clear();
+                return Err(error);
+            }
+            self.start = start;
+        }
+        let offset = (start - self.start) as usize;
+        Ok(&self.bytes[offset..offset + len])
+    }
+}
+
+/// YBB の索引順で、候補手を1行ずつ復号する iterator。
+pub struct YbbEntries<'a> {
+    book: &'a YbbBook,
+    index: usize,
+    previous: Option<PackedSfen>,
+    index_buffer: ScanBuffer,
+    move_buffer: ScanBuffer,
+}
+
+impl Iterator for YbbEntries<'_> {
+    type Item = Result<YbbEntry, BookError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.book.len() as usize {
+            return None;
+        }
+        let row = match &self.book.storage {
+            YbbStorage::Memory { .. } => self.book.index_row(self.index),
+            YbbStorage::File { .. } => {
+                let offset = HEADER_BYTES as u64 + self.index as u64 * INDEX_BYTES as u64;
+                self.index_buffer.get(self.book, offset, INDEX_BYTES).and_then(decode_index_row)
+            }
+        };
+        self.index += 1;
+        Some(row.and_then(|row| {
+            let previous = self.previous.replace(row.packed_sfen);
+            if previous.is_some_and(|key| key.cmp_bytes(&row.packed_sfen).is_gt()) {
+                return Err(BookError::InvalidFormat("YBB index is not sorted"));
+            }
+            let (start, len) = move_range(
+                row,
+                self.book.move_area,
+                self.book.storage_bytes(),
+                self.book.has_depth,
+            )?;
+            let moves = match &self.book.storage {
+                YbbStorage::Memory { .. } => self.book.decode_moves(row, false),
+                YbbStorage::File { .. } => {
+                    self.move_buffer.get(self.book, start, len).and_then(|bytes| {
+                        decode_moves(bytes, row.move_count, self.book.has_depth, false)
+                    })
+                }
+            };
+            moves.map(|moves| YbbEntry {
+                packed_sfen: row.packed_sfen,
+                ply: row.ply,
+                flipped: false,
+                moves,
+            })
+        }))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.book.len() as usize - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for YbbEntries<'_> {}
+impl std::iter::FusedIterator for YbbEntries<'_> {}
+
+/// YBB の depth 有無と、所有 IR からの変換時の情報破棄を指定する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct YbbWriteOptions {
+    has_depth: bool,
+    allow_lossy: bool,
+}
+
+impl YbbWriteOptions {
+    /// depth なし、情報破棄を許可しない既定設定を返す。
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { has_depth: false, allow_lossy: false }
+    }
+
+    /// ファイル全体で depth を保存するか指定する。
+    #[must_use]
+    pub const fn with_depth(mut self, has_depth: bool) -> Self {
+        self.has_depth = has_depth;
+        self
+    }
+
+    /// `BookDatabase` 出力で、メタデータと保存対象外の depth の破棄を許可する。
+    ///
+    /// 必須値の欠落、保存する数値の範囲外、不正入力は許可しない。
+    /// `YbbWriter` へ直接渡す行では情報破棄を行わない。
+    #[must_use]
+    pub const fn with_allow_lossy(mut self, allow_lossy: bool) -> Self {
+        self.allow_lossy = allow_lossy;
+        self
+    }
+}
+
+/// 行数が既知の YBB を順次出力する writer。
+///
+/// 空の出力先を必要とし、候補手を逐次出力して 44 バイト/行の索引だけを保持する。
+/// `finish` が索引とヘッダーを確定して flush する。永続化や保存先の置換は行わない。
+/// いずれかの操作が失敗した後は使用できず、未完成の出力を破棄する必要がある。
+/// ファイルへ出力する場合は `BufWriter<File>` などで小さな write をまとめる。
+///
+/// ```
+/// use std::io::Cursor;
+/// use rsshogi::board::hirate_position;
+/// use rsshogi::book::{YbbEntry, YbbMove, YbbWriteOptions, YbbWriter};
+/// use rsshogi::types::Move;
+///
+/// let entry = YbbEntry::new(
+///     hirate_position().to_packed_sfen(), 1,
+///     vec![YbbMove::new(Move::from_usi("7g7f").expect("valid USI"), -25, Some(12))?],
+/// )?;
+/// let mut writer = YbbWriter::new(
+///     Cursor::new(Vec::new()), 1, YbbWriteOptions::new().with_depth(true),
+/// )?;
+/// writer.write_entry(&entry)?;
+/// let output = writer.finish()?;
+/// assert_eq!(output.into_inner().len(), 82);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub struct YbbWriter<W> {
+    output: W,
+    entry_count: u64,
+    options: YbbWriteOptions,
+    index: Vec<[u8; INDEX_BYTES]>,
+    previous: Option<PackedSfen>,
+    move_area: u64,
+    move_bytes: u64,
+    failed: bool,
+}
+
+impl<W: Write + Seek> YbbWriter<W> {
+    /// 空で先頭に位置する出力先と、出力予定の行数を指定する。
+    pub fn new(
+        mut output: W,
+        entry_count: u64,
+        options: YbbWriteOptions,
+    ) -> Result<Self, BookError> {
+        let move_area = entry_count
+            .checked_mul(INDEX_BYTES as u64)
+            .and_then(|bytes| bytes.checked_add(HEADER_BYTES as u64))
+            .ok_or(BookError::InvalidData("YBB index size overflow".into()))?;
+        if output.stream_position()? != 0 || output.seek(SeekFrom::End(0))? != 0 {
+            return Err(BookError::InvalidData(
+                "YBB output must be empty and positioned at zero".into(),
+            ));
+        }
+        output.seek(SeekFrom::Start(move_area))?;
+        Ok(Self {
+            output,
+            entry_count,
+            options,
+            index: Vec::new(),
+            previous: None,
+            move_area,
+            move_bytes: 0,
+            failed: false,
+        })
+    }
+
+    /// キーの byte 辞書順で 1 行出力する。同一キーの行は入力順に保持する。
+    ///
+    /// `flipped=true` の検索結果、予定行数の超過、depth 有無の不一致を拒否する。
+    /// キーの復元と局面に対する合法手検査は行わない。
+    pub fn write_entry(&mut self, entry: &YbbEntry) -> Result<(), BookError> {
+        if self.failed {
+            return Err(BookError::InvalidData("YBB writer has failed".into()));
+        }
+        self.failed = true;
+        self.write_entry_inner(entry)?;
+        self.failed = false;
+        Ok(())
+    }
+
+    fn write_entry_inner(&mut self, entry: &YbbEntry) -> Result<(), BookError> {
+        if self.index.len() as u64 >= self.entry_count {
+            return Err(BookError::InvalidData("too many YBB entries".into()));
+        }
+        if entry.flipped {
+            return Err(BookError::InvalidData("cannot write flipped YBB lookup entry".into()));
+        }
+        if self.previous.is_some_and(|previous| previous.cmp_bytes(&entry.packed_sfen).is_gt()) {
+            return Err(BookError::InvalidData("YBB entries are not sorted".into()));
+        }
+        let move_count = validate_move_count(entry.moves.len())?;
+        let width = if self.options.has_depth { 6 } else { 4 };
+        let next_bytes = self
+            .move_bytes
+            .checked_add(u64::from(move_count) * width)
+            .filter(|bytes| self.move_area.checked_add(*bytes).is_some())
+            .ok_or(BookError::InvalidData("YBB move offset overflow".into()))?;
+        for candidate in &entry.moves {
+            if candidate.depth.is_some() != self.options.has_depth {
+                return Err(BookError::InvalidData(
+                    "YBB depth presence does not match header".into(),
+                ));
+            }
+        }
+        for candidate in &entry.moves {
+            self.output.write_all(&candidate.raw_move.to_le_bytes())?;
+            self.output.write_all(&candidate.eval.to_le_bytes())?;
+            if let Some(depth) = candidate.depth {
+                self.output.write_all(&depth.to_le_bytes())?;
+            }
+        }
+        let mut row = [0u8; INDEX_BYTES];
+        row[..32].copy_from_slice(entry.packed_sfen.as_bytes());
+        row[32..40].copy_from_slice(&self.move_bytes.to_le_bytes());
+        row[40..42].copy_from_slice(&entry.ply.to_le_bytes());
+        row[42..44].copy_from_slice(&move_count.to_le_bytes());
+        self.index.push(row);
+        self.previous = Some(entry.packed_sfen);
+        self.move_bytes = next_bytes;
+        Ok(())
+    }
+
+    /// 行数を検査し、索引、ヘッダー、flush が成功した出力先を返す。
+    pub fn finish(mut self) -> Result<W, BookError> {
+        if self.failed || self.index.len() as u64 != self.entry_count {
+            return Err(BookError::InvalidData("failed or incomplete YBB writer".into()));
+        }
+        self.output.seek(SeekFrom::Start(HEADER_BYTES as u64))?;
+        for row in &self.index {
+            self.output.write_all(row)?;
+        }
+        self.output.seek(SeekFrom::Start(0))?;
+        self.output.write_all(MAGIC)?;
+        self.output.write_all(&self.entry_count.to_le_bytes())?;
+        self.output.write_all(&u64::from(self.options.has_depth).to_le_bytes())?;
+        self.output.seek(SeekFrom::Start(self.move_area + self.move_bytes))?;
+        self.output.flush()?;
+        Ok(self.output)
+    }
+}
+
+fn validate_move_count(count: usize) -> Result<u16, BookError> {
+    u16::try_from(count).map_err(|_| BookError::InvalidData("YBB move count exceeds u16".into()))
+}
+
+impl BookDatabase {
+    /// 所有 IR をキー順の YBB として空の出力先へ書き出す。
+    ///
+    /// 候補手順を保持する。手数は `original_ply`、評価値は `score` を必須とする。
+    /// depth を保存する場合は全候補手に値を必要とする。整数は切り詰めない。
+    /// 形式固有メタデータ、ponder、weight、count、保存しない depth があれば、
+    /// `with_allow_lossy(true)` の明示指定を必要とする。
+    /// 局面の符号化と候補手の合法性を検査する。
+    /// ソート用のキーと参照、writer の索引に O(局面数) の追加メモリを使う。
+    /// 入力の検査は出力開始前に行う。I/O エラー時は未完成の出力が残り得る。
+    pub fn write_ybb<W: Write + Seek>(
+        &self,
+        output: &mut W,
+        options: &YbbWriteOptions,
+    ) -> Result<(), BookError> {
+        self.validate()?;
+        let mut entries = Vec::with_capacity(self.len());
+        for entry in self.entries() {
+            let converted = database_ybb_entry(entry, *options)?;
+            entries.push((converted.packed_sfen, entry));
+        }
+        entries.sort_by(|left, right| left.0.cmp_bytes(&right.0));
+        let mut writer = YbbWriter::new(output, self.len() as u64, *options)?;
+        for (_, entry) in entries {
+            writer.write_entry(&database_ybb_entry(entry, *options)?)?;
+        }
+        writer.finish()?;
+        Ok(())
+    }
+}
+
+fn database_ybb_entry(
+    entry: &BookDatabaseEntry,
+    options: YbbWriteOptions,
+) -> Result<YbbEntry, BookError> {
+    let position = Position::from_sfen(entry.position().sfen())
+        .map_err(|error| BookError::InvalidData(format!("invalid YBB position: {error}")))?;
+    let packed_sfen = position
+        .try_to_packed_sfen()
+        .map_err(|error| BookError::InvalidData(format!("unencodable YBB position: {error}")))?;
+    let ply = entry
+        .position()
+        .original_ply()
+        .ok_or_else(|| BookError::InvalidData("missing YBB ply".into()))?;
+    let ply =
+        u16::try_from(ply).map_err(|_| BookError::InvalidData("YBB ply exceeds u16".into()))?;
+    if !options.allow_lossy && entry.metadata() != &BookEntryMetadata::default() {
+        return Err(BookError::InvalidData(
+            "YBB cannot store entry metadata; allow_lossy is required".into(),
+        ));
+    }
+    validate_move_count(entry.candidates().len())?;
+    let mut moves = Vec::with_capacity(entry.candidates().len());
+    for candidate in entry.candidates() {
+        let eval = candidate
+            .score()
+            .ok_or_else(|| BookError::InvalidData("missing YBB evaluation".into()))?;
+        let eval = i16::try_from(eval)
+            .map_err(|_| BookError::InvalidData("YBB evaluation exceeds i16".into()))?;
+        let depth = if options.has_depth {
+            let depth = candidate
+                .depth()
+                .ok_or_else(|| BookError::InvalidData("missing YBB depth".into()))?;
+            Some(
+                u16::try_from(depth)
+                    .map_err(|_| BookError::InvalidData("YBB depth exceeds u16".into()))?,
+            )
+        } else {
+            None
+        };
+        if !options.allow_lossy
+            && (candidate.ponder().is_some()
+                || candidate.weight().is_some()
+                || candidate.count().is_some()
+                || candidate.metadata() != &BookMoveMetadata::default()
+                || (!options.has_depth && candidate.depth().is_some()))
+        {
+            return Err(BookError::InvalidData(
+                "YBB cannot store candidate metadata or omitted depth; allow_lossy is required"
+                    .into(),
+            ));
+        }
+        let converted = YbbMove::new(candidate.mv(), eval, depth)?;
+        if !position.is_legal_move32(position.move32_from_move(candidate.mv())) {
+            return Err(BookError::InvalidData(format!(
+                "illegal YBB candidate: {}",
+                candidate.mv().to_usi()
+            )));
+        }
+        moves.push(converted);
+    }
+    YbbEntry::new(packed_sfen, ply, moves)
 }
 
 fn is_valid_raw_move(raw: u16) -> bool {
@@ -342,6 +944,58 @@ fn flip_move(mv: Move) -> Move {
     }
 }
 
+fn parse_header(bytes: &[u8], file_len: u64) -> Result<(usize, u64, bool), BookError> {
+    if bytes.len() < HEADER_BYTES {
+        return Err(BookError::InvalidFormat("truncated YBB header"));
+    }
+    if &bytes[..16] != MAGIC {
+        return Err(BookError::InvalidFormat("invalid YBB magic"));
+    }
+    let count = read_u64(&bytes[16..24])?;
+    let flags = read_u64(&bytes[24..32])?;
+    if flags & !1 != 0 {
+        return Err(BookError::Unsupported("unknown YBB header flags"));
+    }
+    let count_usize = usize::try_from(count)
+        .map_err(|_| BookError::InvalidFormat("YBB record count overflows usize"))?;
+    let move_area = count
+        .checked_mul(INDEX_BYTES as u64)
+        .and_then(|size| size.checked_add(HEADER_BYTES as u64))
+        .ok_or(BookError::InvalidFormat("YBB index size overflow"))?;
+    if move_area > file_len {
+        return Err(BookError::InvalidFormat("truncated YBB index"));
+    }
+    Ok((count_usize, move_area, flags & 1 != 0))
+}
+
+fn decode_index_row(bytes: &[u8]) -> Result<IndexRow, BookError> {
+    Ok(IndexRow {
+        packed_sfen: PackedSfen::from_bytes(bytes[..32].try_into().expect("fixed YBB index slice")),
+        moves_offset: read_u64(&bytes[32..40])?,
+        ply: read_u16(&bytes[40..42])?,
+        move_count: read_u16(&bytes[42..44])?,
+    })
+}
+
+fn move_range(
+    row: IndexRow,
+    move_area: u64,
+    file_len: u64,
+    has_depth: bool,
+) -> Result<(u64, usize), BookError> {
+    let byte_count = usize::from(row.move_count) * if has_depth { 6 } else { 4 };
+    let start = move_area
+        .checked_add(row.moves_offset)
+        .ok_or(BookError::InvalidFormat("YBB move range overflow"))?;
+    let end = start
+        .checked_add(byte_count as u64)
+        .ok_or(BookError::InvalidFormat("YBB move range overflow"))?;
+    if end > file_len {
+        return Err(BookError::InvalidFormat("truncated YBB move data"));
+    }
+    Ok((start, byte_count))
+}
+
 fn read_u16(bytes: &[u8]) -> Result<u16, BookError> {
     Ok(u16::from_le_bytes(
         bytes.try_into().map_err(|_| BookError::InvalidFormat("truncated YBB u16"))?,
@@ -367,6 +1021,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::board::hirate_position;
+    use crate::book::{BookCandidate, BookPosition};
+    use std::io::{self, Cursor};
 
     use super::*;
 
@@ -409,5 +1065,807 @@ mod tests {
         assert_eq!(entry.moves()[0].mv(), Move::from_usi("7g7f").unwrap());
 
         let _ = fs::remove_file(path);
+    }
+
+    fn candidate(usi: &str, eval: i16, depth: Option<u16>) -> YbbMove {
+        YbbMove::new(Move::from_usi(usi).unwrap(), eval, depth).unwrap()
+    }
+
+    fn open_bytes(bytes: Vec<u8>, options: YbbBookOpenOptions) -> YbbBook {
+        let path = temp_path("roundtrip");
+        fs::write(&path, bytes).unwrap();
+        let result = YbbBook::open_with_options(&path, options);
+        fs::remove_file(path).unwrap();
+        result.unwrap()
+    }
+
+    fn encode(entries: &[YbbEntry], has_depth: bool) -> Vec<u8> {
+        let mut writer = YbbWriter::new(
+            Cursor::new(Vec::new()),
+            entries.len() as u64,
+            YbbWriteOptions::new().with_depth(has_depth),
+        )
+        .unwrap();
+        for entry in entries {
+            writer.write_entry(entry).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn test_full_validation_checks_all_rows_in_both_storage_modes() {
+        let mut position = hirate_position();
+        let entry =
+            YbbEntry::new(position.to_packed_sfen(), 1, vec![candidate("7g7f", 0, Some(9999))])
+                .unwrap();
+        position.apply_move(Move::from_usi("7g7f").unwrap());
+        let other = YbbEntry::new(position.to_packed_sfen(), 2, vec![]).unwrap();
+        let mut entries = [entry, other];
+        entries.sort_by(|a, b| a.packed_sfen.cmp_bytes(&b.packed_sfen));
+        let valid = encode(&entries, true);
+        let mut unsorted = valid.clone();
+        let (first, rest) = unsorted[HEADER_BYTES..].split_at_mut(INDEX_BYTES);
+        first.swap_with_slice(&mut rest[..INDEX_BYTES]);
+        let mut invalid_move = valid.clone();
+        let move_area = HEADER_BYTES + 2 * INDEX_BYTES;
+        invalid_move[move_area..move_area + 2].copy_from_slice(&0u16.to_le_bytes());
+        let mut invalid_offset = valid.clone();
+        invalid_offset[HEADER_BYTES + 32..HEADER_BYTES + 40]
+            .copy_from_slice(&u64::MAX.to_le_bytes());
+        let mut truncated = valid;
+        truncated.pop();
+        for bytes in [unsorted, invalid_move, invalid_offset, truncated] {
+            let path = temp_path("full-validation");
+            fs::write(&path, bytes).unwrap();
+            for storage_mode in [YbbStorageMode::Memory, YbbStorageMode::File] {
+                let options = YbbBookOpenOptions::new().with_storage_mode(storage_mode);
+                assert!(YbbBook::open_with_options(&path, options).is_err());
+                let deferred = options.with_validation_mode(YbbValidationMode::OnAccess);
+                let book = YbbBook::open_with_options(&path, deferred).unwrap();
+                assert!(book.validate_full().is_err());
+                assert_eq!(book.options(), deferred);
+            }
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_validation_progress_cancellation_and_reentrant_lookup() {
+        let key = hirate_position().to_packed_sfen();
+        let entries = [
+            YbbEntry::new(key, 1, vec![candidate("7g7f", 10, None)]).unwrap(),
+            YbbEntry::new(key, 50, vec![]).unwrap(),
+        ];
+        assert_eq!(YbbBookOpenOptions::new(), YbbBookOpenOptions::default());
+        for storage_mode in [YbbStorageMode::Memory, YbbStorageMode::File] {
+            let options = YbbBookOpenOptions::new()
+                .with_storage_mode(storage_mode)
+                .with_validation_mode(YbbValidationMode::OnAccess);
+            let book = open_bytes(encode(&entries, false), options);
+            let mut progress = Vec::new();
+            book.validate_full_with_control(|point| {
+                // コールバック中に同じ reader を参照しても、ファイルロックを再入しない。
+                assert_eq!(book.lookup_packed_sfen(key, 1).unwrap(), Some(entries[0].clone()));
+                progress.push((point.processed_row_count(), point.total_row_count()));
+                BookControl::Continue
+            })
+            .unwrap();
+            assert_eq!(progress, [(0, 2), (1, 2), (2, 2)]);
+            for stop_after in [0, 1] {
+                let mut progress = Vec::new();
+                let result = book.validate_full_with_control(|point| {
+                    progress.push(point.processed_row_count());
+                    if point.processed_row_count() == stop_after {
+                        BookControl::Cancel
+                    } else {
+                        BookControl::Continue
+                    }
+                });
+                assert!(matches!(result, Err(BookError::Cancelled)));
+                assert_eq!(progress, (0..=stop_after).collect::<Vec<_>>());
+                assert_eq!(book.options(), options);
+                assert_eq!(book.lookup_packed_sfen(key, 50).unwrap(), Some(entries[1].clone()));
+                book.clone().validate_full().unwrap();
+            }
+
+            let empty = open_bytes(encode(&[], false), options);
+            let mut progress = Vec::new();
+            empty
+                .validate_full_with_control(|point| {
+                    progress.push((point.processed_row_count(), point.total_row_count()));
+                    BookControl::Continue
+                })
+                .unwrap();
+            assert_eq!(progress, [(0, 0)]);
+            assert!(matches!(
+                empty.validate_full_with_control(|_| BookControl::Cancel),
+                Err(BookError::Cancelled)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_file_backed_lookup_and_iteration_match_memory_with_duplicate_keys() {
+        let position = hirate_position();
+        let key = position.to_packed_sfen();
+        let flipped = Position::from_sfen(&position.to_sfen_flipped(None)).unwrap();
+        for has_depth in [false, true] {
+            let entries = vec![
+                YbbEntry::new(key, 50, vec![candidate("7g7f", -25, has_depth.then_some(9999))])
+                    .unwrap(),
+                YbbEntry::new(key, 1, vec![]).unwrap(),
+                YbbEntry::new(key, 50, vec![candidate("2g2f", 30, has_depth.then_some(0))])
+                    .unwrap(),
+            ];
+            for ignore_ply in [false, true] {
+                for flip in [false, true] {
+                    let options =
+                        YbbBookOpenOptions::new().with_ignore_ply(ignore_ply).with_flipped(flip);
+                    let bytes = encode(&entries, has_depth);
+                    let memory = open_bytes(bytes.clone(), options);
+                    let file = open_bytes(
+                        bytes,
+                        options
+                            .with_storage_mode(YbbStorageMode::File)
+                            .with_validation_mode(YbbValidationMode::OnAccess),
+                    );
+                    assert_eq!(file.options().storage_mode(), YbbStorageMode::File);
+                    assert_eq!(file.len(), memory.len());
+                    assert_eq!(file.has_depth(), memory.has_depth());
+                    assert_eq!(
+                        file.iter_entries().collect::<Result<Vec<_>, _>>().unwrap(),
+                        entries
+                    );
+                    for ply in [1, 50, 99] {
+                        assert_eq!(
+                            file.lookup_packed_sfen(key, ply).unwrap(),
+                            memory.lookup_packed_sfen(key, ply).unwrap()
+                        );
+                    }
+                    assert_eq!(
+                        file.lookup_position(&flipped).unwrap(),
+                        memory.lookup_position(&flipped).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_file_backed_binary_search_multiple_keys_and_shared_cursor() {
+        let mut position = hirate_position();
+        let mut entries = Vec::new();
+        for usi in ["7g7f", "3c3d", "2g2f", "8c8d"] {
+            entries.push(
+                YbbEntry::new(
+                    position.to_packed_sfen(),
+                    position.game_ply(),
+                    vec![candidate(usi, -3, Some(5))],
+                )
+                .unwrap(),
+            );
+            position.apply_move(Move::from_usi(usi).unwrap());
+        }
+        let missing = position.to_packed_sfen();
+        entries.sort_by(|a, b| a.packed_sfen.cmp_bytes(&b.packed_sfen));
+        let book = open_bytes(
+            encode(&entries, true),
+            YbbBookOpenOptions::new()
+                .with_storage_mode(YbbStorageMode::File)
+                .with_validation_mode(YbbValidationMode::OnAccess),
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let clone = book.clone();
+                let expected = &entries;
+                scope.spawn(move || {
+                    for _ in 0..20 {
+                        assert!(clone.lookup_packed_sfen(missing, 5).unwrap().is_none());
+                        for entry in expected {
+                            assert_eq!(
+                                clone.lookup_packed_sfen(entry.packed_sfen, entry.ply).unwrap(),
+                                Some(entry.clone())
+                            );
+                        }
+                        assert_eq!(
+                            clone.iter_entries().collect::<Result<Vec<_>, _>>().unwrap(),
+                            *expected
+                        );
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn test_buffered_scan_boundaries_noncontiguous_offsets_and_interleaved_lookup() {
+        let key = hirate_position().to_packed_sfen();
+        let mut entries: Vec<_> = (0..5000)
+            .map(|ply| {
+                YbbEntry::new(key, ply, vec![candidate("7g7f", ply as i16, Some(ply)); 4]).unwrap()
+            })
+            .collect();
+        // 最大行は通常の buffer より大きく、次の小さい行でも buffer を再利用する。
+        entries[2500] =
+            YbbEntry::new(key, 2500, vec![candidate("2g2f", -10, Some(3)); usize::from(u16::MAX)])
+                .unwrap();
+        let mut bytes = encode(&entries, true);
+        // 候補手 offset は索引順に連続する必要がなく、同じ領域の共有も受理する。
+        let offset_a = HEADER_BYTES + INDEX_BYTES * 10 + 32;
+        let offset_b = HEADER_BYTES + INDEX_BYTES * 4000 + 32;
+        let offset = bytes[offset_b..offset_b + 8].to_vec();
+        bytes[offset_a..offset_a + 8].copy_from_slice(&offset);
+        let options = YbbBookOpenOptions::new().with_validation_mode(YbbValidationMode::OnAccess);
+        let memory = open_bytes(bytes.clone(), options);
+        let file = open_bytes(bytes, options.with_storage_mode(YbbStorageMode::File));
+        let mut first = file.iter_entries();
+        let mut second = file.iter_entries();
+        for expected in memory.iter_entries() {
+            let expected = expected.unwrap();
+            assert_eq!(first.next().unwrap().unwrap(), expected);
+            if expected.ply % 1000 == 0 {
+                assert_eq!(
+                    file.lookup_packed_sfen(key, expected.ply).unwrap(),
+                    Some(expected.clone())
+                );
+            }
+            assert_eq!(second.next().unwrap().unwrap(), expected);
+        }
+        assert!(first.next().is_none());
+        assert!(second.next().is_none());
+        file.validate_full().unwrap();
+    }
+
+    #[test]
+    fn test_file_backed_defers_bad_rows_and_moves_but_returns_errors() {
+        let key = hirate_position().to_packed_sfen();
+        let entry = YbbEntry::new(key, 1, vec![candidate("7g7f", 0, None)]).unwrap();
+        let valid = encode(&[entry], false);
+        let mut invalid_move = valid.clone();
+        invalid_move[76..78].copy_from_slice(&0u16.to_le_bytes());
+        let mut invalid_offset = valid.clone();
+        invalid_offset[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
+        let mut truncated_moves = valid;
+        truncated_moves.pop();
+        for bytes in [invalid_move, invalid_offset, truncated_moves] {
+            let path = temp_path("deferred-validation");
+            fs::write(&path, &bytes).unwrap();
+            assert!(YbbBook::open(&path).is_err());
+            let book = YbbBook::open_with_options(
+                &path,
+                YbbBookOpenOptions::new()
+                    .with_storage_mode(YbbStorageMode::File)
+                    .with_validation_mode(YbbValidationMode::OnAccess),
+            )
+            .unwrap();
+            assert!(book.lookup_packed_sfen(key, 1).is_err());
+            let mut iter = book.iter_entries();
+            assert!(iter.next().unwrap().is_err());
+            assert!(iter.next().is_none());
+            assert!(iter.next().is_none());
+            drop(book);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_file_backed_checks_header_index_extent_and_empty_iteration() {
+        for bytes in [
+            vec![],
+            MAGIC.to_vec(),
+            {
+                let mut bytes = encode(&[], false);
+                bytes[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+                bytes
+            },
+            {
+                let mut bytes = encode(&[], false);
+                bytes[16..24].copy_from_slice(&1u64.to_le_bytes());
+                bytes
+            },
+            {
+                let mut bytes = encode(&[], false);
+                bytes[24..32].copy_from_slice(&2u64.to_le_bytes());
+                bytes
+            },
+        ] {
+            let path = temp_path("bad-header");
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                YbbBook::open_with_options(
+                    &path,
+                    YbbBookOpenOptions::new()
+                        .with_storage_mode(YbbStorageMode::File)
+                        .with_validation_mode(YbbValidationMode::OnAccess)
+                )
+                .is_err()
+            );
+            fs::remove_file(path).unwrap();
+        }
+        let empty = open_bytes(
+            encode(&[], true),
+            YbbBookOpenOptions::new()
+                .with_storage_mode(YbbStorageMode::File)
+                .with_validation_mode(YbbValidationMode::OnAccess),
+        );
+        assert!(empty.is_empty());
+        let mut iter = empty.iter_entries();
+        assert_eq!(iter.len(), 0);
+        assert!(iter.next().is_none());
+        assert!(empty.lookup_position(&hirate_position()).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_file_backed_iteration_detects_unsorted_keys_and_truncated_file() {
+        let mut position = hirate_position();
+        let key = position.to_packed_sfen();
+        position.apply_move(Move::from_usi("7g7f").unwrap());
+        let mut entries = vec![
+            YbbEntry::new(key, 1, vec![]).unwrap(),
+            YbbEntry::new(position.to_packed_sfen(), 2, vec![]).unwrap(),
+        ];
+        entries.sort_by(|a, b| a.packed_sfen.cmp_bytes(&b.packed_sfen));
+        let mut bytes = encode(&entries, false);
+        let (first, second) = bytes[HEADER_BYTES..].split_at_mut(INDEX_BYTES);
+        first.swap_with_slice(second);
+        let book = open_bytes(
+            bytes,
+            YbbBookOpenOptions::new()
+                .with_storage_mode(YbbStorageMode::File)
+                .with_validation_mode(YbbValidationMode::OnAccess),
+        );
+        let mut iter = book.iter_entries();
+        assert!(iter.next().unwrap().is_ok());
+        assert!(iter.next().unwrap().is_err());
+
+        let path = temp_path("truncated-after-open");
+        fs::write(&path, encode(&entries, false)).unwrap();
+        let book = YbbBook::open_with_options(
+            &path,
+            YbbBookOpenOptions::new()
+                .with_storage_mode(YbbStorageMode::File)
+                .with_validation_mode(YbbValidationMode::OnAccess),
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(HEADER_BYTES as u64)
+            .unwrap();
+        assert!(matches!(book.lookup_packed_sfen(key, 1), Err(BookError::Io(_))));
+        assert!(matches!(book.validate_full(), Err(BookError::Io(_))));
+        assert!(matches!(
+            book.validate_full_with_control(|_| BookControl::Cancel),
+            Err(BookError::Cancelled)
+        ));
+        drop(book);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_iterator_preserves_rows_moves_and_ignores_lookup_options() {
+        let key = hirate_position().to_packed_sfen();
+        let entries = vec![
+            YbbEntry::new(
+                key,
+                50,
+                vec![candidate("7g7f", -25, Some(0)), candidate("2g2f", 30, Some(65535))],
+            )
+            .unwrap(),
+            YbbEntry::new(key, 1, vec![]).unwrap(),
+            YbbEntry::new(
+                key,
+                50,
+                vec![candidate("7g7f", 4, Some(9)), candidate("7g7f", 5, Some(8))],
+            )
+            .unwrap(),
+        ];
+        let book = open_bytes(
+            encode(&entries, true),
+            YbbBookOpenOptions::new().with_ignore_ply(true).with_flipped(true),
+        );
+        let mut iter = book.iter_entries();
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next().unwrap().unwrap(), entries[0]);
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+        assert_eq!(iter.collect::<Result<Vec<_>, _>>().unwrap(), entries[1..]);
+        assert_eq!(book.lookup_packed_sfen(key, 1).unwrap().unwrap().ply(), 50);
+        let mut iter = book.iter_entries();
+        for _ in 0..3 {
+            iter.next().unwrap().unwrap();
+        }
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_writer_matches_independent_binary_layout_with_and_without_depth() {
+        let position = hirate_position();
+        for has_depth in [false, true] {
+            let entry = YbbEntry::new(
+                position.to_packed_sfen(),
+                65535,
+                vec![
+                    candidate("7g7f", i16::MIN, has_depth.then_some(65535)),
+                    candidate("2g2f", i16::MAX, has_depth.then_some(0)),
+                ],
+            )
+            .unwrap();
+            let bytes = encode(std::slice::from_ref(&entry), has_depth);
+            let mut expected = b"YANE-BINBOOK-V1\0".to_vec();
+            expected.extend_from_slice(&1u64.to_le_bytes());
+            expected.extend_from_slice(&u64::from(has_depth).to_le_bytes());
+            expected.extend_from_slice(position.to_packed_sfen().as_bytes());
+            expected.extend_from_slice(&0u64.to_le_bytes());
+            expected.extend_from_slice(&65535u16.to_le_bytes());
+            expected.extend_from_slice(&2u16.to_le_bytes());
+            for (usi, eval, depth) in [("7g7f", i16::MIN, 65535u16), ("2g2f", i16::MAX, 0)] {
+                expected.extend_from_slice(&Move::from_usi(usi).unwrap().raw().to_le_bytes());
+                expected.extend_from_slice(&eval.to_le_bytes());
+                if has_depth {
+                    expected.extend_from_slice(&depth.to_le_bytes());
+                }
+            }
+            assert_eq!(bytes, expected);
+            assert_eq!(bytes.len(), 76 + if has_depth { 12 } else { 8 });
+            let book = open_bytes(bytes, YbbBookOpenOptions::new());
+            assert_eq!(book.iter_entries().next().unwrap().unwrap(), entry);
+        }
+    }
+
+    #[test]
+    fn test_writer_empty_books_zero_move_rows_and_maximum_move_count() {
+        for has_depth in [false, true] {
+            let bytes = encode(&[], has_depth);
+            assert_eq!(bytes.len(), 32);
+            let book = open_bytes(bytes, YbbBookOpenOptions::new());
+            assert!(book.is_empty());
+            assert_eq!(book.has_depth(), has_depth);
+        }
+        let key = hirate_position().to_packed_sfen();
+        let empty = YbbEntry::new(key, 0, vec![]).unwrap();
+        let bytes = encode(std::slice::from_ref(&empty), false);
+        assert_eq!(bytes.len(), 76);
+        assert_eq!(
+            open_bytes(bytes, YbbBookOpenOptions::new()).iter_entries().next().unwrap().unwrap(),
+            empty
+        );
+        let mv = candidate("7g7f", 0, None);
+        let maximum = YbbEntry::new(key, 1, vec![mv; 65535]).unwrap();
+        let bytes = encode(&[maximum], false);
+        assert_eq!(&bytes[74..76], &65535u16.to_le_bytes());
+        assert!(YbbEntry::new(key, 1, vec![mv; 65536]).is_err());
+        assert!(YbbMove::new(Move::MOVE_NONE, 0, None).is_err());
+        assert!(YbbMove::new(Move::from_raw(0xffff), 0, None).is_err());
+    }
+
+    #[test]
+    fn test_writer_offsets_and_rejects_unsorted_or_flipped_rows() {
+        let position = hirate_position();
+        let flipped = Position::from_sfen(&position.to_sfen_flipped(Some(1))).unwrap();
+        let mut entries = vec![
+            YbbEntry::new(position.to_packed_sfen(), 1, vec![candidate("7g7f", 1, None)]).unwrap(),
+            YbbEntry::new(
+                flipped.to_packed_sfen(),
+                2,
+                vec![candidate("3c3d", 2, None), candidate("8c8d", 3, None)],
+            )
+            .unwrap(),
+        ];
+        entries.sort_by(|left, right| left.packed_sfen.cmp_bytes(&right.packed_sfen));
+        assert_ne!(entries[0].packed_sfen, entries[1].packed_sfen);
+        let bytes = encode(&entries, false);
+        assert_eq!(
+            u64::from_le_bytes(bytes[108..116].try_into().unwrap()),
+            entries[0].moves.len() as u64 * 4
+        );
+        assert_eq!(
+            open_bytes(bytes, YbbBookOpenOptions::new())
+                .iter_entries()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            entries
+        );
+        let mut writer =
+            YbbWriter::new(Cursor::new(Vec::new()), 2, YbbWriteOptions::new()).unwrap();
+        writer.write_entry(&entries[1]).unwrap();
+        assert!(writer.write_entry(&entries[0]).is_err());
+        assert!(writer.finish().is_err());
+        let mut entry = entries[0].clone();
+        entry.flipped = true;
+        let mut writer =
+            YbbWriter::new(Cursor::new(Vec::new()), 1, YbbWriteOptions::new()).unwrap();
+        assert!(writer.write_entry(&entry).is_err());
+    }
+
+    #[test]
+    fn test_new_entry_uses_move_coordinates_from_flipped_candidates() {
+        let position = hirate_position();
+        let entry =
+            YbbEntry::new(position.to_packed_sfen(), 1, vec![candidate("7g7f", 42, None)]).unwrap();
+        let book =
+            open_bytes(encode(&[entry], false), YbbBookOpenOptions::new().with_flipped(true));
+        let flipped = Position::from_sfen(&position.to_sfen_flipped(Some(1))).unwrap();
+        let result = book.lookup_position(&flipped).unwrap().unwrap();
+        assert!(result.flipped());
+        assert_ne!(result.moves()[0].raw_move(), result.moves()[0].mv().raw());
+        let mut writer =
+            YbbWriter::new(Cursor::new(Vec::new()), 1, YbbWriteOptions::new()).unwrap();
+        assert!(writer.write_entry(&result).is_err());
+        let new_entry =
+            YbbEntry::new(flipped.to_packed_sfen(), 1, result.moves().to_vec()).unwrap();
+        assert_eq!(new_entry.moves()[0].raw_move(), result.moves()[0].mv().raw());
+        let copied = open_bytes(encode(&[new_entry], false), YbbBookOpenOptions::new());
+        assert_eq!(
+            copied.lookup_position(&flipped).unwrap().unwrap().moves()[0].mv(),
+            result.moves()[0].mv()
+        );
+    }
+
+    #[test]
+    fn test_writer_rejects_count_depth_output_and_size_mismatches() {
+        let key = hirate_position().to_packed_sfen();
+        let entry = YbbEntry::new(key, 1, vec![candidate("7g7f", 0, None)]).unwrap();
+        let writer = YbbWriter::new(Cursor::new(Vec::new()), 1, YbbWriteOptions::new()).unwrap();
+        assert!(writer.finish().is_err());
+        let mut writer =
+            YbbWriter::new(Cursor::new(Vec::new()), 0, YbbWriteOptions::new()).unwrap();
+        assert!(writer.write_entry(&entry).is_err());
+        assert!(writer.finish().is_err());
+        for has_depth in [false, true] {
+            let entry =
+                YbbEntry::new(key, 1, vec![candidate("7g7f", 0, (!has_depth).then_some(0))])
+                    .unwrap();
+            let mut writer = YbbWriter::new(
+                Cursor::new(Vec::new()),
+                1,
+                YbbWriteOptions::new().with_depth(has_depth).with_allow_lossy(true),
+            )
+            .unwrap();
+            assert!(writer.write_entry(&entry).is_err());
+            assert!(writer.finish().is_err());
+        }
+        assert!(YbbWriter::new(Cursor::new(vec![1]), 0, YbbWriteOptions::new()).is_err());
+        assert!(YbbWriter::new(Cursor::new(Vec::new()), u64::MAX, YbbWriteOptions::new()).is_err());
+        let mut writer =
+            YbbWriter::new(Cursor::new(Vec::new()), 1, YbbWriteOptions::new()).unwrap();
+        writer.move_bytes = u64::MAX;
+        assert!(writer.write_entry(&entry).is_err());
+    }
+
+    #[derive(Default)]
+    struct FaultOutput {
+        cursor: Cursor<Vec<u8>>,
+        write_budget: Option<usize>,
+        fail_seek: bool,
+        fail_flush: bool,
+    }
+
+    impl Write for FaultOutput {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let count = bytes.len().min(self.write_budget.unwrap_or(usize::MAX));
+            if count == 0 {
+                return Err(io::Error::other("injected write failure"));
+            }
+            let written = self.cursor.write(&bytes[..count])?;
+            if let Some(budget) = &mut self.write_budget {
+                *budget -= written;
+            }
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.fail_flush {
+                return Err(io::Error::other("injected flush failure"));
+            }
+            Ok(())
+        }
+    }
+
+    impl Seek for FaultOutput {
+        fn seek(&mut self, offset: SeekFrom) -> io::Result<u64> {
+            if self.fail_seek {
+                return Err(io::Error::other("injected seek failure"));
+            }
+            self.cursor.seek(offset)
+        }
+    }
+
+    #[test]
+    fn test_writer_io_failures_are_propagated_and_poison_the_writer() {
+        let entry =
+            YbbEntry::new(hirate_position().to_packed_sfen(), 1, vec![candidate("7g7f", 0, None)])
+                .unwrap();
+        let mut writer = YbbWriter::new(FaultOutput::default(), 1, YbbWriteOptions::new()).unwrap();
+        writer.output.write_budget = Some(1);
+        assert!(matches!(writer.write_entry(&entry), Err(BookError::Io(_))));
+        writer.output.write_budget = None;
+        assert!(writer.write_entry(&entry).is_err());
+        assert!(writer.finish().is_err());
+        for failure in 0..3 {
+            let mut writer =
+                YbbWriter::new(FaultOutput::default(), 1, YbbWriteOptions::new()).unwrap();
+            writer.write_entry(&entry).unwrap();
+            match failure {
+                0 => writer.output.write_budget = Some(1),
+                1 => writer.output.fail_seek = true,
+                _ => writer.output.fail_flush = true,
+            }
+            assert!(matches!(writer.finish(), Err(BookError::Io(_))));
+        }
+    }
+
+    fn database_entry(
+        position: &Position,
+        ply: Option<u32>,
+        score: Option<i32>,
+        depth: Option<u32>,
+    ) -> BookDatabaseEntry {
+        BookDatabaseEntry::new(
+            BookPosition::from_position(position, ply),
+            vec![BookCandidate::new(
+                Move::from_usi("7g7f").unwrap(),
+                None,
+                score,
+                depth,
+                None,
+                None,
+                BookMoveMetadata::default(),
+            )],
+            BookEntryMetadata::default(),
+        )
+    }
+
+    fn export_entry(
+        entry: BookDatabaseEntry,
+        options: YbbWriteOptions,
+    ) -> Result<Vec<u8>, BookError> {
+        let database = BookDatabase::try_from_entries(vec![entry])?;
+        let mut output = Cursor::new(Vec::new());
+        database.write_ybb(&mut output, &options)?;
+        Ok(output.into_inner())
+    }
+
+    #[test]
+    fn test_database_export_sorting_move_order_and_integer_boundaries() {
+        let position = hirate_position();
+        let mut other = position.clone();
+        let mv = other.move32_from_move(Move::from_usi("2g2f").unwrap());
+        other.apply_move32(mv);
+        let first = database_entry(&position, Some(0), Some(i16::MIN.into()), Some(65535));
+        let mut candidates = first.candidates().to_vec();
+        candidates.push(BookCandidate::new(
+            Move::from_usi("2g2f").unwrap(),
+            None,
+            Some(i16::MAX.into()),
+            Some(0),
+            None,
+            None,
+            BookMoveMetadata::default(),
+        ));
+        let first =
+            BookDatabaseEntry::new(first.position().clone(), candidates, first.metadata().clone());
+        let second = BookDatabaseEntry::new(
+            BookPosition::from_position(&other, Some(65535)),
+            vec![],
+            BookEntryMetadata::default(),
+        );
+        let mut entries = vec![first, second];
+        entries.sort_by(|left, right| {
+            right
+                .position()
+                .packed_sfen()
+                .unwrap()
+                .cmp_bytes(&left.position().packed_sfen().unwrap())
+        });
+        let database = BookDatabase::try_from_entries(entries).unwrap();
+        let mut output = Cursor::new(Vec::new());
+        database.write_ybb(&mut output, &YbbWriteOptions::new().with_depth(true)).unwrap();
+        let book = open_bytes(output.into_inner(), YbbBookOpenOptions::new());
+        let rows = book.iter_entries().collect::<Result<Vec<_>, _>>().unwrap();
+        assert!(rows[0].packed_sfen.cmp_bytes(&rows[1].packed_sfen).is_lt());
+        let entry = book.lookup_packed_sfen(position.to_packed_sfen(), 0).unwrap().unwrap();
+        assert_eq!(
+            entry.moves,
+            vec![candidate("7g7f", i16::MIN, Some(65535)), candidate("2g2f", i16::MAX, Some(0))]
+        );
+        assert!(book.lookup_packed_sfen(other.to_packed_sfen(), 65535).unwrap().is_some());
+        let mut empty = Cursor::new(Vec::new());
+        BookDatabase::new().write_ybb(&mut empty, &YbbWriteOptions::new()).unwrap();
+        assert_eq!(empty.into_inner().len(), 32);
+    }
+
+    #[test]
+    fn test_database_rejects_missing_values_and_overflow_even_when_lossy() {
+        let position = hirate_position();
+        for (ply, score, depth) in [
+            (None, Some(0), Some(0)),
+            (Some(65536), Some(0), Some(0)),
+            (Some(1), None, Some(0)),
+            (Some(1), Some(32768), Some(0)),
+            (Some(1), Some(-32769), Some(0)),
+            (Some(1), Some(0), None),
+            (Some(1), Some(0), Some(65536)),
+        ] {
+            for allow_lossy in [false, true] {
+                assert!(
+                    export_entry(
+                        database_entry(&position, ply, score, depth),
+                        YbbWriteOptions::new().with_depth(true).with_allow_lossy(allow_lossy)
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_database_requires_explicit_metadata_and_depth_loss() {
+        let position = hirate_position();
+        let entry = database_entry(&position, Some(1), Some(0), None);
+        for field in 0..6 {
+            let old = &entry.candidates()[0];
+            let candidate = BookCandidate::new(
+                old.mv(),
+                (field == 0).then_some(Move::from_usi("3c3d").unwrap()),
+                old.score(),
+                (field == 1).then_some(0),
+                (field == 2).then_some(0),
+                (field == 3).then_some(0),
+                if field == 4 {
+                    BookMoveMetadata::from_yaneuraou(String::new())
+                } else {
+                    BookMoveMetadata::default()
+                },
+            );
+            let metadata = if field == 5 {
+                BookEntryMetadata::from_yaneuraou(1, String::new())
+            } else {
+                BookEntryMetadata::default()
+            };
+            let entry = BookDatabaseEntry::new(entry.position().clone(), vec![candidate], metadata);
+            assert!(export_entry(entry.clone(), YbbWriteOptions::new()).is_err(), "field {field}");
+            let bytes = export_entry(entry, YbbWriteOptions::new().with_allow_lossy(true)).unwrap();
+            let book = open_bytes(bytes, YbbBookOpenOptions::new());
+            assert_eq!(book.iter_entries().next().unwrap().unwrap().moves[0].depth, None);
+        }
+    }
+
+    #[test]
+    fn test_database_preflight_rejects_invalid_input_before_output() {
+        let position = hirate_position();
+        let valid = database_entry(&position, Some(1), Some(0), None);
+        let mut other = position.clone();
+        other.apply_move32(other.move32_from_move(Move::from_usi("2g2f").unwrap()));
+        let invalid = database_entry(&other, Some(2), Some(0), None);
+        let database = BookDatabase::try_from_entries(vec![valid.clone(), invalid]).unwrap();
+        let mut output = Cursor::new(Vec::new());
+        assert!(database.write_ybb(&mut output, &YbbWriteOptions::new()).is_err());
+        assert!(output.get_ref().is_empty());
+        assert_eq!(output.position(), 0);
+        let unencodable = database_entry(&Position::empty(), Some(1), Some(0), None);
+        assert!(export_entry(unencodable, YbbWriteOptions::new().with_allow_lossy(true)).is_err());
+        let invalid = BookDatabaseEntry::new(
+            valid.position().clone(),
+            vec![BookCandidate::new(
+                Move::MOVE_NONE,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                BookMoveMetadata::default(),
+            )],
+            BookEntryMetadata::default(),
+        );
+        assert!(export_entry(invalid, YbbWriteOptions::new()).is_err());
+        let duplicate = BookDatabaseEntry::new(
+            valid.position().clone(),
+            vec![valid.candidates()[0].clone(); 2],
+            BookEntryMetadata::default(),
+        );
+        assert!(export_entry(duplicate, YbbWriteOptions::new()).is_err());
     }
 }

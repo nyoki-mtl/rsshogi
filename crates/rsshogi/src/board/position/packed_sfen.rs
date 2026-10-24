@@ -396,7 +396,7 @@ impl Position {
 
     /// 先後反転した局面を PackedSfen に変換し、表現不能な局面をエラーにする。
     pub fn try_to_packed_sfen_flipped(&self) -> Result<PackedSfen, PackedSfenError> {
-        self.flipped().try_to_packed_sfen()
+        self.flipped_for_serialization().try_to_packed_sfen()
     }
 
     /// 局面を PackedSfen に変換し、表現不能な局面をエラーにする。

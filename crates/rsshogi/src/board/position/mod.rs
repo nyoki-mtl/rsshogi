@@ -247,6 +247,34 @@ impl Default for Position {
     }
 }
 
+impl Position {
+    /// 全有効履歴を保持し、余剰予約容量を引き継がずに複製する。
+    ///
+    /// 元局面が保持する全履歴と設定を、独立した所有局面へ複製する。
+    /// 既存の反復索引は不変なまま共有し、新たな索引は構築しない。
+    /// [`Self::clone_for_search`] と異なり、null move 境界や履歴上限で切り詰めない。
+    ///
+    /// 履歴の格納単位による空き領域は残りうるが、元局面の追加予約は継承しない。
+    /// 複製後の着手には領域確保が発生する場合がある。
+    /// [`Self::has_prepared_search_state`] は複製先の物理 slot の有無を返す。
+    /// 元局面とその既存の view は変更せず、保持履歴の範囲まで双方を独立して undo できる。
+    #[must_use]
+    pub fn clone_compact(&self) -> Self {
+        Self {
+            board: self.board,
+            bitboards: self.bitboards,
+            hands: self.hands,
+            side_to_move: self.side_to_move,
+            entering_king_rule: self.entering_king_rule,
+            entering_king_point: self.entering_king_point,
+            ply: self.ply,
+            st_index: self.st_index,
+            state_stack: self.state_stack.clone_compact(),
+            king_square: self.king_square,
+        }
+    }
+}
+
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 盤面を表示

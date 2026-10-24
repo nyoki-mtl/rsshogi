@@ -50,11 +50,93 @@ fn copy_and_compare(source: &Position, target: &mut Position) {
     target.clone_from(source);
     assert_same(target, &expected);
     assert_same(&source.clone(), &expected);
+    assert_same(&source.clone_compact(), &expected);
     assert!(target.state_stack.chunk_count() >= source.state_stack.chunk_count());
     assert_ne!(
         std::ptr::from_ref(target.current_state()),
         std::ptr::from_ref(source.current_state())
     );
+}
+
+#[test]
+fn clone_compact_keeps_history_settings_and_minimum_chunks() {
+    for depth in [0, 1, 62, 63, 64, 65, 127, 128, 150, 300] {
+        for indexed in [false, true] {
+            for reserved in [0, 64, 256] {
+                let mut source = kings(depth);
+                if indexed {
+                    source = source.clone_for_search();
+                }
+                source.set_entering_king_rule(EnteringKingRule::Point27);
+                source.prepare_search_state_capacity(reserved).unwrap();
+                let expected = reference_clone(&source);
+                let source_chunks = source.state_stack.chunk_count();
+                let source_ptr = std::ptr::from_ref(source.current_state());
+                let view = source.state_history();
+                let mut compact = source.clone_compact();
+                assert_same(&compact, &expected);
+                assert_eq!(compact.state_stack.chunk_count(), (depth + 1).div_ceil(64));
+                assert_eq!(compact.has_prepared_search_state(), depth % 64 != 63);
+                assert_eq!(source.state_stack.chunk_count(), source_chunks);
+                assert_eq!(std::ptr::from_ref(source.current_state()), source_ptr);
+                assert_eq!(view.len(), depth + 1);
+                assert_ne!(std::ptr::from_ref(compact.current_state()), source_ptr);
+                let mut undo_expected = reference_clone(&expected);
+                while compact.state_stack_depth() > 0 {
+                    let mv = compact.last_move();
+                    compact.undo_move32(mv).unwrap();
+                    undo_expected.undo_move32(mv).unwrap();
+                    assert_eq!(compact.to_sfen(None), undo_expected.to_sfen(None));
+                    assert_eq!(compact.key(), undo_expected.key());
+                    assert_eq!(compact.repetition_state(), undo_expected.repetition_state());
+                    assert_eq!(
+                        format!("{:?}", compact.current_state()),
+                        format!("{:?}", undo_expected.current_state())
+                    );
+                }
+                assert_same(&source, &expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn clone_compact_keeps_null_boundary_and_independent_rebranching() {
+    let mut source = kings(150).clone_for_search();
+    source.apply_null_move().unwrap();
+    source.undo_null_move().unwrap();
+    // undo 済み slot と余剰 chunk を持った局面を複製する。
+    for _ in 0..130 {
+        source.apply_null_move().unwrap();
+    }
+    for _ in 0..130 {
+        source.undo_null_move().unwrap();
+    }
+    source.apply_null_move().unwrap();
+    let mut compact = source.clone_compact();
+    let mut expected = reference_clone(&source);
+    assert_same(&compact, &expected);
+    assert_eq!(compact.state_stack_depth(), 151);
+    assert!(compact.state_stack.chunk_count() < source.state_stack.chunk_count());
+    compact.undo_null_move().unwrap();
+    expected.undo_null_move().unwrap();
+    for _ in 0..3 {
+        let mv = compact.last_move();
+        compact.undo_move32(mv).unwrap();
+        expected.undo_move32(mv).unwrap();
+    }
+    let mut moves = Move32List::new();
+    generate_moves_move32::<LegalAll>(&compact, &mut moves);
+    for mv in moves.iter().copied() {
+        compact.try_apply_move32(mv).unwrap();
+        expected.try_apply_move32(mv).unwrap();
+        assert_same(&compact, &expected);
+        compact.undo_move32(mv).unwrap();
+        expected.undo_move32(mv).unwrap();
+    }
+    source.undo_null_move().unwrap();
+    assert_eq!(source.state_stack_depth(), 150);
+    assert_eq!(compact.state_stack_depth(), 147);
 }
 
 fn kings(depth: usize) -> Position {
@@ -144,21 +226,27 @@ proptest! {
             }
             if step % 13 == 0 {
                 copy_and_compare(&source, &mut target);
+                let mut compact = source.clone_compact();
                 let mut expected = reference_clone(&source);
                 let mut legal = Move32List::new();
                 generate_moves_move32::<LegalAll>(&source, &mut legal);
                 if !legal.is_empty() {
                     let mv = legal[usize::from(choice) % legal.len()];
                     target.try_apply_move32(mv).unwrap();
+                    compact.try_apply_move32(mv).unwrap();
                     expected.try_apply_move32(mv).unwrap();
                     assert_same(&target, &expected);
+                    assert_same(&compact, &expected);
                     target.undo_move32(mv).unwrap();
+                    compact.undo_move32(mv).unwrap();
                     expected.undo_move32(mv).unwrap();
                 }
                 for &mv in path.iter().rev().take(3) {
                     target.undo_move32(mv).unwrap();
+                    compact.undo_move32(mv).unwrap();
                     expected.undo_move32(mv).unwrap();
                     assert_same(&target, &expected);
+                    assert_same(&compact, &expected);
                 }
             }
         }

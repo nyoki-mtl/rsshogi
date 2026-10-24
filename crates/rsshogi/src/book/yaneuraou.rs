@@ -224,8 +224,9 @@ impl YaneuraOuBookEntry {
         self.min_ply
     }
 
+    /// SFEN に明記された手数を返す。省略時は `None` を返す。
     #[must_use]
-    pub(crate) const fn original_ply(&self) -> Option<u32> {
+    pub const fn original_ply(&self) -> Option<u32> {
         self.original_ply
     }
 
@@ -576,7 +577,7 @@ fn parse_position(value: &str) -> Result<(String, u32, Option<u32>), BookError> 
         Some(field) => {
             Some(field.parse().map_err(|_| BookError::InvalidData("invalid DB2016 ply".into()))?)
         }
-        None => Some(0),
+        None => None,
     };
     let min_ply = original_ply.unwrap_or(0);
     Ok((position.to_sfen(Some(1)), min_ply, original_ply))

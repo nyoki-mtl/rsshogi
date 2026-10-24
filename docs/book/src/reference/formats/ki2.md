@@ -12,7 +12,7 @@ KI2 はヘッダや初期局面（BOD 盤面図）の仕様を KIF と共有す�
 | 移動元の表現 | `(77)` または `打` で明示 | `右`、`左`、`直`、`上`、`寄`、`引`、`打` の相対動作修飾子で区別 |
 | 1 行あたりの指し手数 | 1 行に 1 手固定 | 1 行に複数の指し手を空白や改行なしで連続記述可能 |
 | 消費時間 | 秒単位で記録可能 | 記録しない |
-| 要約行欠落時の挙動 | `main_terminal = None` / `GameResult::Invalid` | 自動的に `SpecialMove::Interrupt` / `GameResult::Paused` を設定 |
+| 終局表記と要約行がない場合 | `main_terminal = None` / `GameResult::Invalid` | 自動的に `SpecialMove::Interrupt` / `GameResult::Paused` を設定 |
 
 ## 1. 指し手表記と相対動作修飾子
 
@@ -62,12 +62,37 @@ KI2 では、手順の末尾に `までN手で...` という要約行を記述�
 | `まで40手で中断` | `SpecialMove::Interrupt` | `GameResult::Paused` |
 | `まで51手で先手の反則勝ち` | `SpecialMove::WinByIllegalMove` | `GameResult::BlackWinByIllegalMove` |
 | `まで51手で後手の反則負け` | `SpecialMove::LoseByIllegalMove` | `GameResult::BlackWinByIllegalMove` |
-| `まで75手で入玉宣言勝ち` | `SpecialMove::WinByDeclaration` | 直前の指し手側の入玉宣言勝ち |
+| `まで75手で先手の入玉勝ち` | `SpecialMove::WinByDeclaration` | `GameResult::BlackWinByDeclaration` |
 | `まで15手で詰み` | `SpecialMove::Mate` | 直前の指し手側の勝ち |
 
-### 要約行が欠落している場合の挙動
+### 指し手列中の終局表記
 
-KIF や CSA とは異なり、KI2 パーサ（`parse_ki2_str` / `parse_ki2_bytes`）は入力末尾に要約行が存在しない場合、自動的に本手順の終局特殊手に `SpecialMove::Interrupt` を設定し、対局結果を `GameResult::Paused`（中断）とする。
+`▲２六歩 △切れ負け` のように、指し手列の末尾に終局理由を記述できる。
+後続の要約行が勝者のみを示す場合は、要約行の勝者と指し手列の終局理由を組み合わせる。
+例えば、次の棋譜は `SpecialMove::Timeout` と `GameResult::BlackWinByTimeout` として読み込む。
+
+```text
+▲２六歩 △切れ負け
+まで1手で先手の勝ち
+```
+
+反則、入玉宣言、不戦でも同様に終局理由を保持する。
+要約行に千日手や反則勝ちなどの理由が明記されている場合は、その要約行を優先する。
+KI2 の再出力では、投了、時間切れ、反則、入玉宣言、不戦の要約行に記録された勝者を用いる。
+
+### 出力できない終局状態
+
+詰みの要約行 `までN手で詰み` は勝者を記さず、手番の逆側の勝ちとして読み込まれる。
+`SpecialMove::Mate` の勝者が手番側である場合、勝者を保持できないため KI2 出力は `Ki2Error::InvalidLine`（Python は `ValueError`）となる。
+例えば `▲２六歩 △詰み` の後に `まで1手で後手の勝ち` を読み込んだ局面が該当する。
+通常の詰みでは終局理由と勝者を保持して往復できる。
+
+トライは要約行から終局理由と勝者を復元できないため、`SpecialMove::Try` の KI2 出力を拒否する。
+
+### 終局表記と要約行が欠落している場合の挙動
+
+KI2 パーサ（`parse_ki2_str` / `parse_ki2_bytes`）は指し手列中の終局表記と要約行の両方がない場合、本手順の終局特殊手に `SpecialMove::Interrupt` を設定し、対局結果を `GameResult::Paused`（中断）とする。
+指し手列に終局表記があれば、要約行がなくてもその理由と手番から終局状態を復元する。
 一方、エクスポート時に `Record` の `main_terminal` が `None` である場合は、要約行を出力せずに手順のみを書き出す。
 
 ## 4. 変化手順（分岐）

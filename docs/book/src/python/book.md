@@ -37,6 +37,10 @@ record = book.record(board)
 範囲は 1..=16384、既定と推奨値は 64 である。
 保存値は `book.block_positions` で取得し、`editor.compact()` と `salvage_prefix()` でも元の値を維持する。
 
+保存先が既に存在する場合は、上書きせず `FileExistsError`（`OSError` のサブクラス）を送出する。
+構築開始後に保存先が作られた場合も、`finish()` は `FileExistsError` を送出する。
+不正なブロック局面数や重複局面は `ValueError` となる。
+
 ```python
 from rsshogi.book import NativeBookBuilder, NativeBookEntry, NativeBookPosition
 
@@ -67,119 +71,102 @@ I/O 失敗は `OSError`、writer 競合は `BlockingIOError`、不正データ�
 
 ## やねうら王形式定跡（`YaneuraOuBook`）
 
-`#YANEURAOU-DB2016 1.00` ヘッダを持つテキスト定跡ファイルを読み取り専用で検索する。
-`YaneuraOuBook.open(path)` はファイル全体を展開せず、局面ブロックのオフセット索引を構築したうえで、検索時に該当ブロックのみを遅延デコードする。
+`#YANEURAOU-DB2016 1.00` ヘッダーを持つテキスト定跡を読み取り専用で検索する。
+既定の `open(path)` は先頭 10,000 局面行までの整列を検査する。
+`lookup_sfen()` と `lookup_position()` は全件の整列検査完了を必要とする。
+診断が `sorted` でも `complete` が `False` なら `validate_full()` を実行し、未整列なら `lookup_sfen_by_scan()` を使う。
+局面索引やファイル全体の候補手をメモリへ展開しない。
 
-### `YaneuraOuBook` のプロパティとメソッド
-
-| プロパティ / メソッド | シグネチャ / 型 | 説明 |
+| メソッド | 戻り値 | 説明 |
 |---|---|---|
-| `YaneuraOuBook.open(path)` | `(path: str \| PathLike) -> YaneuraOuBook` | DB2016 形式の定跡ファイルを開き、インデックスを構築する（クラスメソッド）。 |
-| `diagnostics` | `YaneuraOuBookDiagnostics` | ファイルオープン時に検出された SFEN 整列状態の診断情報。 |
-| `lookup_sfen(sfen)` | `(sfen: str) -> YaneuraOuBookEntry \| None` | SFEN 文字列で局面を検索する。持ち駒の並び順は正規化され、末尾の手数は無視される。 |
-| `lookup_position(board)` | `(board: Board) -> YaneuraOuBookEntry \| None` | `Board` の現在局面で定跡を検索する。 |
-| `len(book)` | `int` | インデックス化されたユニークな局面数を返す。 |
+| `YaneuraOuBook.open(path)` | `YaneuraOuBook` | 文字列のファイルパスから開く。 |
+| `diagnostics()` | `YaneuraOuBookDiagnostics` | 整列状態と検査範囲を返す。 |
+| `validate_full()` | `YaneuraOuBookDiagnostics` | 全件を検査し、診断情報を返す。 |
+| `lookup_sfen(sfen)` | `YaneuraOuBookEntry \| None` | 正規化 SFEN で検索する。手数は検索キーに含めない。 |
+| `lookup_position(board)` | `YaneuraOuBookEntry \| None` | `Board` の局面で検索する。 |
+| `lookup_sfen_by_scan(sfen)` | `YaneuraOuBookEntry \| None` | ファイルを走査して検索する。 |
 
-### `YaneuraOuBookEntry` / `YaneuraOuBookMove` / `YaneuraOuBookDiagnostics`
-
-| クラス | プロパティ | 型 | 説明 |
-|---|---|---|---|
-| `YaneuraOuBookEntry` | `sfen` | `str` | 手数を除いた正規化済み SFEN 文字列（例：`"lnsgkgsnl/... b -"`）。 |
-| `YaneuraOuBookEntry` | `ply` | `int \| None` | 定跡ファイル内の `sfen` 行に記録されていた手数（省略されていた場合は `None`）。 |
-| `YaneuraOuBookEntry` | `moves` | `list[YaneuraOuBookMove]` | 候補手のリスト（`len(entry)` で件数を取得可能）。 |
-| `YaneuraOuBookMove` | `best_move_usi` | `str` | 候補手の USI 文字列。 |
-| `YaneuraOuBookMove` | `ponder_move_usi` | `str \| None` | 予想応手（ponder）の USI 文字列（`"none"` などの場合は `None`）。 |
-| `YaneuraOuBookMove` | `eval` | `int` | 評価値（センチポーン）。 |
-| `YaneuraOuBookMove` | `depth` | `int` | 探索深さ。 |
-| `YaneuraOuBookMove` | `count` | `int \| None` | 採択回数（記録されていない場合は `None`）。 |
-| `YaneuraOuBookDiagnostics` | `kind` | `str` | すべての局面行が昇順なら `"CLEAN"`、未整列箇所があれば `"UNSORTED_SFEN_ORDER"`。 |
-| `YaneuraOuBookDiagnostics` | `checked_rows` | `int` | オープン時に検査した局面行数。 |
-| `YaneuraOuBookDiagnostics` | `complete` | `bool` | 全局面行の検査が完了していれば `True`。 |
-| `YaneuraOuBookDiagnostics` | `line_number` | `int \| None` | 最初に未整列が検出された行番号（整列済みの場合は `None`）。 |
-| `YaneuraOuBookDiagnostics` | `previous_sfen` | `str \| None` | 未整列検出箇所の直前の SFEN（整列済みの場合は `None`）。 |
-| `YaneuraOuBookDiagnostics` | `current_sfen` | `str \| None` | 未整列検出箇所の当該 SFEN（整列済みの場合は `None`）。 |
+| クラス | プロパティ | 型と意味 |
+|---|---|---|
+| `YaneuraOuBookEntry` | `sfen` | `str`。手数を `1` に正規化した SFEN。 |
+| `YaneuraOuBookEntry` | `min_ply` | `int`。元の手数。省略時は `0`。 |
+| `YaneuraOuBookEntry` | `comment` | `str`。局面コメント。 |
+| `YaneuraOuBookEntry` | `moves` | `list[YaneuraOuBookMove]`。`len(entry)` で候補手数を取得する。 |
+| `YaneuraOuBookMove` | `mv` / `ponder` | `Move`。`to_usi()` で文字列に変換する。応手なしは `Move.MOVE_NONE`。 |
+| `YaneuraOuBookMove` | `score` / `depth` / `count` | `int \| None`。評価値、探索深さ、採択回数。 |
+| `YaneuraOuBookMove` | `comment` | `str`。候補手コメント。 |
+| `YaneuraOuBookDiagnostics` | `kind` | `str`。`sorted`、`unsorted`、`invalid_header`、`unvalidated`。 |
+| `YaneuraOuBookDiagnostics` | `checked_rows` | `int \| None`。検査済みの局面行数。 |
+| `YaneuraOuBookDiagnostics` | `complete` | `bool \| None`。整列済みの場合に全件検査の完了状態を返す。 |
+| `YaneuraOuBookDiagnostics` | `line_number` | `int \| None`。未整列を検出した行番号。 |
+| `YaneuraOuBookDiagnostics` | `previous_sfen` / `current_sfen` | `str \| None`。未整列を検出した前後の SFEN。 |
 
 ```python
 from rsshogi.book import YaneuraOuBook
 from rsshogi.core import Board
 
 book = YaneuraOuBook.open("user_book1.db")
-print(book.diagnostics.kind, len(book))
+book.validate_full()
+print(book.diagnostics().kind)
 
 board = Board()
 entry = book.lookup_position(board)
 if entry is not None:
+    print(entry.min_ply, len(entry))
     for move in entry.moves:
-        print(move.best_move_usi, move.ponder_move_usi, move.eval, move.depth, move.count)
+        print(move.mv.to_usi(), move.ponder.to_usi(), move.score, move.depth, move.count)
 ```
-
----
 
 ## SBK 形式定跡（`SbkBook`）
 
-`SbkBook` は局面状態（state）と有向辺（move）のグラフ構造を持つ SBK バイナリ定跡ファイルを読み取り専用で扱うクラスである。
-局面または SFEN からの検索に加えて、各候補手が持つ遷移先インデックス（`target_state_index`）や `child_entry(parent, move_index)` を使って定跡グラフを高速に辿ることができる。
+SBK の局面状態と候補手を読み取り専用で扱う。
+`state_id` はファイル内の識別子、`state_index` は物理的な格納順を表す。
+`next_state_id` を物理インデックスとして扱わず、遷移先の取得には `child_entry()` を使う。
 
-### `SbkBook` のプロパティとメソッド
-
-| プロパティ / メソッド | シグネチャ / 型 | 説明 |
+| メソッドまたはプロパティ | 戻り値 | 説明 |
 |---|---|---|
-| `SbkBook.open(path)` | `(path: str \| PathLike) -> SbkBook` | SBK 定跡ファイルを開く（クラスメソッド）。 |
-| `SbkBook.open_with_control(path, progress_callback=None, should_cancel=None, poll_interval_records=4096)` | 進捗とキャンセル制御付きのオープン | 進捗通知コールバックとキャンセル判定コールバックを指定して SBK ファイルを開く（クラスメソッド）。 |
-| `author` | `str` | ファイルヘッダに記録された作成者名。 |
-| `description` | `str` | ファイルヘッダに記録された説明文。 |
-| `diagnostics` | `SbkDiagnostics` | 総局面数、総候補手数、範囲外遷移先数の診断情報。 |
-| `lookup_sfen(sfen)` | `(sfen: str) -> SbkEntry \| None` | SFEN 文字列から該当局面の `SbkEntry` を検索する（末尾の手数は無視される）。 |
-| `lookup_position(board)` | `(board: Board) -> SbkEntry \| None` | `Board` の現在局面から `SbkEntry` を検索する。 |
-| `lookup_state_id(state_id)` | `(state_id: int) -> SbkEntry \| None` | 64 ビットの `state_id`（定跡キー）から `SbkEntry` を検索する。 |
-| `lookup_state_index(state_index)` | `(state_index: int) -> SbkEntry \| None` | 0 始まりの状態番号 `state_index` から `SbkEntry` を直接取得する。 |
-| `child_entry(parent, move_index)` | `(parent: SbkEntry, move_index: int) -> SbkEntry \| None` | `parent.moves[move_index]` の遷移先にあたる局面の `SbkEntry` を返す。`move_index` が範囲外の場合は `IndexError` を送出する。 |
-| `len(book)` | `int` | 登録されている局面状態数を返す。 |
+| `SbkBook.open(path)` | `SbkBook` | 文字列のファイルパスから開く。 |
+| `SbkBook.open_with_control(path, callback)` | `SbkBook` | 進捗付きで開く。callback は必須。 |
+| `author` / `description` | `str \| None` | 作成者と説明。 |
+| `diagnostics()` | `SbkDiagnostics` | 重複局面と未解決遷移先の件数を返す。 |
+| `lookup_sfen(sfen)` / `lookup_position(board)` | `SbkEntry \| None` | 局面で検索する。 |
+| `lookup_state_id(state_id)` | `SbkEntry \| None` | ファイル内の識別子で検索する。 |
+| `lookup_state_index(state_index)` | `SbkEntry \| None` | 0 始まりの物理インデックスで検索する。 |
+| `child_entry(parent, move_index)` | `SbkEntry \| None` | 候補手の遷移先を取得する。範囲外の候補手番号や未解決の遷移先は `None`。 |
+| `len(book)` | `int` | 局面状態数。 |
 
-### `SbkEntry` / `SbkMove` / `SbkEval` / `SbkDiagnostics` / `SbkOpenProgress`
+| クラス | プロパティ | 型と意味 |
+|---|---|---|
+| `SbkEntry` | `state_index` / `state_id` | `int` / `int \| None`。物理インデックスと識別子。 |
+| `SbkEntry` | `sfen` / `comment` | `str` / `str \| None`。局面とコメント。 |
+| `SbkEntry` | `games` / `won_black` / `won_white` | `int \| None`。対局数、先手勝数、後手勝数。 |
+| `SbkEntry` | `moves` / `evals` | `list[SbkMove]` / `list[SbkEval]`。候補手と局面評価の履歴。 |
+| `SbkMove` | `mv` / `raw_move` | `Move` / `int`。変換済みの指し手とファイル内の生値。 |
+| `SbkMove` | `evaluation` / `weight` / `next_state_id` | `int \| None`。評価値、重み、遷移先識別子。 |
+| `SbkEval` | `evaluation_value` / `depth` / `sel_depth` / `nodes` | `int \| None`。評価値、深さ、選択深さ、ノード数。 |
+| `SbkEval` | `variation` / `engine_name` | `str \| None`。読み筋とエンジン名。 |
+| `SbkDiagnostics` | `duplicate_positions` / `unresolved_next_states` | `int`。重複局面数と未解決遷移先数。 |
+| `SbkOpenProgress` | `indexed_states` / `total_states` | `int`。索引作成済み状態数と全状態数。 |
 
-| クラス | プロパティ | 型 | 説明 |
-|---|---|---|---|
-| `SbkEntry` | `state_index` | `int` | ファイル内の 0 始まりの状態インデックス。 |
-| `SbkEntry` | `state_id` | `int` | 局面の 64 ビット識別子。 |
-| `SbkEntry` | `moves` | `list[SbkMove]` | 候補手のリスト（`len(entry)` で件数を取得可能）。 |
-| `SbkMove` | `move_usi` | `str` | 候補手の USI 文字列。 |
-| `SbkMove` | `eval` | `SbkEval` | 評価値オブジェクト。 |
-| `SbkMove` | `depth` | `int` | 探索深さ。 |
-| `SbkMove` | `count` | `int` | 採択回数。 |
-| `SbkMove` | `target_state_index` | `int` | この手を指した後の遷移先 `state_index`。 |
-| `SbkMove` | `target_state_id` | `int \| None` | 遷移先局面の `state_id`（遷移先が範囲外の場合は `None`）。 |
-| `SbkEval` | `raw` | `int` | SBK ファイル内の生の評価値整数。 |
-| `SbkEval` | `kind` | `str` | `"NO_VALUE"`、`"CP"`、`"WIN"`（詰みまたは必勝）、`"LOSS"`（被詰または必敗）のいずれか。 |
-| `SbkEval` | `cp` | `int \| None` | `kind == "CP"` の場合のセンチポーン評価値（それ以外は `None`）。 |
-| `SbkEval` | `mate_plies` | `int \| None` | `kind` が `"WIN"` または `"LOSS"` の場合の詰み手数（それ以外は `None`）。 |
-| `SbkEval` | `display_text` | `str` | 表示用に整形された評価値文字列（`str(eval)` と同一）。 |
-| `SbkDiagnostics` | `total_states` | `int` | ファイル内の総状態数。 |
-| `SbkDiagnostics` | `total_moves` | `int` | ファイル内の総候補手数。 |
-| `SbkDiagnostics` | `out_of_range_move_targets` | `int` | `target_state_index` が有効範囲外を指していた候補手の件数。 |
-| `SbkOpenProgress` | `phase` | `str` | 読み込みフェーズ（`"HEADER"`、`"STATES"`、`"MOVES"`、`"COMPLETE"`）。 |
-| `SbkOpenProgress` | `completed_units` | `int` | 現在フェーズで処理済みのレコード数。 |
-| `SbkOpenProgress` | `total_units` | `int` | 現在フェーズの総レコード数。 |
-| `SbkOpenProgress` | `fraction` | `float` | 全体の進捗率（`0.0` から `1.0`）。 |
-
-`SbkBook.open_with_control` の `should_cancel` コールバックが `True` を返した場合、読み込みは中断され `InterruptedError` が送出される。
-また、`poll_interval_records` に `0` を渡すと `ValueError` を送出する。
+callback は `SbkOpenProgress` を受け取る。
+`None` または真値を返すと継続し、`False` を返すとキャンセルする。
+キャンセルと読み込みエラーは `ValueError`、callback 内の例外は元の例外として送出される。
 
 ```python
 from rsshogi.book import SbkBook, SbkOpenProgress
 from rsshogi.core import Board
 
 
-def on_progress(p: SbkOpenProgress) -> None:
-    print(f"{p.phase}: {p.fraction * 100:.1f}%")
+def on_progress(progress: SbkOpenProgress) -> None:
+    print(f"{progress.indexed_states}/{progress.total_states}")
 
 
-book = SbkBook.open_with_control("opening.sbk", progress_callback=on_progress)
+book = SbkBook.open_with_control("opening.sbk", on_progress)
 board = Board()
 entry = book.lookup_position(board)
 if entry is not None and len(entry) > 0:
     first_move = entry.moves[0]
-    print(first_move.move_usi, first_move.eval.display_text)
+    print(first_move.mv.to_usi(), first_move.evaluation, first_move.next_state_id)
     next_entry = book.child_entry(entry, 0)
 ```
 

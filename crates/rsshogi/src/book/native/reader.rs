@@ -363,6 +363,39 @@ impl NativeBook {
         self.get_key(key)
     }
 
+    /// 問い合わせた向きの候補手を返し、直接一致がなければ反転局面を照会する。
+    ///
+    /// 候補手が空でも直接一致を優先する。反転は盤面の 180 度回転と先後の交換を指す。
+    /// 返すキーと指し手は問い合わせた局面の向きに揃え、手番視点の評価値、深さ、表示順位を保持する。
+    /// 評価値の採用条件や候補手の選択方針は呼び出し側が決める。
+    ///
+    /// # Errors
+    /// 局面を符号化できない場合、または照会に失敗した場合に返す。
+    pub fn get_with_flipped(
+        &self,
+        position: &Position,
+    ) -> Result<Option<NativeBookEntry>, BookError> {
+        if let Some(entry) = self.get(position)? {
+            return Ok(Some(entry));
+        }
+        let flipped_key = *position
+            .try_to_packed_sfen_flipped()
+            .map_err(|err| BookError::InvalidData(err.to_string()))?
+            .as_bytes();
+        let Some(mut entry) = self.get_key(flipped_key)? else {
+            return Ok(None);
+        };
+        entry.key = *position
+            .try_to_packed_sfen()
+            .map_err(|err| BookError::InvalidData(err.to_string()))?
+            .as_bytes();
+        for candidate in &mut entry.candidates {
+            candidate.mv = candidate.mv.flip();
+        }
+        entry.candidates.sort_unstable_by_key(|candidate| candidate.mv.raw());
+        Ok(Some(entry))
+    }
+
     /// 正規化PackedSfenキーで候補手だけを取得する。
     pub fn get_key(&self, key: [u8; 32]) -> Result<Option<NativeBookEntry>, BookError> {
         match self.delta.get(&key) {

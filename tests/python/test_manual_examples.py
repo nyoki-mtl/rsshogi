@@ -77,3 +77,15 @@ def test_reference_python_example(relative_path, postcondition, manual_inputs):
     namespace = {"Path": Path, **manual_inputs}
     exec(compile(blocks[0], str(path), "exec"), namespace)
     assert eval(postcondition, namespace)
+
+
+def test_python_book_examples(manual_inputs):
+    """Execute every Python book example against the current bindings."""
+    path = REFERENCE.parent / "python/book.md"
+    blocks = re.findall(r"^```python\n(.*?)^```", path.read_text(encoding="utf-8"), re.MULTILINE | re.DOTALL)
+    assert len(blocks) == 4
+    namespace = {"Path": Path, **manual_inputs}
+    for block in blocks:
+        exec(compile(block, str(path), "exec"), namespace)
+    assert namespace["entry"] is not None
+    assert namespace["next_entry"].state_id == 20

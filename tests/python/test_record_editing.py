@@ -4,6 +4,47 @@ import pytest
 import rsshogi as rs
 
 
+@pytest.mark.parametrize("moves", ["", "+7776FU\n"])
+@pytest.mark.parametrize("marker", ["%ILLEGAL_MOVE", "%+ILLEGAL_ACTION", "%-ILLEGAL_ACTION"])
+def test_illegal_result_survives_csa_and_jkf_to_kif(moves, marker) -> None:
+    source = rs.record.Record.from_csa_str(f"V2.2\nPI\n+\n{moves}{marker}\n")
+    for record in [source, rs.record.Record.from_jkf_str(source.to_jkf())]:
+        restored = rs.record.Record.from_kif_str(record.to_kif())
+        assert restored.result == source.result
+
+
+def test_kif_rejects_unrepresentable_timeout_winner() -> None:
+    source = rs.record.Record.from_ki2_str("▲２六歩 △切れ負け\nまで1手で後手の勝ち")
+    with pytest.raises(ValueError, match="terminal move cannot represent the recorded winner"):
+        source.to_kif()
+    assert rs.record.Record.from_ki2_str(source.to_ki2()).result == source.result
+
+
+@pytest.mark.parametrize(
+    "moves,ply,winner", [("▲２六歩", 1, "後手"), ("▲２六歩 △３四歩", 2, "先手")]
+)
+def test_ki2_rejects_inconsistent_mate_winner(moves, ply, winner, tmp_path) -> None:
+    source = rs.record.Record.from_ki2_str(f"{moves} △詰み\nまで{ply}手で{winner}の勝ち")
+    with pytest.raises(ValueError, match="mate summary cannot represent the recorded winner"):
+        source.to_ki2()
+    output = tmp_path / "invalid.ki2"
+    with pytest.raises(ValueError, match="mate summary cannot represent the recorded winner"):
+        source.write_ki2(output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "turn,result", [("b", rs.record.GameResult.BLACK_WIN_BY_TRY_RULE), ("w", rs.record.GameResult.WHITE_WIN_BY_TRY_RULE)]
+)
+def test_text_exporters_reject_winning_try(turn, result) -> None:
+    sfen = rs.core.Board().to_sfen().replace(" b ", f" {turn} ")
+    source = rs.record.Record.from_main_line(sfen, [], rs.record.SpecialMoveEntry("TRY", result))
+    with pytest.raises(ValueError, match="KI2 cannot restore a try terminal"):
+        source.to_ki2()
+    with pytest.raises(ValueError, match="KIF cannot restore a winning try terminal"):
+        source.to_kif()
+
+
 def test_game_result_hashable_for_dict_and_set() -> None:
     result = rs.record.GameResult.BLACK_WIN
 
@@ -1101,3 +1142,98 @@ def test_csa_illegal_action_result_does_not_depend_on_turn() -> None:
 
         minus = rs.record.Record.from_csa_str(prefix + "%-ILLEGAL_ACTION\n")
         assert minus.result == rs.record.GameResult.BLACK_WIN_BY_ILLEGAL_MOVE
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "▲２六歩 △切れ負け\nまで1手で後手の勝ち",
+        "▲２六歩 △不戦勝\nまで1手で先手の勝ち",
+        "▲２六歩 △不戦敗\nまで1手で先手の勝ち",
+        "手合割：香落ち\n△投了\nまで0手で上手の勝ち",
+    ],
+)
+@pytest.mark.parametrize("format_name", ["csa", "jkf"])
+def test_terminal_export_rejects_loss_of_result_before_writing(text, format_name, tmp_path) -> None:
+    record = rs.record.Record.from_ki2_str(text)
+    with pytest.raises(ValueError):
+        getattr(record, f"to_{format_name}")()
+    path = tmp_path / f"game.{format_name}"
+    with pytest.raises(ValueError):
+        getattr(record, f"write_{format_name}")(path)
+    assert not path.exists()
+    path.write_text("keep existing file", encoding="utf-8")
+    with pytest.raises(ValueError):
+        getattr(record, f"write_{format_name}")(path)
+    assert path.read_text(encoding="utf-8") == "keep existing file"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("10分（加算なし）", "600+0+0"),
+        ("15分（1手10秒加算）", "900+0+10"),
+        ("10分＋10秒加算", "600+0+10"),
+        ("10分加算", "600+0+0"),
+    ],
+)
+def test_annotated_time_controls_keep_structured_values(value, expected) -> None:
+    record = rs.record.Record.from_kif_str(f"持ち時間：{value}\n手合割：平手\n")
+    assert record.metadata.time_control.to_spec() == expected
+    restored = rs.record.Record.from_jkf_str(record.to_jkf())
+    assert restored.metadata.time_control.to_spec() == expected
+
+
+@pytest.mark.parametrize("spec", ["30+0+0", "90+30+5", "4294967295+30+5"])
+def test_subminute_base_time_roundtrips(spec) -> None:
+    record = rs.record.Record.from_kif_str(f"持ち時間：{spec}\n手合割：平手\n")
+    assert record.metadata.time_control.to_spec() == spec
+    assert rs.record.Record.from_kif_str(record.to_kif()).metadata.time_control.to_spec() == spec
+    assert rs.record.Record.from_jkf_str(record.to_jkf()).metadata.time_control.to_spec() == spec
+    assert rs.record.Record.from_csa_str(record.to_csa()).metadata.time_control.to_spec() == spec
+
+
+def test_csa_time_control_overflow_keeps_raw_header() -> None:
+    record = rs.record.Record.from_csa_str("V2.2\n$TIME_LIMIT:99999999:00+00\nPI\n+\n%TORYO\n")
+    assert record.metadata.time_control is None
+    assert "$TIME_LIMIT:99999999:00+00" in record.to_csa()
+
+
+@pytest.mark.parametrize("turn", ["b", "w"])
+@pytest.mark.parametrize("format_name", ["csa", "jkf"])
+@pytest.mark.parametrize(
+    "kind,reason",
+    [
+        ("TIMEOUT", "TIMEOUT"),
+        ("WIN_BY_ILLEGAL_MOVE", "ILLEGAL_MOVE"),
+        ("LOSE_BY_ILLEGAL_MOVE", "ILLEGAL_MOVE"),
+        ("WIN_BY_DECLARATION", "DECLARATION"),
+    ],
+)
+def test_terminal_export_accepts_generic_winners(turn, format_name, kind, reason) -> None:
+    winner = turn if kind == "WIN_BY_DECLARATION" else ("w" if turn == "b" else "b")
+    color = "BLACK" if winner == "b" else "WHITE"
+    generic = getattr(rs.record.GameResult, f"{color}_WIN")
+    expected = getattr(rs.record.GameResult, f"{color}_WIN_BY_{reason}")
+    sfen = rs.core.Board().to_sfen().replace(" b ", f" {turn} ")
+    record = rs.record.Record.from_main_line(sfen, [], rs.record.SpecialMoveEntry(kind, generic))
+    text = getattr(record, f"to_{format_name}")()
+    restored = getattr(rs.record.Record, f"from_{format_name}_str")(text)
+    assert restored.result == expected
+
+
+@pytest.mark.parametrize("format_name", ["csa", "jkf"])
+def test_terminal_export_rejects_conflicting_specific_reason(format_name) -> None:
+    sfen = rs.core.Board().to_sfen().replace(" b ", " w ")
+    terminal = rs.record.SpecialMoveEntry("RESIGN", rs.record.GameResult.BLACK_WIN_BY_TIMEOUT)
+    record = rs.record.Record.from_main_line(sfen, [], terminal)
+    with pytest.raises(ValueError):
+        getattr(record, f"to_{format_name}")()
+
+
+def test_invalid_csa_time_alias_keeps_previous_valid_setting() -> None:
+    record = rs.record.Record.from_csa_str(
+        "V2.2\n$TIME_LIMIT:00:10+00\n$TIME:99999999:00+00\nPI\n+\n%TORYO\n"
+    )
+    assert record.metadata.time_control.to_spec() == "600+0+0"
+    restored = rs.record.Record.from_csa_str(record.to_csa())
+    assert restored.metadata.time_control.to_spec() == "600+0+0"

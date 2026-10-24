@@ -57,6 +57,14 @@ fn check_limits(root: &Position, history: &[&str], future: &[&str], limits: &[u1
     }
     for &limit in limits {
         Position::set_max_repetition_ply(limit);
+        let mut compact = source.clone_compact();
+        assert_eq!(compact.state_stack_depth(), source.state_stack_depth());
+        assert_same_repetition(&source, &compact);
+        for _ in history {
+            compact.undo_move32(compact.last_move()).unwrap();
+        }
+        assert_eq!(compact.to_sfen(None), root.to_sfen(None));
+        assert_eq!(compact.state_stack_depth(), root.state_stack_depth());
         let kept = usize::from(limit).min(history.len());
         let mut indexed = source.clone_for_search();
         // 独立した SFEN から保持対象だけを再生し、索引のない参照局面を作る。

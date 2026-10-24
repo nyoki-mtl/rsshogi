@@ -5,6 +5,101 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-24
+
+Native Book 変換 API と builder のエラー分類の後方互換を切り、Rust の定跡入出力と反転局面の API を追加する。
+DB2016 の手数出力と、勝敗を表現できない棋譜の出力時の挙動は、以下の修正により変わる。
+1.6.0 で非推奨化した API は引き続き 1.x 中は維持する。
+
+### Added
+
+- `Position::clone_compact()` を追加した。
+  全有効履歴と設定を独立して複製し、余剰予約容量を引き継がない。
+  既存の反復索引だけを共有し、新たな索引は構築しない。
+- `YbbBook::write_native_book()` を追加した。
+  キーの正準形と候補手を検査し、評価値、任意深さ、候補手順を保持して変換する。
+  各行の手数破棄は `ybb.ply` として報告する。
+- `Position::to_flipped()` を追加した。
+  反転した盤面と手番、持ち駒からキャッシュとキーを再構築し、履歴のない新しい根局面を返す。
+- DB2016 の逐次出力 `YaneuraOuDb2016Writer` と元手数取得 `YaneuraOuBookEntry::original_ply()` を追加した。
+- `NativeBook::get_with_flipped()` と `DEPTH_KIND_UNSPECIFIED`、`DEPTH_KIND_SEARCH`、`DEPTH_KIND_RETROGRADE` を追加した。
+  反転ヒット時はキーと指し手を問い合わせ局面の向きに揃える。
+
+- YBB の全件走査 `YbbBook::iter_entries()`、逐次出力 `YbbWriter`、
+  新規行を構築する `YbbEntry::new` と `YbbMove::new` を追加した。
+  手数違い、重複行、候補手順を保持する。
+- `BookDatabase::write_ybb()` と `YbbWriteOptions` を追加した。
+  必須値の欠落や数値範囲外を拒否し、保存できない情報の破棄には明示指定を必要とする。
+- `YbbBookOpenOptions` に `with_storage_mode(YbbStorageMode)` と
+  `with_validation_mode(YbbValidationMode)` を追加した。
+  メモリ保持とファイル参照、全件検査と参照時検査を独立に選択できる。
+  既定はメモリ保持と open 時の全件検査とする。
+- `YbbBook::validate_full()` と `validate_full_with_control()` を追加した。
+  データ保持方式によらず全件を検査でき、後者は進捗通知とキャンセルに対応する。
+
+### Changed
+
+- **破壊的変更**: `NativeBookBuilder` のエラー分類を変更した。
+  保存先の既存は `InvalidFormat` から `Io(ErrorKind::AlreadyExists)`、重複局面、不正な予算とブロック局面数、単一レコードの予算超過は `InvalidData` へ変更した。
+  `InvalidFormat` だけで分岐する利用側は、エラー処理を変更する必要がある。
+  Python でも保存先既存時の例外が `ValueError` から `FileExistsError`（`OSError` のサブクラス）へ変わる。
+  重複局面や不正なブロック局面数に対する例外は引き続き `ValueError` とする。
+- **破壊的変更**: `NativeBookImportOptions` の公開フィールドと `Copy` を廃止し、
+  `new().with_*()` による設定と、各 `write_native_book(path, &options)` への参照渡しに統一した。
+  メタデータ、深さ種別、builder のメモリ予算とブロック局面数を指定できる。
+- **破壊的変更**: DB2016 変換の既定 `depth_kind` を探索深さ（1）から未指定（0）へ変更した。
+  探索深さとして使う入力には `with_depth_kind(DEPTH_KIND_SEARCH)` を明示する。
+- **破壊的変更**: `allow_lossy` はフィールド破棄と SBK の未解決状態を許可する設定とした。
+  表現不能局面の除外には `with_skip_unencodable_positions(true)` が必要になる。
+  不正入力は常に拒否し、SBK の重複局面診断も lossy 指定によらず拒否する。
+  スキップした行は `position` の欠落だけを数える。
+  公開後の保存失敗は `SaveUncertain` を返し、出力を再オープンして確認する必要がある。
+
+### Fixed
+
+- 不正な予算設定のエラー表示の二重化を除き、Native 変換の入力エラーに取得可能な行の文脈を付ける。
+- Native 変換は最初の未許可の欠落で中断し、後続入力の走査と構築を行わない。
+- DB2016 の Native 変換で中間 IR を経由する再解析を除き、
+  手数省略時の `yaneuraou.min_ply` 擬似欠落と、明示手数の二重計上を修正した。
+- YBB の Native 変換で、候補手が指し手 raw 値順でなくても表示順を保持して変換できるようにした。
+- CSA と JKF の出力で、終局時の手番や元マーカーと記録済みの勝敗が矛盾する場合はエラーにする。
+  汎用の `BlackWin` / `WhiteWin` は勝者を照合し、終局理由は終局の種類から補う。理由付きの結果は理由も照合する。
+  不戦勝、不戦敗、トライは他の終局理由へ置き換えず出力を拒否する。JKF の変化も検査する。
+- 持ち時間の `10分（加算なし）`、`15分（1手10秒加算）`、`10分＋10秒加算`、`10分加算` を構造化して読み込む。
+  KIF と JKF は基本時間の秒端数を `base+byoyomi+increment` 表記で保持する。CSA も秒端数がある場合は `$TIME:` を使って保持する。
+  CSA の大きな持ち時間による桁あふれを防ぎ、範囲外の値は構造化せず元ヘッダーを保持する。
+  解析不能な時間ヘッダーが後続しても、解析済みの有効な持ち時間を消さない。
+- DB2016 の逐次 writer は候補手の重複も出力前に拒否する。
+- DB2016 の手数省略と明示的な `0` を読み書きで区別して保持する。
+  既定出力は `original_ply` を使い、`min_ply` や手数 `1` に置き換えない。
+  固定手数 `0` の指定も明示的に出力する。
+- JKF の符号付き `ILLEGAL_ACTION` を読み書きし、反則した側と勝敗を保持する。
+- ShogiDB2 の KI2 に含まれる指し手列中の終局表記を認識し、後続の結果行を取り込む。
+  勝者のみを記した結果行では時間切れ、反則、入玉宣言、不戦の終局理由を保持し、勝者を補正する。
+  KI2 の再出力でも補正された勝者と終局理由を保持する。
+- KIF と JKF の持ち時間の「加算」を秒読みと区別して復元する。
+  `10分+5秒加算` と `10分+1手5秒加算` の後置表記も加算として読み込む。
+  基本時間、秒読み、加算が `u32` の範囲を超える場合は、持ち時間全体の構造化解析を拒否する。
+- CSA / JKF から KIF への反則勝敗と、KI2 で補正された反則、不戦の勝者を保持する。
+  KIF の番号付き終局行で表せない勝者は、矛盾した出力を生成せずエラーにする。
+- KIF と KI2 の `詰` / `詰み` を `SpecialMove::Mate` として復元する。
+  KI2 の詰み要約行で表せない勝者はエラーにし、再読込での勝敗反転を防ぐ。
+  読み戻せないトライ終局は KI2 出力を拒否し、KIF も勝者付きのトライを拒否する。
+- Python sdist のビルドで、同梱対象外の計測用 example の自動パス探索が失敗する問題を修正した。
+  標準版と AVX2 版の release workflow で、展開した sdist の library build を検査する。
+
+### Documentation
+
+- Native Book 変換 API の破壊的変更と設定例を、1.7.0 の移行ガイドにまとめた。
+- JKF の符号付き反則、KI2 の終局表記、定跡の変換図と逐次出力の説明を現行実装に揃えた。
+- Python の外部定跡 API の型、属性、進捗 callback と掲載サンプルを現行 bindings に揃えた。
+
+### Performance
+
+- DB2016 の `write_yaneuraou_db2016` は全件検証後にエントリー単位で出力し、出力全文の文字列確保を避ける。
+- YBB のファイル参照による全件走査と全件検査を、索引と候補手領域の独立したバッファでまとめて読み込む。
+  反転検索では SFEN 文字列を経由せず PackedSfen を直接生成する。
+
 ## [1.6.0] - 2026-10-21
 
 `moved_piece_before` と `moved_piece_before_move`、通常の着手結果 `MoveApplyFacts`、
@@ -654,7 +749,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.4.0...v1.5.0

@@ -181,15 +181,15 @@ from rsshogi.numpy import (
 |---|---|---|
 | [`NativeBook`](book.md#native-book-v4) | `rsshogi.book` | v4 の圧縮ブロック部分参照 reader。編集は `NativeBookEditor`、初期構築は `NativeBookBuilder` を使う。 |
 | [`YaneuraOuBook`](book.md#やねうら王形式定跡yaneuraoubook) | `rsshogi.book` | やねうら王形式（DB2016 `.db`）の外部定跡ファイルを検索するリーダである。 |
-| [`YaneuraOuBookEntry`](book.md#yaneuraoubookentry--yaneuraoubookmove--yaneuraoubookdiagnostics) | `rsshogi.book` | DB2016 定跡の 1 局面分のエントリである。 |
-| [`YaneuraOuBookMove`](book.md#yaneuraoubookentry--yaneuraoubookmove--yaneuraoubookdiagnostics) | `rsshogi.book` | DB2016 定跡の 1 候補手データである。 |
-| [`YaneuraOuBookDiagnostics`](book.md#yaneuraoubookentry--yaneuraoubookmove--yaneuraoubookdiagnostics) | `rsshogi.book` | DB2016 定跡ファイルのソート状態や検証結果を保持する診断型である。 |
+| [`YaneuraOuBookEntry`](book.md#やねうら王形式定跡yaneuraoubook) | `rsshogi.book` | DB2016 定跡の 1 局面分のエントリである。 |
+| [`YaneuraOuBookMove`](book.md#やねうら王形式定跡yaneuraoubook) | `rsshogi.book` | DB2016 定跡の 1 候補手データである。 |
+| [`YaneuraOuBookDiagnostics`](book.md#やねうら王形式定跡yaneuraoubook) | `rsshogi.book` | DB2016 定跡ファイルのソート状態や検証結果を保持する診断型である。 |
 | [`SbkBook`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | SBK（`.sbk`）形式の外部定跡ファイルを参照するリーダである。 |
-| [`SbkEntry`](book.md#sbkentry--sbkmove--sbkeval--sbkdiagnostics--sbkopenprogress) | `rsshogi.book` | SBK 定跡の 1 局面分の状態情報と候補手リストを保持する型である。 |
-| [`SbkMove`](book.md#sbkentry--sbkmove--sbkeval--sbkdiagnostics--sbkopenprogress) | `rsshogi.book` | SBK 定跡の 1 候補手と遷移先情報である。 |
-| [`SbkEval`](book.md#sbkentry--sbkmove--sbkeval--sbkdiagnostics--sbkopenprogress) | `rsshogi.book` | SBK 定跡に記録されたエンジン評価情報である。 |
-| [`SbkDiagnostics`](book.md#sbkentry--sbkmove--sbkeval--sbkdiagnostics--sbkopenprogress) | `rsshogi.book` | SBK 定跡の総状態数、総候補手数、範囲外遷移先数を報告する診断型である。 |
-| [`SbkOpenProgress`](book.md#sbkentry--sbkmove--sbkeval--sbkdiagnostics--sbkopenprogress) | `rsshogi.book` | `SbkBook.open_with_control()` のコールバックに渡される進捗オブジェクトである。 |
+| [`SbkEntry`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | SBK 定跡の 1 局面分の状態情報と候補手リストを保持する型である。 |
+| [`SbkMove`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | SBK 定跡の 1 候補手と遷移先情報である。 |
+| [`SbkEval`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | SBK 定跡に記録されたエンジン評価情報である。 |
+| [`SbkDiagnostics`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | SBK 定跡の重複局面数（`duplicate_positions`）と未解決遷移先数（`unresolved_next_states`）を報告する診断型である。 |
+| [`SbkOpenProgress`](book.md#sbk-形式定跡sbkbook) | `rsshogi.book` | `SbkBook.open_with_control()` のコールバックに渡される進捗オブジェクトである。 |
 
 ### USI プロトコルとユーティリティ
 

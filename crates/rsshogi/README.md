@@ -40,6 +40,13 @@ println!("{}", position.to_sfen(None));
 
 データフォーマット仕様と内部設計の詳細は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照。
 
+## 1.7.0 への移行
+
+Native Book 変換は `NativeBookImportOptions::new().with_*()` で設定を構築し、`write_native_book(path, &options)` に渡す。
+深さ種別の既定値は全形式で未指定（0）とし、表現不能局面の除外は専用設定で許可する。
+`NativeBookBuilder` の保存先既存エラーは `BookError::Io` の `ErrorKind::AlreadyExists`、重複局面や不正な構築設定は `BookError::InvalidData` へ変更する。
+破壊的変更と設定例は [1.7.0 の移行ガイド](https://nyoki-mtl.github.io/rsshogi/getting-started/migration-1.7.html) を参照。
+
 ## ライセンス
 
 MIT。

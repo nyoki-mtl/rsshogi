@@ -177,6 +177,9 @@ CSA 形式の指し手文字列（`+8822UM`）とは異なり、JKF の `move.pi
 - **終局特殊手における `time`**：`"special"` を持つ終局特殊手エントリでは `"time": {"now": ...}` のみが出力され、`"total"` は出力されない。
 - **`comments`**：文字列の配列 `["1行目", "2行目"]` として保持される。JKF には評価値専用フィールドがないため、`rsshogi` からのエクスポート時に `EngineInfo.eval` は出力されない。
 
+持ち時間は KIF と同じ表記と `base+byoyomi+increment` を読み込む。
+基本時間に秒端数がある場合は後者の表記で出力し、秒読みや加算と区別して保持する。
+
 ## 5. 終局特殊手（`special`）
 
 終局を表すエントリは `"move"` の代わりに `"special"` フィールドを持つ。
@@ -188,6 +191,8 @@ CSA 形式の指し手文字列（`+8822UM`）とは異なり、JKF の `move.pi
 | `"SENNICHITE"` | `SpecialMove::RepetitionDraw` | `GameResult::DrawByRepetition` |
 | `"TIME_UP"` | `SpecialMove::Timeout` | 直前の指し手側の時間切れ勝ち（`BlackWinByTimeout` / `WhiteWinByTimeout`）。 |
 | `"ILLEGAL_MOVE"` | `SpecialMove::WinByIllegalMove` | 直前の指し手側の反則勝ち（`BlackWinByIllegalMove` / `WhiteWinByIllegalMove`）。 |
+| `"+ILLEGAL_ACTION"` | `SpecialMove::WinByIllegalMove` | 先手の反則による `GameResult::WhiteWinByIllegalMove`。 |
+| `"-ILLEGAL_ACTION"` | `SpecialMove::WinByIllegalMove` | 後手の反則による `GameResult::BlackWinByIllegalMove`。 |
 | `"JISHOGI"` | `SpecialMove::Impasse` | `GameResult::DrawByImpasse` |
 | `"KACHI"` | `SpecialMove::WinByDeclaration` | 宣言した手番側の入玉宣言勝ち（`BlackWinByDeclaration` / `WhiteWinByDeclaration`）。 |
 | `"HIKIWAKE"` | `SpecialMove::Draw` | `GameResult::DrawByImpasse` |
@@ -196,7 +201,16 @@ CSA 形式の指し手文字列（`+8822UM`）とは異なり、JKF の `move.pi
 | `"MAX_MOVES"` | `SpecialMove::MaxMoves` | `GameResult::DrawByMaxPlies` |
 | `"ERROR"` | `SpecialMove::Interrupt` | `GameResult::Error` |
 
-上記以外の文字列（例えば `"MATTA"`、`"+ILLEGAL_ACTION"`、`"-ILLEGAL_ACTION"` など）が指定された場合は、`SpecialMove::Unknown` および `GameResult::Invalid` として保持される。
+符号付き `ILLEGAL_ACTION` は手番ではなく反則を犯した側を示す。
+上記以外の文字列（例えば `"MATTA"`）が指定された場合は、`SpecialMove::Unknown` および `GameResult::Invalid` として保持される。
+
+出力時には、終局マーカーを読み戻した結果と記録済みの勝敗が一致することを検査する。
+汎用の `BlackWin` / `WhiteWin` は勝者だけを照合し、終局理由は終局の種類から補う。
+理由付きの結果は終局理由も一致する必要がある。
+投了、詰み、時間切れは手番の相手を、入玉宣言は手番側を勝者とするため、異なる勝者は出力エラーになる。
+元マーカーが残っていても記録済みの勝敗と矛盾する場合は拒否する。
+不戦勝、不戦敗、トライは対応するマーカーがないため、別の終局理由へ置き換えず出力を拒否する。
+本譜と変化の両方に同じ検査を適用する。
 
 ## 6. 分岐手順（`forks`）
 

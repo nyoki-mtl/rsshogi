@@ -154,6 +154,9 @@ fn apply_metadata_line(builder: &mut RecordMetadataBuilder, line: &str) {
             "持ち時間" => {
                 let parsed =
                     parse_kif_time_control(value).or_else(|| TimeControl::from_spec(value));
+                if parsed.is_none() {
+                    builder.add_attribute(key.to_string(), value.to_string());
+                }
                 builder.time_control(parsed);
             }
             "先手持ち時間" => {
@@ -711,20 +714,29 @@ fn split_ki2_sections(text: &str) -> Vec<String> {
     sections
 }
 
+struct Ki2Sections {
+    moves: Vec<(Move, Square)>,
+    terminal: Option<SpecialMoveEntry>,
+}
+
 fn parse_ki2_sections(
     pos: &Position,
     line: &str,
     last_to: Option<Square>,
-) -> Result<Vec<(Move, Square)>, Ki2Error> {
+) -> Result<Ki2Sections, Ki2Error> {
     let clean = line.replace([' ', '　'], "");
     let sections = split_ki2_sections(&clean);
     let mut out: Vec<(Move, Square)> = Vec::new();
     let mut current_last = last_to;
     let mut tmp_pos = pos.clone();
+    let mut terminal = None;
 
     for section in sections {
         if section.is_empty() {
             continue;
+        }
+        if terminal.is_some() {
+            return Err(Ki2Error::InvalidMove(line.to_string()));
         }
         let mut idx = 0usize;
         if let Some(ch) = section[idx..].chars().next()
@@ -733,6 +745,11 @@ fn parse_ki2_sections(
             idx += ch.len_utf8();
         }
         let dest_part = &section[idx..];
+        let special = terminal_from_kif_name(dest_part, tmp_pos.turn());
+        if !matches!(special.kind(), SpecialMove::Unknown(_)) {
+            terminal = Some(special.with_raw(Some(section)));
+            continue;
+        }
         let (to_sq, consumed) = parse_kif_destination(dest_part, current_last)
             .map_err(|_| Ki2Error::InvalidMove(line.to_string()))?;
         idx += consumed;
@@ -892,7 +909,7 @@ fn parse_ki2_sections(
             tmp_pos.apply_move32(mv);
         }
     }
-    Ok(out)
+    Ok(Ki2Sections { moves: out, terminal })
 }
 
 fn parse_ki2_variation_moves(
@@ -943,7 +960,7 @@ fn parse_ki2_variation_moves(
         }
 
         let parsed = parse_ki2_sections(&pos, line, last_to)?;
-        for (mv16, to_sq) in parsed {
+        for (mv16, to_sq) in parsed.moves {
             if !pos.is_legal_move(mv16) {
                 return Err(Ki2Error::InvalidMove(line.to_string()));
             }
@@ -959,6 +976,9 @@ fn parse_ki2_variation_moves(
             last_to = Some(to_sq);
             refresh_position_if_needed(&mut pos, &mut refresh_counter)?;
         }
+        if parsed.terminal.is_some() {
+            break;
+        }
     }
 
     Ok(moves)
@@ -967,13 +987,14 @@ fn parse_ki2_variation_moves(
 fn terminal_from_kif_name(name: &str, side_to_move: Color) -> SpecialMoveEntry {
     let is_black_turn = side_to_move == Color::BLACK;
     let (kind, result) = match name {
-        "投了" | "詰み" | "詰" => {
+        "投了" => {
             if is_black_turn {
                 (SpecialMove::Resign, GameResult::WhiteWin)
             } else {
                 (SpecialMove::Resign, GameResult::BlackWin)
             }
         }
+        "詰み" | "詰" => (SpecialMove::Mate, GameResult::win_from_color(side_to_move.flip())),
         "切れ負け" => {
             if is_black_turn {
                 (SpecialMove::Timeout, GameResult::WhiteWinByTimeout)
@@ -1108,10 +1129,30 @@ fn parse_kif_summary_result(line: &str, side_to_move: Color) -> Option<SpecialMo
             ));
         }
     }
+    for (marker, kind, winner_is_named) in
+        [("不戦勝", SpecialMove::WinByDefault, true), ("不戦敗", SpecialMove::LoseByDefault, false)]
+    {
+        if trimmed.contains(marker) {
+            let named = if trimmed.contains("先手") || trimmed.contains("下手") {
+                Some(Color::BLACK)
+            } else if trimmed.contains("後手") || trimmed.contains("上手") {
+                Some(Color::WHITE)
+            } else {
+                None
+            };
+            if let Some(named) = named {
+                let winner = if winner_is_named { named } else { named.flip() };
+                return Some(SpecialMoveEntry::new(
+                    kind,
+                    GameResult::win_by_forfeit_from_color(winner),
+                ));
+            }
+        }
+    }
     if trimmed.contains("不詰") {
         return Some(SpecialMoveEntry::new(SpecialMove::NoMate, GameResult::Paused));
     }
-    if trimmed.ends_with("詰") {
+    if trimmed.ends_with("詰") || trimmed.ends_with("詰み") {
         return Some(terminal_from_kif_name("詰", side_to_move));
     }
     if trimmed.contains("勝ち") {
@@ -1243,7 +1284,26 @@ fn move_to_kif_text(
     Ok((pad_kif_move_text(&format!("{dest}{suffix}")), to_sq))
 }
 
-fn special_move_to_kif_text(special: &SpecialMoveEntry) -> String {
+fn special_move_to_kif_text(
+    special: &SpecialMoveEntry,
+    side_to_move: Color,
+) -> Result<String, KifError> {
+    let winner = special.result().winner_color();
+    if matches!(special.kind(), SpecialMove::Try) && winner.is_some() {
+        return Err(KifError::InvalidLine("KIF cannot restore a winning try terminal".into()));
+    }
+    let expected_winner = match special.kind() {
+        SpecialMove::Resign | SpecialMove::Mate | SpecialMove::Timeout => Some(side_to_move.flip()),
+        SpecialMove::WinByDeclaration => Some(side_to_move),
+        _ => None,
+    };
+    if let (Some(winner), Some(expected)) = (winner, expected_winner)
+        && winner != expected
+    {
+        return Err(KifError::InvalidLine(
+            "terminal move cannot represent the recorded winner".into(),
+        ));
+    }
     let text = match special.kind() {
         SpecialMove::Resign => "投了",
         SpecialMove::Interrupt => "中断",
@@ -1254,15 +1314,25 @@ fn special_move_to_kif_text(special: &SpecialMoveEntry) -> String {
         SpecialMove::Mate => "詰み",
         SpecialMove::NoMate => "不詰",
         SpecialMove::Timeout => "切れ負け",
+        SpecialMove::WinByIllegalMove | SpecialMove::LoseByIllegalMove if winner.is_some() => {
+            if winner == Some(side_to_move) {
+                "反則勝ち"
+            } else {
+                "反則負け"
+            }
+        }
         SpecialMove::WinByIllegalMove => "反則勝ち",
         SpecialMove::LoseByIllegalMove => "反則負け",
         SpecialMove::WinByDeclaration => "入玉勝ち",
+        SpecialMove::WinByDefault | SpecialMove::LoseByDefault if winner.is_some() => {
+            if winner == Some(side_to_move) { "不戦勝" } else { "不戦敗" }
+        }
         SpecialMove::WinByDefault => "不戦勝",
         SpecialMove::LoseByDefault => "不戦敗",
         SpecialMove::Try => "トライ",
         SpecialMove::Unknown(name) => name,
     };
-    pad_kif_move_text(text)
+    Ok(pad_kif_move_text(text))
 }
 
 fn format_kif_move_line(
@@ -1293,8 +1363,16 @@ fn format_kif_summary(
         if handicap_side_names { ("下手", "上手") } else { ("先手", "後手") };
     let next = if side_to_move == Color::BLACK { black } else { white };
     let last = if side_to_move == Color::BLACK { white } else { black };
+    let winner = terminal
+        .result()
+        .winner_color()
+        .map(|color| if color == Color::BLACK { black } else { white });
+    let loser = terminal
+        .result()
+        .winner_color()
+        .map(|color| if color == Color::BLACK { white } else { black });
     match terminal.kind() {
-        SpecialMove::Resign => format!("まで{ply}手で{last}の勝ち"),
+        SpecialMove::Resign => format!("まで{ply}手で{}の勝ち", winner.unwrap_or(last)),
         SpecialMove::Interrupt => format!("まで{ply}手で中断"),
         SpecialMove::MaxMoves => format!("まで{ply}手で最大手数"),
         SpecialMove::Draw if terminal.result() == GameResult::DrawByAdjudication => {
@@ -1304,12 +1382,24 @@ fn format_kif_summary(
         SpecialMove::RepetitionDraw => format!("まで{ply}手で千日手"),
         SpecialMove::Mate => format!("まで{ply}手で詰み"),
         SpecialMove::NoMate => format!("まで{ply}手で不詰"),
-        SpecialMove::Timeout => format!("まで{ply}手で時間切れにより{last}の勝ち"),
-        SpecialMove::WinByIllegalMove => format!("まで{ply}手で{next}の反則勝ち"),
-        SpecialMove::LoseByIllegalMove => format!("まで{ply}手で{next}の反則負け"),
-        SpecialMove::WinByDeclaration => format!("まで{ply}手で{next}の入玉勝ち"),
-        SpecialMove::WinByDefault => format!("まで{ply}手で{next}の不戦勝"),
-        SpecialMove::LoseByDefault => format!("まで{ply}手で{next}の不戦敗"),
+        SpecialMove::Timeout => {
+            format!("まで{ply}手で時間切れにより{}の勝ち", winner.unwrap_or(last))
+        }
+        SpecialMove::WinByIllegalMove => {
+            format!("まで{ply}手で{}の反則勝ち", winner.unwrap_or(next))
+        }
+        SpecialMove::LoseByIllegalMove => {
+            format!("まで{ply}手で{}の反則負け", loser.unwrap_or(next))
+        }
+        SpecialMove::WinByDeclaration => {
+            format!("まで{ply}手で{}の入玉勝ち", winner.unwrap_or(next))
+        }
+        SpecialMove::WinByDefault => {
+            format!("まで{ply}手で{}の不戦勝", winner.unwrap_or(next))
+        }
+        SpecialMove::LoseByDefault => {
+            format!("まで{ply}手で{}の不戦敗", loser.unwrap_or(next))
+        }
         SpecialMove::Try => format!("まで{ply}手で{next}のトライ"),
         SpecialMove::Unknown(name) => format!("まで{ply}手で{name}"),
     }
@@ -1363,6 +1453,9 @@ fn format_kif_time_control_text(time_control: &TimeControl) -> Option<String> {
     if base == 0 && byoyomi == 0 && increment == 0 {
         return None;
     }
+    if !base.is_multiple_of(60) {
+        return Some(time_control.to_spec());
+    }
     let mut parts = Vec::new();
     if base > 0 {
         let hours = base / 3600;
@@ -1398,6 +1491,8 @@ fn append_kif_metadata(lines: &mut Vec<String>, metadata: &RecordMetadata) {
     if let Some(tc) = metadata.time_control()
         && let Some(text) = format_kif_time_control_text(tc)
     {
+        lines.push(format!("持ち時間：{text}"));
+    } else if let Some(text) = metadata.attributes().get("持ち時間") {
         lines.push(format!("持ち時間：{text}"));
     }
     if let Some(tc) = metadata.black_time_control() {
@@ -1894,10 +1989,32 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
             continue;
         }
         if line.starts_with("まで") {
-            if terminal.is_none() {
-                terminal = parse_ki2_summary_result(line, pos.turn()).map(|record| {
-                    (record.with_raw(Some(line.to_string())), RecordAnnotation::new())
-                });
+            // ShogiDB2 の終局トークンの手番記号は不正確な場合があるので、総括の勝敗を優先する。
+            if let Some(mut summary) = parse_ki2_summary_result(line, pos.turn()) {
+                // 勝者だけの総括行では、指し手列に明記された終局理由を保持する。
+                if let Some((inline, _)) = &terminal
+                    && inline.result().is_win()
+                    && matches!(summary.kind(), SpecialMove::Resign)
+                    && matches!(summary.result(), GameResult::BlackWin | GameResult::WhiteWin)
+                {
+                    let winner = summary.result().winner_color().expect("summary has a winner");
+                    let result = match inline.kind() {
+                        SpecialMove::Timeout => GameResult::win_by_timeout_from_color(winner),
+                        SpecialMove::WinByIllegalMove | SpecialMove::LoseByIllegalMove => {
+                            GameResult::win_by_illegal_move_from_color(winner)
+                        }
+                        SpecialMove::WinByDeclaration => {
+                            GameResult::win_by_declaration_from_color(winner)
+                        }
+                        SpecialMove::WinByDefault | SpecialMove::LoseByDefault => {
+                            GameResult::win_by_forfeit_from_color(winner)
+                        }
+                        _ => summary.result(),
+                    };
+                    summary = SpecialMoveEntry::new(inline.kind().clone(), result);
+                }
+                terminal =
+                    Some((summary.with_raw(Some(line.to_string())), RecordAnnotation::new()));
             }
             break;
         }
@@ -1937,8 +2054,11 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
             continue;
         }
 
+        if terminal.is_some() {
+            return Err(Ki2Error::InvalidMove(line.to_string()));
+        }
         let parsed = parse_ki2_sections(&pos, line, last_to)?;
-        for (mv16, to_sq) in parsed {
+        for (mv16, to_sq) in parsed.moves {
             if !pos.is_legal_move(mv16) {
                 return Err(Ki2Error::IllegalMove { index: moves.len() });
             }
@@ -1953,6 +2073,7 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
             pos_history.push(pos.clone());
             last_to_history.push(last_to);
         }
+        terminal = parsed.terminal.map(|special| (special, RecordAnnotation::new()));
     }
 
     let terminal = terminal.unwrap_or_else(|| {
@@ -2011,6 +2132,9 @@ pub fn parse_ki2_str(text: &str) -> Result<Record, Ki2Error> {
 }
 
 /// [`Record`] を KIF 形式の文字列に変換する。
+///
+/// # Errors
+/// 不正な局面や指し手、番号付き終局行から復元できない勝者がある場合に返す。
 pub fn export_kif(record: &Record) -> Result<String, KifError> {
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
@@ -2159,7 +2283,7 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
             if pos.turn() == Color::BLACK { black_total_ms } else { white_total_ms };
         lines.push(format_kif_move_line(
             record.move_count() + 1,
-            &special_move_to_kif_text(terminal),
+            &special_move_to_kif_text(terminal, pos.turn())?,
             terminal_elapsed,
             terminal_total,
             false,
@@ -2176,6 +2300,9 @@ pub fn export_kif(record: &Record) -> Result<String, KifError> {
 }
 
 /// [`Record`] を KI2 形式の文字列に変換する。
+///
+/// # Errors
+/// 不正な局面や指し手、手番側が勝者の詰み、トライ終局がある場合に返す。
 pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
@@ -2325,6 +2452,16 @@ pub fn export_ki2(record: &Record) -> Result<String, Ki2Error> {
     }
 
     if let Some(terminal) = record.main_terminal() {
+        if matches!(terminal.kind(), SpecialMove::Mate)
+            && terminal.result().winner_color() == Some(pos.turn())
+        {
+            return Err(Ki2Error::InvalidLine(
+                "mate summary cannot represent the recorded winner".into(),
+            ));
+        }
+        if matches!(terminal.kind(), SpecialMove::Try) {
+            return Err(Ki2Error::InvalidLine("KI2 cannot restore a try terminal".into()));
+        }
         if record.node_count() > main_ids.len() + 1 {
             lines.push(String::new());
         }
@@ -3011,6 +3148,114 @@ mod tests {
         assert_eq!(record.moves()[2].mv().to_usi(), "7g7f");
         assert_eq!(record.moves()[3].mv().to_usi(), "5c5d");
         assert_eq!(record.result(), GameResult::BlackWin);
+    }
+
+    #[test]
+    fn test_parse_ki2_shogidb2_inline_terminal_uses_summary() {
+        for (moves, count, summary, expected) in [
+            ("▲２六歩 △投了", 1, "先手の勝ち", GameResult::BlackWin),
+            ("▲２六歩 △３四歩 ▲７六歩 △投了", 3, "先手の勝ち", GameResult::BlackWin),
+            ("▲２六歩 △３四歩 △投了", 2, "後手の勝ち", GameResult::WhiteWin),
+            ("▲２六歩 △３四歩 ▲７六歩 △千日手", 3, "千日手", GameResult::DrawByRepetition),
+            ("▲２六歩 △３四歩 △千日手", 2, "千日手", GameResult::DrawByRepetition),
+        ] {
+            let text = format!("{moves}\nまで{count}手で{summary}");
+            let record = parse_ki2_str(&text).unwrap();
+            assert_eq!(record.main_moves().count(), count);
+            assert_eq!(record.result(), expected);
+            let exported = export_ki2(&record).unwrap();
+            assert_eq!(parse_ki2_str(&exported).unwrap().result(), expected);
+        }
+    }
+
+    #[test]
+    fn test_parse_ki2_summary_preserves_inline_reason_and_corrects_winner() {
+        for (name, kind, black_result, white_result) in [
+            ("投了", SpecialMove::Resign, GameResult::BlackWin, GameResult::WhiteWin),
+            (
+                "切れ負け",
+                SpecialMove::Timeout,
+                GameResult::BlackWinByTimeout,
+                GameResult::WhiteWinByTimeout,
+            ),
+            (
+                "反則負け",
+                SpecialMove::LoseByIllegalMove,
+                GameResult::BlackWinByIllegalMove,
+                GameResult::WhiteWinByIllegalMove,
+            ),
+            (
+                "反則勝ち",
+                SpecialMove::WinByIllegalMove,
+                GameResult::BlackWinByIllegalMove,
+                GameResult::WhiteWinByIllegalMove,
+            ),
+            (
+                "入玉宣言",
+                SpecialMove::WinByDeclaration,
+                GameResult::BlackWinByDeclaration,
+                GameResult::WhiteWinByDeclaration,
+            ),
+            (
+                "不戦勝",
+                SpecialMove::WinByDefault,
+                GameResult::BlackWinByForfeit,
+                GameResult::WhiteWinByForfeit,
+            ),
+            (
+                "不戦敗",
+                SpecialMove::LoseByDefault,
+                GameResult::BlackWinByForfeit,
+                GameResult::WhiteWinByForfeit,
+            ),
+        ] {
+            for (moves, count) in [("▲２六歩", 1), ("▲２六歩 △３四歩", 2)] {
+                for (winner, expected) in [("先手", black_result), ("後手", white_result)] {
+                    let text = format!("{moves} △{name}\nまで{count}手で{winner}の勝ち");
+                    let record = parse_ki2_str(&text).unwrap();
+                    assert_eq!(record.result(), expected, "{text}");
+                    assert_eq!(record.main_terminal().unwrap().kind(), &kind, "{text}");
+                    let exported = export_ki2(&record).unwrap();
+                    assert_eq!(parse_ki2_str(&exported).unwrap().result(), expected, "{exported}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_ki2_explicit_summary_reason_takes_precedence() {
+        for (summary, expected) in [
+            ("千日手", GameResult::DrawByRepetition),
+            ("中断", GameResult::Paused),
+            ("先手の反則勝ち", GameResult::BlackWinByIllegalMove),
+            ("後手の時間切れ勝ち", GameResult::WhiteWinByTimeout),
+        ] {
+            let record = parse_ki2_str(&format!("▲２六歩 △投了\nまで1手で{summary}")).unwrap();
+            assert_eq!(record.result(), expected);
+        }
+    }
+
+    #[test]
+    fn test_parse_ki2_inline_terminal_without_summary() {
+        for (terminal, expected) in
+            [("投了", GameResult::BlackWin), ("千日手", GameResult::DrawByRepetition)]
+        {
+            let record = parse_ki2_str(&format!("▲２六歩 △{terminal}")).unwrap();
+            assert_eq!(record.main_moves().count(), 1);
+            assert_eq!(record.result(), expected);
+        }
+    }
+
+    #[test]
+    fn test_parse_ki2_rejects_malformed_inline_terminals() {
+        for text in [
+            "▲２六歩 △未知の終局\nまで1手で先手の勝ち",
+            "▲２六歩 △投了余分\nまで1手で先手の勝ち",
+            "▲２六歩 △投了 ▲７六歩\nまで1手で先手の勝ち",
+            "▲２六歩 △投了\n△３四歩\nまで2手で先手の勝ち",
+        ] {
+            assert!(matches!(parse_ki2_str(text), Err(Ki2Error::InvalidMove(_))), "{text}");
+        }
     }
 
     #[test]
