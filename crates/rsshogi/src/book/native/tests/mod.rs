@@ -5,6 +5,8 @@ use crate::types::Move;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod flipped;
+
 struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
@@ -104,6 +106,7 @@ fn block_parameters_and_partial_corruption_detection() {
     fs::write(&path, bytes).unwrap();
     let book = NativeBook::open(&path).unwrap();
     assert!(book.get(&position()).is_err());
+    assert!(book.get_with_flipped(&position()).is_err());
     assert!(book.validate_full().is_err());
 }
 

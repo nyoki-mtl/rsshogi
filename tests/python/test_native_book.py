@@ -250,6 +250,22 @@ def test_native_builder_invalid_block_positions(tmp_path: Path, block_positions:
     assert not path.exists()
 
 
+@pytest.mark.parametrize("exists_before_start", [True, False])
+def test_native_builder_existing_destination(tmp_path: Path, exists_before_start: bool):
+    path = tmp_path / "existing.book"
+    original = b"existing destination"
+    if exists_before_start:
+        path.write_bytes(original)
+        with pytest.raises(FileExistsError):
+            NativeBookBuilder(path)
+    else:
+        builder = NativeBookBuilder(path)
+        path.write_bytes(original)
+        with pytest.raises(FileExistsError):
+            builder.finish()
+    assert path.read_bytes() == original
+
+
 def test_native_builder_default_block_positions(tmp_path: Path):
     path = tmp_path / "default.book"
     NativeBookBuilder(path).finish()

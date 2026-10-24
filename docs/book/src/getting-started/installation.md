@@ -11,7 +11,7 @@ python -m pip install rsshogi
 
 ### AVX2 最適化版（x86_64 CPU 向け）
 
-AVX2 および BMI1 命令に対応する x86_64 CPU 環境では、SIMD 命令を有効化してビルドされた `rsshogi-avx2` を選択できる。
+AVX2 命令に対応する x86_64 CPU 環境では、AVX2 命令を有効化してビルドされた `rsshogi-avx2` を選択できる。
 
 ```console
 python -m pip install rsshogi-avx2
@@ -45,7 +45,7 @@ Python パッケージを sdist からビルドする場合も同様であり、
 
 ```toml
 [dependencies]
-rsshogi = "1.6.0"
+rsshogi = "1.7.0"
 ```
 
 ### 用途別の Feature フラグ指定
@@ -55,12 +55,12 @@ rsshogi = "1.6.0"
 
 | 用途 | `Cargo.toml` の設定例 |
 |---|---|
-| **USI 将棋エンジン（64-bit ハッシュ）** | `rsshogi = "1.6.0"` |
-| **USI 将棋エンジン（128-bit ハッシュ + 定跡参照）** | `rsshogi = { version = "1.6.0", features = ["hash-128", "book"] }` |
-| **棋譜変換、定跡構築、教師データ生成ツール** | `rsshogi = { version = "1.6.0", features = ["records", "book"] }` |
-| **AlphaZero 系探索（Policy ラベルのみ利用）** | `rsshogi = { version = "1.6.0", features = ["policy-labels"] }` |
-| **盤面エディタ、GUI バックエンド（局面検証 + SVG）** | `rsshogi = { version = "1.6.0", features = ["validation", "svg", "records"] }` |
-| **全機能の有効化** | `rsshogi = { version = "1.6.0", features = ["python-data", "hash-128"] }` |
+| **USI 将棋エンジン（64-bit ハッシュ）** | `rsshogi = "1.7.0"` |
+| **USI 将棋エンジン（128-bit ハッシュ + 定跡参照）** | `rsshogi = { version = "1.7.0", features = ["hash-128", "book"] }` |
+| **棋譜変換、定跡構築、教師データ生成ツール** | `rsshogi = { version = "1.7.0", features = ["records", "book"] }` |
+| **AlphaZero 系探索（Policy ラベルのみ利用）** | `rsshogi = { version = "1.7.0", features = ["policy-labels"] }` |
+| **盤面エディタ、GUI バックエンド（局面検証 + SVG）** | `rsshogi = { version = "1.7.0", features = ["validation", "svg", "records"] }` |
+| **全機能の有効化** | `rsshogi = { version = "1.7.0", features = ["python-data", "hash-128"] }` |
 
 各 Feature が有効化するモジュールと依存クレートの詳細は [全体アーキテクチャの Cargo Feature フラグ一覧](../architecture.md#cargo-feature-フラグ一覧) を参照。
 
@@ -71,7 +71,7 @@ rsshogi = "1.6.0"
 
 ```toml
 [dependencies]
-rsshogi = { git = "https://github.com/nyoki-mtl/rsshogi", tag = "v1.6.0", features = ["records"] }
+rsshogi = { git = "https://github.com/nyoki-mtl/rsshogi", tag = "v1.7.0", features = ["records"] }
 ```
 
 ## 次のステップ

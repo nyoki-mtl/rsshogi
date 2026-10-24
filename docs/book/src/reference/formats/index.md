@@ -50,7 +50,9 @@ flowchart LR
     Position <--> SAZ
     BookIR --> NativeBook
     BookIR <--> DB2016
+    BookIR --> YBB
     BookIR <--> SBK
+    YBB --> NativeBook
     DB2016 --> NativeBook
     SBK --> NativeBook
 ```
@@ -68,7 +70,7 @@ flowchart LR
 | 分岐手順（変化） | ○（`変化：N手`） | ○（`変化：N手`） | ✕（仕様上非対応） | ○（`"forks"` 配列） |
 | 消費時間の精度 | 秒単位（`MM:SS` / `HH:MM:SS`） | ✕（記録なし） | 秒 / ミリ秒単位（`T12` / V3.0 は `T6.123`） | 秒単位（`time.now` / `time.total`） |
 | 指し手コメント | ○（`*コメント`） | ○（`*コメント`） | ○（`'*コメント`） | ○（`"comments"` 配列） |
-| 終局行欠落時の挙動 | `main_terminal = None`（`Invalid`） | `SpecialMove::Interrupt`（`Paused`） | `main_terminal = None`（`Invalid`） | `main_terminal = None`（`Invalid`） |
+| 終局表記と要約行がない場合 | `main_terminal = None`（`Invalid`） | `SpecialMove::Interrupt`（`Paused`） | `main_terminal = None`（`Invalid`） | `main_terminal = None`（`Invalid`） |
 
 ### 棋譜変換の実装例
 
@@ -108,16 +110,21 @@ let jkf_text = export_jkf(&record)?;
 ## 2. 定跡フォーマット（Native Book / YaneuraOu / SBK）
 
 局面から候補手、評価値、探索深さ、採択回数（重み）へのマッピングを保持するフォーマット群である。
-`rsshogi` の アーキテクチャと変換規則の詳細は [定跡 アーキテクチャ](book-architecture.md) を参照。
+`rsshogi` のアーキテクチャと変換規則の詳細は [定跡アーキテクチャ](book-architecture.md) を参照。
 
 | 項目 | [Native Book v4](book.md) | [YaneuraOu DB2016](yaneuraou.md) | [YaneuraOu YBB](yaneuraou.md) | [ShogiHome SBK](sbk.md) |
 | :--- | :--- | :--- | :--- | :--- |
 | 形式 | 不変本体 + 追記ログ（`.book`） | テキスト（`.db`） | 固定長バイナリ（`.ybb`） | Protobuf バイナリ（`.sbk`） |
 | 局面キー | 32B 正規形 `PackedSfen`（手数なし） | 正規化 SFEN 文字列 | 32 バイト `PackedSfen` + `ply` | SFEN + `PackedSfen` 索引 + `state_id` |
 | 保持フィールド | 指し手、未評価/cp/詰み/bound、任意 depth、depth_kind、表示順、コメント、title/description | `mv`, `ponder`, `score` (`Option<i32>`), `depth` (`Option<u32>`), `count` (`Option<u64>`), `comment` | `mv`, `eval` (`i16`), `depth` (`Option<u16>`), `ply` (`u16`) | `mv`, `evaluation` (`Option<i32>`), `weight` (`Option<i32>`), `next_state_id`, `evals`, `comment` |
-| 読み込み方式 | RAM のブロック索引 + 独立圧縮ブロックの部分読込 + 差分索引 | ストリーミング走査または二分探索 | メモリ常駐 + `PackedSfen` 二分探索 | `PackedSfen` 二分探索 + オンデマンド Protobuf 復号 |
-| 書き出し対応 | ○（`NativeBookEditor` / `NativeBookBuilder`） | ○（`BookDatabase::write_yaneuraou_db2016`） | ✕（読み取り専用） | ○（`BookDatabase::write_sbk`） |
+| 読み込み方式 | RAM のブロック索引 + 独立圧縮ブロックの部分読込 + 差分索引 | ストリーミング走査または二分探索 | メモリ保持またはファイル参照。検索は `PackedSfen` 二分探索、全件走査はバッファ付き逐次読込 | `PackedSfen` 二分探索 + オンデマンド Protobuf 復号 |
+| 書き出し対応 | ○（`NativeBookEditor` / `NativeBookBuilder`） | ○（`YaneuraOuDb2016Writer` / `BookDatabase::write_yaneuraou_db2016`） | ○（`YbbWriter` / `BookDatabase::write_ybb`） | ○（`BookDatabase::write_sbk`） |
 | Python 対応 | `NativeBook`, `NativeBookEditor`, `NativeBookBuilder` | `YaneuraOuBook`（読み取り専用） | ✕（Rust のみ） | `SbkBook`（読み取り専用） |
+
+YBB は `YbbBook` で読み込み、`YbbEntry` を走査できる。
+`YbbBook::write_native_book(path, &options)` で Native Book へ直接変換できる。
+変換設定と欠落フィールドの扱いは [1.7.0 の移行ガイド](../../getting-started/migration-1.7.md) を参照。
+`BookDatabase` への取り込みは、呼び出し側で局面と候補手を変換する。
 
 ## 3. 学習および圧縮バイナリフォーマット
 
@@ -136,5 +143,5 @@ let jkf_text = export_jkf(&record)?;
 ## 関連項目
 
 - [Record と棋譜データモデル](../records.md)
-- [定跡 アーキテクチャ](book-architecture.md)
+- [定跡アーキテクチャ](book-architecture.md)
 - [局面圧縮の仕組み（HCP / PackedSfen）](../../internals/serialization/compression.md)

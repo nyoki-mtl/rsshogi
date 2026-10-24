@@ -340,17 +340,29 @@ fn apply_csa_metadata(builder: &mut RecordMetadataBuilder, key: &str, value: &st
         }
         "TIME_LIMIT" | "TIME" => {
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
-            builder.time_control(parsed);
+            if let Some(parsed) = parsed {
+                builder.time_control(Some(parsed));
+            } else {
+                builder.add_attribute(key.to_string(), value.to_string());
+            }
         }
         // V3.0 仕様は本文で `TIMET+` / `TIMET-`、例で `TIME+` / `TIME-` と綴りが割れている。
         // どちらも同じ意味として受理し、書き出しは例に合わせた `TIME+` / `TIME-` に寄せる。
         "TIME+" | "TIMET+" => {
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
-            builder.black_time_control(parsed);
+            if let Some(parsed) = parsed {
+                builder.black_time_control(Some(parsed));
+            } else {
+                builder.add_attribute(key.to_string(), value.to_string());
+            }
         }
         "TIME-" | "TIMET-" => {
             let parsed = parse_csa_time_control(value).or_else(|| TimeControl::from_spec(value));
-            builder.white_time_control(parsed);
+            if let Some(parsed) = parsed {
+                builder.white_time_control(Some(parsed));
+            } else {
+                builder.add_attribute(key.to_string(), value.to_string());
+            }
         }
         "MAX_MOVES" => {
             builder.max_moves(value.trim().parse::<u32>().ok());
@@ -490,13 +502,47 @@ fn terminal_from_marker(marker: &str, side_to_move: Color) -> SpecialMoveEntry {
     }
 }
 
-fn marker_from_terminal(terminal: &SpecialMoveEntry) -> String {
+fn marker_from_terminal(
+    terminal: &SpecialMoveEntry,
+    side_to_move: Color,
+) -> Result<String, CsaError> {
+    if matches!(
+        terminal.kind(),
+        SpecialMove::WinByDefault | SpecialMove::LoseByDefault | SpecialMove::Try
+    ) {
+        return Err(CsaError::InvalidMove("terminal reason cannot be represented in CSA".into()));
+    }
+    let marker = terminal_marker(terminal, side_to_move);
+    let restored = terminal_from_marker(&marker, side_to_move);
+    let result_matches = match terminal.result() {
+        GameResult::BlackWin | GameResult::WhiteWin => {
+            terminal.result().winner_color() == restored.result().winner_color()
+        }
+        result => result == restored.result(),
+    };
+    if !result_matches
+        && (terminal.result().winner_color().is_some()
+            || restored.result().winner_color().is_some())
+    {
+        return Err(CsaError::InvalidMove(
+            "terminal marker cannot represent the recorded result".into(),
+        ));
+    }
+    Ok(marker)
+}
+
+fn terminal_marker(terminal: &SpecialMoveEntry, side_to_move: Color) -> String {
     // 元の棋譜が持っていたマーカーを最優先する。`%+ILLEGAL_ACTION` のように
     // kind へ畳み込むと戻せない情報があるため。
     if let Some(raw) = terminal.raw() {
         let trimmed = raw.trim();
         if trimmed.starts_with('%') && !trimmed.contains(char::is_whitespace) {
             return trimmed.to_string();
+        }
+        if trimmed.eq_ignore_ascii_case("+ILLEGAL_ACTION")
+            || trimmed.eq_ignore_ascii_case("-ILLEGAL_ACTION")
+        {
+            return format!("%{}", trimmed.to_ascii_uppercase());
         }
     }
     match terminal.kind() {
@@ -510,13 +556,16 @@ fn marker_from_terminal(terminal: &SpecialMoveEntry) -> String {
         SpecialMove::NoMate => "%FUZUMI".to_string(),
         SpecialMove::Timeout => "%TIME_UP".to_string(),
         SpecialMove::WinByIllegalMove | SpecialMove::LoseByIllegalMove => {
-            "%ILLEGAL_MOVE".to_string()
+            if terminal.result().winner_color() == Some(side_to_move) {
+                if side_to_move == Color::BLACK { "%-ILLEGAL_ACTION" } else { "%+ILLEGAL_ACTION" }
+            } else {
+                "%ILLEGAL_MOVE"
+            }
+            .to_string()
         }
         SpecialMove::WinByDeclaration => "%KACHI".to_string(),
-        // 不戦勝 / 不戦敗 / トライは CSA に対応するマーカーがない。勝敗を反転させる
-        // `%KACHI` を書くより、勝敗を主張しない中断へ落とす。
         SpecialMove::WinByDefault | SpecialMove::LoseByDefault | SpecialMove::Try => {
-            "%CHUDAN".to_string()
+            unreachable!("unsupported terminal reason was checked")
         }
         SpecialMove::Unknown(name) => {
             if name.starts_with('%') {
@@ -1022,7 +1071,7 @@ fn format_csa_time_limit(tc: &TimeControl) -> Option<(String, String)> {
     if base == 0 && byoyomi == 0 && increment == 0 {
         return None;
     }
-    if increment == 0 {
+    if increment == 0 && base.is_multiple_of(60) {
         let hours = base / 3600;
         let minutes = (base % 3600) / 60;
         return Some(("TIME_LIMIT".to_string(), format!("{hours:02}:{minutes:02}+{byoyomi}")));
@@ -1064,15 +1113,15 @@ fn append_csa_metadata(lines: &mut Vec<String>, metadata: &RecordMetadata) {
         && let Some((key, text)) = format_csa_time_limit(tc)
     {
         lines.push(format!("${key}:{text}"));
-        emitted.insert(key);
+        emitted.extend(["TIME_LIMIT".to_string(), "TIME".to_string()]);
     }
     if let Some(tc) = metadata.black_time_control() {
         lines.push(format!("$TIME+:{}", tc.to_spec()));
-        emitted.insert("TIME+".to_string());
+        emitted.extend(["TIME+".to_string(), "TIMET+".to_string()]);
     }
     if let Some(tc) = metadata.white_time_control() {
         lines.push(format!("$TIME-:{}", tc.to_spec()));
-        emitted.insert("TIME-".to_string());
+        emitted.extend(["TIME-".to_string(), "TIMET-".to_string()]);
     }
     if let Some(max_moves) = metadata.max_moves() {
         lines.push(format!("$MAX_MOVES:{max_moves}"));
@@ -1156,6 +1205,10 @@ fn append_csa_analysis_lines(lines: &mut Vec<String>, info: &EngineInfo) {
 ///
 /// 既定の [`ExportOptions`] を使う。バージョンや文字コード宣言を指定する場合は
 /// [`export_csa_with_options`] を使う。
+///
+/// # Errors
+///
+/// 不正な初期局面や指し手、不戦・トライ、終局マーカーで表せない勝敗がある場合に返す。
 pub fn export_csa(record: &Record) -> Result<String, CsaError> {
     export_csa_with_options(record, ExportOptions::default())
 }
@@ -1164,6 +1217,10 @@ pub fn export_csa(record: &Record) -> Result<String, CsaError> {
 ///
 /// `options` の `csa_version` が [`CsaVersion::V3_0`] のとき、先頭に
 /// `'CSA encoding=...` 宣言を置き、端数のある消費時間をミリ秒表記で出力する。
+///
+/// # Errors
+///
+/// 不正な初期局面や指し手、不戦・トライ、終局マーカーで表せない勝敗がある場合に返す。
 pub fn export_csa_with_options(
     record: &Record,
     options: ExportOptions,
@@ -1237,7 +1294,7 @@ pub fn export_csa_with_options(
     if let Some(terminal_id) = record.main_terminal_node() {
         let terminal_node = record.node(terminal_id);
         let terminal = terminal_node.special().expect("terminal node has special entry");
-        lines.push(marker_from_terminal(terminal));
+        lines.push(marker_from_terminal(terminal, pos.turn())?);
         if let Some(time_ms) = terminal_node.time_ms() {
             lines.push(format_csa_elapsed(time_ms, version));
         }
@@ -1544,11 +1601,26 @@ mod tests {
     /// `%+ILLEGAL_ACTION` は kind へ畳むと戻せないので raw を優先して書き戻す。
     #[test]
     fn test_export_csa_preserves_raw_terminal_marker() {
-        for marker in ["%+ILLEGAL_ACTION", "%-ILLEGAL_ACTION", "%ILLEGAL_MOVE"] {
+        for marker in ["%+ILLEGAL_ACTION", "%-ILLEGAL_ACTION", "%ILLEGAL_MOVE", "%Custom_Terminal"]
+        {
             let text = format!("V2.2\nPI\n+\n+7776FU\n{marker}\n");
             let record = parse_csa_str(&text).unwrap();
             let exported = export_csa(&record).unwrap();
             assert!(exported.contains(&format!("\n{marker}\n")), "{marker}: {exported}");
+        }
+    }
+
+    #[test]
+    fn test_export_csa_preserves_illegal_winner_without_raw_marker() {
+        for prefix in ["V2.2\nPI\n+\n", "V2.2\nPI\n+\n+7776FU\n"] {
+            for result in [GameResult::BlackWinByIllegalMove, GameResult::WhiteWinByIllegalMove] {
+                for kind in [SpecialMove::WinByIllegalMove, SpecialMove::LoseByIllegalMove] {
+                    let mut record = parse_csa_str(prefix).unwrap();
+                    record.set_main_terminal(SpecialMoveEntry::new(kind, result)).unwrap();
+                    let exported = export_csa(&record).unwrap();
+                    assert_eq!(parse_csa_str(&exported).unwrap().result(), result);
+                }
+            }
         }
     }
 

@@ -355,7 +355,7 @@ fn merge_runs(destination: &Path, runs: Vec<Temporary>) -> Result<Temporary, Boo
             .min();
         let Some((key, index)) = selected else { break };
         if previous.is_some_and(|old| old >= key) {
-            return Err(invalid("duplicate native input position"));
+            return Err(duplicate_position(key));
         }
         previous = Some(key);
         let cursor = &mut cursors[index];
@@ -373,6 +373,14 @@ fn merge_runs(destination: &Path, runs: Vec<Temporary>) -> Result<Temporary, Boo
     }
     output.close()?;
     Ok(output)
+}
+
+fn duplicate_position(key: [u8; 32]) -> BookError {
+    let mut reason = format!("duplicate native input position: key={key:02x?}");
+    if let Ok(position) = (NativeBookEntry { key, candidates: Vec::new() }).position() {
+        reason.push_str(&format!(", SFEN {}", position.to_sfen(None)));
+    }
+    BookError::InvalidData(reason)
 }
 
 struct RunRecords {
@@ -402,6 +410,8 @@ impl Iterator for RunRecords {
 
 /// メモリ予算内の run を同じ保存先ボリュームへ退避する定跡 builder。
 pub struct NativeBookBuilder {
+    #[cfg(test)]
+    pub(super) checkpoint: fn(&str) -> Result<(), BookError>,
     path: PathBuf,
     metadata: NativeBookMetadata,
     memory_budget: usize,
@@ -416,13 +426,21 @@ impl NativeBookBuilder {
     /// 保存先と文書メタデータを指定し、既定 256 MiB の予算で構築を始める。
     ///
     /// # Errors
-    /// メタデータが不正な場合、保存先が存在する場合に返す。
+    /// メタデータが不正な場合は [`BookError::InvalidData`] を返す。
+    /// 保存先が存在する場合は [`BookError::Io`] の
+    /// [`std::io::ErrorKind::AlreadyExists`] を返す。
     pub fn new(path: impl AsRef<Path>, metadata: NativeBookMetadata) -> Result<Self, BookError> {
         let path = path.as_ref().to_path_buf();
         if path.try_exists()? {
-            return Err(invalid("native builder destination already exists"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("native builder destination already exists: {}", path.display()),
+            )
+            .into());
         }
         Ok(Self {
+            #[cfg(test)]
+            checkpoint: |_| Ok(()),
             path,
             metadata: metadata.normalized()?,
             memory_budget: DEFAULT_MEMORY_BYTES,
@@ -440,8 +458,8 @@ impl NativeBookBuilder {
     /// 予算が 1 MiB 未満、または入力開始後の場合に返す。
     pub fn with_memory_budget(mut self, bytes: usize) -> Result<Self, BookError> {
         if bytes < MIN_MEMORY_BYTES || !self.pending.is_empty() || !self.levels.is_empty() {
-            return Err(invalid(
-                "native builder memory budget must be set before input and at least 1 MiB",
+            return Err(BookError::InvalidData(
+                "native builder memory budget must be set before input and at least 1 MiB".into(),
             ));
         }
         self.memory_budget = bytes;
@@ -457,8 +475,9 @@ impl NativeBookBuilder {
             || !self.pending.is_empty()
             || !self.levels.is_empty()
         {
-            return Err(invalid(
-                "native block position count must be set before input and between 1 and 16384",
+            return Err(BookError::InvalidData(
+                "native block position count must be set before input and between 1 and 16384"
+                    .into(),
             ));
         }
         self.block_positions = block_positions;
@@ -470,15 +489,27 @@ impl NativeBookBuilder {
     /// # Errors
     /// 局面が不正、単一局面が予算外、run の書込が失敗した場合に返す。
     pub fn push(&mut self, record: NativeBookPosition) -> Result<(), BookError> {
+        self.push_with_input_context(record, |error| error)
+    }
+
+    pub(super) fn push_with_input_context(
+        &mut self,
+        record: NativeBookPosition,
+        input_error: impl Fn(BookError) -> BookError,
+    ) -> Result<(), BookError> {
         if self.failed {
             return Err(invalid("native builder previously failed"));
         }
-        let result = self.push_inner(record);
+        let result = self.push_inner(record, input_error);
         self.failed = result.is_err();
         result
     }
 
-    fn push_inner(&mut self, record: NativeBookPosition) -> Result<(), BookError> {
+    fn push_inner(
+        &mut self,
+        record: NativeBookPosition,
+        input_error: impl Fn(BookError) -> BookError,
+    ) -> Result<(), BookError> {
         let size = snapshot_size(&record)?;
         let charge = usize::try_from(size)
             .ok()
@@ -487,13 +518,16 @@ impl NativeBookBuilder {
             .ok_or_else(|| invalid("native builder record size overflow"))?;
         let available = self.memory_budget - BUFFER_BYTES * (MERGE_FAN_IN + 2);
         if charge > available {
-            return Err(invalid("native builder record exceeds memory budget"));
+            return Err(input_error(BookError::InvalidData(
+                "native builder record exceeds memory budget".into(),
+            )));
         }
         if self.pending_bytes.checked_add(charge).is_none_or(|total| total > available) {
+            // 退避中のエラーは過去の入力に属するため、現在行の文脈を付けない。
             self.spill()?;
         }
-        let record = record.normalized()?;
-        let bytes = encode_normalized_snapshot(&record)?;
+        let record = record.normalized().map_err(&input_error)?;
+        let bytes = encode_normalized_snapshot(&record).map_err(input_error)?;
         self.pending_bytes += charge;
         self.pending.push((record.entry.key, bytes));
         Ok(())
@@ -508,7 +542,7 @@ impl NativeBookBuilder {
         let mut previous = None;
         for (key, bytes) in self.pending.drain(..) {
             if previous == Some(key) {
-                return Err(invalid("duplicate native input position"));
+                return Err(duplicate_position(key));
             }
             previous = Some(key);
             run.writer().write_all(&key)?;
@@ -536,8 +570,14 @@ impl NativeBookBuilder {
     /// run を逐次 merge して新しい本体を公開する。
     ///
     /// # Errors
-    /// 重複局面、I/O エラー、保存先の競合、以前の入力失敗がある場合に返す。
+    /// 重複局面はキーを含む [`BookError::InvalidData`] を返す。
+    /// 保存先の競合は [`BookError::Io`] の [`std::io::ErrorKind::AlreadyExists`] を返す。
+    /// I/O エラー、以前の入力失敗がある場合も返す。
     pub fn finish(mut self) -> Result<(), BookError> {
+        #[cfg(test)]
+        let checkpoint = self.checkpoint;
+        #[cfg(not(test))]
+        let checkpoint = |_| Ok(());
         if self.failed {
             return Err(invalid("native builder previously failed"));
         }
@@ -550,20 +590,22 @@ impl NativeBookBuilder {
         }
         if let Some(run) = runs.pop() {
             let records = RunRecords { cursor: RunCursor::new(run)?, failed: false };
-            write_sorted_with_block_positions(
+            write_sorted_with(
                 &self.path,
                 self.metadata,
                 records,
                 false,
                 self.block_positions,
+                checkpoint,
             )
         } else {
-            write_sorted_with_block_positions(
+            write_sorted_with(
                 &self.path,
                 self.metadata,
                 std::iter::empty(),
                 false,
                 self.block_positions,
+                checkpoint,
             )
         }
     }
@@ -722,19 +764,49 @@ mod tests {
         let path = directory.path("bad.book");
         let mut record = fixture_record();
         record.comment = Some("x".repeat(64 * 1024));
+        let key = record.entry.key;
         let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default())
             .unwrap()
             .with_memory_budget(MIN_MEMORY_BYTES)
             .unwrap();
         builder.push(record.clone()).unwrap();
         builder.push(record).unwrap();
-        assert!(builder.finish().is_err());
+        let error = builder.finish().unwrap_err();
+        assert!(matches!(error, BookError::InvalidData(_)));
+        assert!(error.to_string().contains(&format!("key={key:02x?}")));
+        assert!(error.to_string().contains(&board::hirate_position().to_sfen(None)));
         assert!(!path.exists());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
         let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default()).unwrap();
         builder.push(fixture_record()).unwrap();
         builder.spill().unwrap();
         drop(builder);
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn spill_duplicate_does_not_use_the_current_input_context() {
+        let directory = TestDirectory::new();
+        let path = directory.path("bad.book");
+        let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default())
+            .unwrap()
+            .with_memory_budget(MIN_MEMORY_BYTES)
+            .unwrap();
+        let mut duplicate = fixture_record();
+        duplicate.comment = Some("x".repeat(32 * 1024));
+        let key = duplicate.entry.key;
+        builder.push(duplicate.clone()).unwrap();
+        builder.push(duplicate).unwrap();
+        let mut current = fixture_record();
+        current.comment = Some("x".repeat(64 * 1024));
+        let error = builder
+            .push_with_input_context(current, |_| panic!("spill error belongs to earlier inputs"))
+            .unwrap_err();
+        assert!(matches!(error, BookError::InvalidData(_)));
+        assert!(error.to_string().contains(&format!("key={key:02x?}")));
+        assert!(error.to_string().contains(&board::hirate_position().to_sfen(None)));
+        drop(builder);
+        assert!(!path.exists());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
     }
 

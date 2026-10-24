@@ -148,6 +148,15 @@ jobs:
           rust-toolchain: 1.95.0
           args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
 
+      - name: Check library build from sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/sdist-standard"
+          tar -xzf dist/*.tar.gz -C "${RUNNER_TEMP}/sdist-standard"
+          roots=("${RUNNER_TEMP}/sdist-standard"/*)
+          cargo check --manifest-path "${roots[0]}/crates/rsshogi-py/Cargo.toml" --lib --locked
+
       - name: Upload sdist artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -174,6 +183,15 @@ jobs:
           command: sdist
           rust-toolchain: 1.95.0
           args: --manifest-path crates/rsshogi-py/Cargo.toml --out dist
+
+      - name: Check library build from AVX2 sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/sdist-avx2"
+          tar -xzf dist/*.tar.gz -C "${RUNNER_TEMP}/sdist-avx2"
+          roots=("${RUNNER_TEMP}/sdist-avx2"/*)
+          cargo check --manifest-path "${roots[0]}/crates/rsshogi-py/Cargo.toml" --lib --locked
 
       - name: Upload AVX2 sdist artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -137,6 +137,26 @@ fn test_position_flipped_sfen_matches_color_and_rank_transform() {
 }
 
 #[test]
+fn test_to_flipped_preserves_rules_and_resets_history() {
+    let mut position = crate::board::hirate_position();
+    position.set_entering_king_rule(crate::types::EnteringKingRule::Point27);
+    apply_usi_move(&mut position, "7g7f");
+    apply_usi_move(&mut position, "3c3d");
+    let flipped = position.to_flipped();
+    assert_eq!(flipped.entering_king_rule, position.entering_king_rule);
+    assert_eq!(flipped.entering_king_point, [27, 28]);
+    assert_eq!(flipped.state_stack_depth(), 0);
+    assert_eq!(flipped.repetition_counter(), 0);
+    assert_eq!(flipped.last_move(), crate::types::Move32::MOVE_NONE);
+    assert_eq!(flipped.game_ply(), position.game_ply());
+    let restored = flipped.to_flipped();
+    assert_eq!(restored.to_sfen(None), position.to_sfen(None));
+    assert_eq!(restored.key(), position.key());
+    assert_eq!(restored.entering_king_point, position.entering_king_point);
+    assert_eq!(position.state_stack_depth(), 2);
+}
+
+#[test]
 fn test_position_move_from_csa_and_move() {
     let pos = crate::board::hirate_position();
 

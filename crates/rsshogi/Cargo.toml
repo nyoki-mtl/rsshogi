@@ -1,6 +1,6 @@
 [package]
 name = "rsshogi"
-version = "1.6.0"
+version = "1.7.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -85,14 +85,18 @@ serde_json = "1.0"
 
 [[example]]
 name = "native_book_measure"
+# Python sdist にソースを含めない example も、Cargo の自動パス探索に依存させない。
+path = "examples/native_book_measure.rs"
 required-features = ["book", "validation"]
 
 [[example]]
 name = "native_book_layout_probe"
+path = "examples/native_book_layout_probe.rs"
 required-features = ["book", "records"]
 
 [[example]]
 name = "native_book_ybb_verify"
+path = "examples/native_book_ybb_verify.rs"
 required-features = ["book"]
 
 [[bench]]
@@ -119,10 +123,12 @@ harness = false
 # （default の `cargo test --no-run` で example が落ちないようにする）。
 [[example]]
 name = "sazpack_measure"
+path = "examples/sazpack_measure.rs"
 required-features = ["records"]
 
 [[example]]
 name = "sbinpack_size_breakdown"
+path = "examples/sbinpack_size_breakdown.rs"
 required-features = ["records"]
 
 [[example]]
@@ -131,4 +137,5 @@ path = "examples/sfen_roundtrip.rs"
 
 [[example]]
 name = "sbk_open_measure"
+path = "examples/sbk_open_measure.rs"
 required-features = ["book"]

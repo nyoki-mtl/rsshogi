@@ -4,6 +4,13 @@ use crate::types::Move;
 
 use super::wire::MAX_TEXT_BYTES;
 
+/// 深さの意味が未指定。
+pub const DEPTH_KIND_UNSPECIFIED: u32 = 0;
+/// 探索深さ。
+pub const DEPTH_KIND_SEARCH: u32 = 1;
+/// 定跡内の後退解析距離。
+pub const DEPTH_KIND_RETROGRADE: u32 = 2;
+
 /// 文書全体の任意メタデータ。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NativeBookMetadata {
@@ -11,9 +18,10 @@ pub struct NativeBookMetadata {
     pub title: Option<String>,
     /// 定跡の説明。
     pub description: Option<String>,
-    /// 深さの意味。0 は未指定、1 は探索深さ、2 は定跡内の後退解析距離。
+    /// 深さの意味。既知の値は [`DEPTH_KIND_UNSPECIFIED`]、[`DEPTH_KIND_SEARCH`]、
+    /// [`DEPTH_KIND_RETROGRADE`]。
     ///
-    /// 未知の番号も保持する。探索深さ条件へ適用できるのは 1 だけ。
+    /// 未知の値も保持する。探索深さ条件へ適用できるのは [`DEPTH_KIND_SEARCH`] だけ。
     pub depth_kind: u32,
 }
 

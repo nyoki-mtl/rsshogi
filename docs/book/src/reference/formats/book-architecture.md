@@ -9,6 +9,7 @@
 | 編集と保存 | `NativeBookEditor` | 1 writer の排他、局面 snapshot の追記、明示的な compaction |
 | 初期構築 | `NativeBookBuilder` | 任意順の順次入力、メモリ予算付き外部 sort、新規出力 |
 | 外部形式の参照 | `YaneuraOuBook` / `YbbBook` / `SbkBook` | 各形式の値と意味を保持する concrete reader |
+| YBB の出力 | `YbbWriter` / `BookDatabase::write_ybb` | 整列済み行の逐次出力、または所有 IR の検査とソート。情報破棄は明示指定 |
 | 変換用 IR | `BookDatabase` | SFEN と形式固有情報を持つ所有データ。全件ロードは明示的に行う |
 
 ## Native Book v4
@@ -69,18 +70,61 @@ assert!(book.get(&position)?.is_some());
 
 ## 外部形式からの変換
 
-Rust の `BookDatabase`、`YaneuraOuBook`、`SbkBook` は `write_native_book(path, NativeBookImportOptions)` を持つ。外部 reader からは所有 IR 全件への展開を経ず、順次変換して builder に渡す。
+Rust の `BookDatabase`、`YaneuraOuBook`、`YbbBook`、`SbkBook` は `write_native_book(path, &NativeBookImportOptions)` を持つ。
+外部 reader からは所有 IR 全件への展開を経ず、順次変換して builder に渡す。
+
+```rust,no_run
+use rsshogi::book::{DEPTH_KIND_SEARCH, NativeBookImportOptions, YaneuraOuBook};
+
+let source = YaneuraOuBook::open("source.db")?;
+let options = NativeBookImportOptions::new()
+    .with_depth_kind(DEPTH_KIND_SEARCH)
+    .with_allow_lossy(true)
+    .with_memory_budget(64 * 1024 * 1024)
+    .with_block_positions(64);
+let report = source.write_native_book("output.book", &options)?;
+# Ok::<(), rsshogi::book::BookError>(())
+```
+
+`with_metadata` は題名、説明、深さ種別をまとめて置き換え、`with_depth_kind` は深さ種別だけを更新する。
+併用した場合は呼び出し順に適用する。
+全形式で深さ種別の既定値は `DEPTH_KIND_UNSPECIFIED`（0）とし、形式や深さ値から由来を推測しない。
+SBK では説明が `None` のときだけ元の description を引き継ぐ。
+builder の予算は既定 256 MiB、ブロック局面数は既定 64 とする。
+予算は 1 MiB 以上、ブロック局面数は `1..=16384` を入力走査前に検査する。
+reader の保持領域や単一入力行のメモリは builder の予算に含めない。
 
 既定の `allow_lossy = false` は保存できない情報があれば新規出力を公開せず失敗する。
 `allow_lossy = true` を明示すると、`NativeBookImportReport` に出力件数、除外局面数、フィールド別の欠落件数、入力位置と SFEN 付きの先頭 32 件の例、省略例数を返す。
+`dropped_fields` の既存キー名と件数の意味は維持する。
+項目名の集合は拡張可能なため、consumer は未知のキーも表示または保持して扱う。
+診断例の `reason` とエラーメッセージは表示用であり、機械的な分岐条件にしない。
 候補手の depth は `u32` の全域を保持する。
 入力に回数があれば、0 を含め `candidate.count` の欠落として数え、strict 変換を失敗させる。
 lossy 変換では回数を捨てて報告し、別のフィールドへ代入しない。
-局面が PackedSfen で表現不能なら、既定はエラー、明示的な lossy 変換では報告して除外する。
+SFEN を解析できても PackedSfen で表現不能な局面は、`with_skip_unencodable_positions(true)` を指定した場合だけ除外する。
+候補手の合法性、一意性、個数を検査してから除外するため、非合法手や重複候補手はスキップ指定でもエラーになる。
+スキップ行は `position` の欠落 1 件だけを記録し、その行の手数や回数を重ねて数えない。
+このスキップ自体には `allow_lossy` を必要としない。
+構文不正の SFEN や、復号不能または非正準の YBB キーは常に拒否する。
+
+SBK reader の重複局面診断は、オプションによらず変換開始時に拒否する。
+未解決状態は `allow_lossy = true` の場合だけ `sbk.unresolved_state` と除外局面数へ加算する。
+SBK の候補手検査は reader が返す解決済み行が対象であり、未解決状態や reader が省略する要素まで元ファイル全体の検査済みとはしない。
 
 DB2016 の候補手評価は入力で宣言された cp として扱い、大きな整数を詰みと推測しない。
 SBK の手の評価は注釈値であるため cp に転用せず、状態評価や PV を候補手へ複製しない。
 ponder、元の手数、形式固有 metadata など v4 に保存できない値は欠落報告の対象になる。
+DB2016 の明示手数は `position.original_ply` を 1 件とし、省略時は数えない。
+所有 IR の `yaneuraou.min_ply` は元手数（省略時は 0）と異なる場合だけ追加計上する。
+YBB の手数は各行の `ybb.ply` として数える。
+
+既存保存先や、開始後に別の処理が作成した保存先は上書きしない。
+公開前の失敗では自分の出力を公開せず、一時ファイルの削除を試みる。
+削除時の I/O 障害や異常終了でも一時ファイルが残らないことまでは保証しない。
+完成したファイルの公開後に同期などが失敗した場合は `BookError::SaveUncertain` を返し、出力が存在し得る。
+呼び出し側は無条件再実行や自動削除を避け、再オープンと `validate_full()` などで内容を確認する。
+内容の検証成功と永続化成功の保証は区別する。
 
 棋譜から構築する場合は局面を再生し、`NativeBookEntry::from_position` で候補手を作って `NativeBookBuilder::push` に渡す。同じ局面の集計や候補手の重複解消は収集側で明示する。builder は重複局面を拒否する。子局面の評価を使う場合は、収集側で手番視点、詰み距離、bound を変換する。
 

@@ -50,6 +50,35 @@ fn flipping_every_legal_move_matches_the_flipped_position() {
 }
 
 #[test]
+fn direct_flipped_position_matches_sfen_root_and_supports_apply_undo() {
+    for sfen in POSITIONS {
+        let position = Position::from_sfen(sfen).unwrap();
+        let mut flipped = position.to_flipped();
+        let reference = Position::from_sfen(&position.to_sfen_flipped(None)).unwrap();
+        assert_eq!(flipped.to_sfen(None), reference.to_sfen(None));
+        assert_eq!(flipped.key(), reference.key());
+        assert_eq!(flipped.checkers(), reference.checkers());
+        let mut actual = Move32List::new();
+        let mut expected = Move32List::new();
+        generate_legal_all_move32(&flipped, &mut actual);
+        generate_legal_all_move32(&reference, &mut expected);
+        assert_eq!(usi_set(&actual), usi_set(&expected));
+        let original_sfen = flipped.to_sfen(None);
+        let original_key = flipped.key();
+        for &mv in actual.iter() {
+            assert!(flipped.is_legal_move32(mv));
+            flipped.apply_move32(mv);
+            let restored = Position::from_sfen(&flipped.to_sfen(None)).unwrap();
+            assert_eq!(flipped.key(), restored.key());
+            assert_eq!(flipped.checkers(), restored.checkers());
+            flipped.undo_move32(mv).unwrap();
+            assert_eq!(flipped.to_sfen(None), original_sfen);
+            assert_eq!(flipped.key(), original_key);
+        }
+    }
+}
+
+#[test]
 fn mirroring_a_file_symmetric_position_permutes_its_legal_moves() {
     // 平手は飛角があるため左右非対称。鏡像の対応を見るには対称な局面を使う。
     let pos = Position::from_sfen("lnsgkgsnl/9/ppppppppp/9/9/9/PPPPPPPPP/9/LNSGKGSNL b - 1")

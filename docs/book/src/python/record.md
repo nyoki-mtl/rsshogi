@@ -454,8 +454,8 @@ SpecialMoveEntry.from_result(
 | `"MATE"` | 詰み | KIF `詰み` / CSA `%TSUMI` |
 | `"NO_MATE"` | 不詰 | KIF `不詰` / CSA `%FUZUMI` |
 | `"TIMEOUT"` | 切れ負け | KIF `切れ負け` / CSA `%TIME_UP` |
-| `"WIN_BY_ILLEGAL_MOVE"` | 反則勝ち | KIF `反則勝ち` / CSA `%+ILLEGAL_ACTION`, `%-ILLEGAL_ACTION` |
-| `"LOSE_BY_ILLEGAL_MOVE"` | 反則負け | KIF `反則負け` / CSA `%ILLEGAL_MOVE` |
+| `"WIN_BY_ILLEGAL_MOVE"` | 反則勝ち | KIF `反則勝ち` / CSA `%ILLEGAL_MOVE`, `%+ILLEGAL_ACTION`, `%-ILLEGAL_ACTION` |
+| `"LOSE_BY_ILLEGAL_MOVE"` | 反則負け | KIF `反則負け` |
 | `"WIN_BY_DECLARATION"` | 入玉宣言勝ち | KIF `入玉勝ち` / CSA `%KACHI` |
 | `"WIN_BY_DEFAULT"` | 不戦勝 | KIF `不戦勝` |
 | `"LOSE_BY_DEFAULT"` | 不戦敗 | KIF `不戦敗` |

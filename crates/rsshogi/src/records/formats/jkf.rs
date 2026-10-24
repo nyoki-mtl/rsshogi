@@ -94,6 +94,9 @@ fn format_kif_time_control_text(time_control: &TimeControl) -> Option<String> {
     if base == 0 && byoyomi == 0 && increment == 0 {
         return None;
     }
+    if !base.is_multiple_of(60) {
+        return Some(time_control.to_spec());
+    }
     let mut parts = Vec::new();
     if base > 0 {
         let hours = base / 3600;
@@ -208,7 +211,7 @@ fn build_jkf_line(
     while let Some(node_id) = current {
         let node = record.node(node_id);
         if let Some(special) = node.special() {
-            let mut entry = build_special_entry(special, node.annotation());
+            let mut entry = build_special_entry(special, node.annotation(), pos.turn())?;
             if let Some(parent) = node.parent() {
                 let siblings = record.children(parent);
                 if siblings.first() == Some(&node_id) && siblings.len() > 1 {
@@ -279,7 +282,16 @@ fn build_jkf_line(
     Ok(out)
 }
 
-fn special_to_jkf_special(special: &SpecialMoveEntry) -> Option<String> {
+fn special_to_jkf_special(special: &SpecialMoveEntry, side_to_move: Color) -> Option<String> {
+    if let Some(raw) = special.raw() {
+        let trimmed = raw.trim();
+        let name = trimmed.strip_prefix('%').unwrap_or(trimmed);
+        if name.eq_ignore_ascii_case("+ILLEGAL_ACTION")
+            || name.eq_ignore_ascii_case("-ILLEGAL_ACTION")
+        {
+            return Some(name.to_string());
+        }
+    }
     let mapped = match special.kind() {
         SpecialMove::Interrupt => "CHUDAN",
         SpecialMove::Resign => "TORYO",
@@ -290,41 +302,51 @@ fn special_to_jkf_special(special: &SpecialMoveEntry) -> Option<String> {
         SpecialMove::Mate => "TSUMI",
         SpecialMove::NoMate => "FUZUMI",
         SpecialMove::Timeout => "TIME_UP",
-        SpecialMove::WinByIllegalMove | SpecialMove::LoseByIllegalMove => "ILLEGAL_MOVE",
+        SpecialMove::WinByIllegalMove | SpecialMove::LoseByIllegalMove => {
+            // ILLEGAL_MOVE は手番側の負けなので、手番側が勝者なら反則側を明示する。
+            if special.result().winner_color() == Some(side_to_move) {
+                if side_to_move == Color::BLACK { "-ILLEGAL_ACTION" } else { "+ILLEGAL_ACTION" }
+            } else {
+                "ILLEGAL_MOVE"
+            }
+        }
         SpecialMove::WinByDeclaration => "KACHI",
-        SpecialMove::WinByDefault | SpecialMove::LoseByDefault => "KACHI",
-        SpecialMove::Try => "KACHI",
-        SpecialMove::Unknown(name) => return Some(name.to_uppercase()),
+        SpecialMove::WinByDefault | SpecialMove::LoseByDefault | SpecialMove::Try => return None,
+        SpecialMove::Unknown(name) => return Some(name.clone()),
     };
     Some(mapped.to_string())
 }
 
-fn result_to_jkf_special(result: GameResult) -> Option<&'static str> {
-    match result {
-        GameResult::BlackWin | GameResult::WhiteWin => Some("TORYO"),
-        GameResult::DrawByRepetition => Some("SENNICHITE"),
-        GameResult::DrawByImpasse => Some("JISHOGI"),
-        GameResult::DrawByMaxPlies => Some("MAX_MOVES"),
-        GameResult::DrawByAdjudication => Some("HIKIWAKE"),
-        GameResult::BlackWinByDeclaration | GameResult::WhiteWinByDeclaration => Some("KACHI"),
-        GameResult::BlackWinByTryRule | GameResult::WhiteWinByTryRule => Some("KACHI"),
-        GameResult::BlackWinByForfeit | GameResult::WhiteWinByForfeit => Some("KACHI"),
-        GameResult::BlackWinByIllegalMove | GameResult::WhiteWinByIllegalMove => {
-            Some("ILLEGAL_MOVE")
+fn build_special_entry(
+    special: &SpecialMoveEntry,
+    annotation: &RecordAnnotation,
+    side_to_move: Color,
+) -> Result<Value, JkfError> {
+    if matches!(
+        special.kind(),
+        SpecialMove::WinByDefault | SpecialMove::LoseByDefault | SpecialMove::Try
+    ) {
+        return Err(JkfError::InvalidMove("terminal reason cannot be represented in JKF".into()));
+    }
+    let name = special_to_jkf_special(special, side_to_move).ok_or_else(|| {
+        JkfError::InvalidMove("terminal reason cannot be represented in JKF".into())
+    })?;
+    let restored = special_from_jkf_name(&name, side_to_move);
+    let result_matches = match special.result() {
+        GameResult::BlackWin | GameResult::WhiteWin => {
+            special.result().winner_color() == restored.result().winner_color()
         }
-        GameResult::BlackWinByTimeout | GameResult::WhiteWinByTimeout => Some("TIME_UP"),
-        GameResult::Error => Some("ERROR"),
-        GameResult::Invalid | GameResult::Paused => Some("CHUDAN"),
+        result => result == restored.result(),
+    };
+    if !result_matches
+        && (special.result().winner_color().is_some() || restored.result().winner_color().is_some())
+    {
+        return Err(JkfError::InvalidMove(
+            "terminal marker cannot represent the recorded result".into(),
+        ));
     }
-}
-
-fn build_special_entry(special: &SpecialMoveEntry, annotation: &RecordAnnotation) -> Value {
-    let name = special_to_jkf_special(special)
-        .or_else(|| result_to_jkf_special(special.result()).map(str::to_string));
     let mut obj = Map::new();
-    if let Some(name) = name {
-        obj.insert("special".to_string(), json!(name));
-    }
+    obj.insert("special".to_string(), json!(name));
     if let Some(comment) = annotation.comment() {
         let comments: Vec<String> = comment
             .lines()
@@ -338,7 +360,7 @@ fn build_special_entry(special: &SpecialMoveEntry, annotation: &RecordAnnotation
     if let Some(time_ms) = annotation.elapsed_ms() {
         obj.insert("time".to_string(), time_ms_to_jkf(time_ms));
     }
-    Value::Object(obj)
+    Ok(Value::Object(obj))
 }
 
 fn build_initial_data(pos: &Position) -> Result<Value, JkfError> {
@@ -710,6 +732,8 @@ fn special_from_jkf_name(name: &str, side_to_move: Color) -> SpecialMoveEntry {
         "ILLEGAL_MOVE" => {
             (SpecialMove::WinByIllegalMove, GameResult::win_by_illegal_move_from_color(winner))
         }
+        "+ILLEGAL_ACTION" => (SpecialMove::WinByIllegalMove, GameResult::WhiteWinByIllegalMove),
+        "-ILLEGAL_ACTION" => (SpecialMove::WinByIllegalMove, GameResult::BlackWinByIllegalMove),
         "KACHI" => {
             (SpecialMove::WinByDeclaration, GameResult::win_by_declaration_from_color(side_to_move))
         }
@@ -857,7 +881,17 @@ fn metadata_from_jkf_header(header: &Value) -> Result<RecordMetadata, JkfError> 
                     .or_else(|| value.as_str().and_then(|s| s.parse::<u32>().ok()));
                 builder.max_moves(max_moves)
             }
-            "持ち時間" => builder.time_control(value.as_str().and_then(parse_kif_time_control)),
+            "持ち時間" => {
+                let parsed = value.as_str().and_then(|text| {
+                    parse_kif_time_control(text).or_else(|| TimeControl::from_spec(text))
+                });
+                if parsed.is_none()
+                    && let Some(text) = header_value_to_attribute(value)
+                {
+                    builder.add_attribute(key.clone(), text);
+                }
+                builder.time_control(parsed)
+            }
             "先手持ち時間" => {
                 builder.black_time_control(value.as_str().and_then(TimeControl::from_spec))
             }
@@ -964,6 +998,11 @@ fn relative_from_ki2(ki2: &str) -> String {
 }
 
 /// [`Record`] を JKF（JSON Kifu Format）形式の文字列に変換する。
+///
+/// # Errors
+///
+/// 本譜または変化に不正な指し手、不戦・トライ、終局マーカーで表せない勝敗がある場合や、
+/// 初期局面を復元できない場合に返す。
 pub fn export_jkf(record: &Record) -> Result<String, JkfError> {
     let mut pos = Position::empty();
     pos.set_sfen(record.init_position_sfen())?;
@@ -1094,7 +1133,7 @@ pub fn export_jkf(record: &Record) -> Result<String, JkfError> {
     if let Some(terminal_id) = record.main_terminal_node() {
         let terminal_node = record.node(terminal_id);
         let terminal = terminal_node.special().expect("terminal node has special entry");
-        let mut entry = build_special_entry(terminal, terminal_node.annotation());
+        let mut entry = build_special_entry(terminal, terminal_node.annotation(), pos.turn())?;
         if let Some(parent) = terminal_node.parent() {
             let siblings = record.children(parent);
             if siblings.first() == Some(&terminal_id) && siblings.len() > 1 {
@@ -1183,6 +1222,115 @@ mod tests {
             );
             let record = parse_jkf_str(&text).unwrap();
             assert_eq!(record.result(), expected);
+        }
+    }
+
+    #[test]
+    fn test_jkf_signed_illegal_actions_preserve_winner_and_marker() {
+        for moves in
+            ["", r#",{"move":{"color":0,"from":{"x":7,"y":7},"to":{"x":7,"y":6},"piece":"FU"}}"#]
+        {
+            for (name, expected) in [
+                ("+ILLEGAL_ACTION", GameResult::WhiteWinByIllegalMove),
+                ("-ILLEGAL_ACTION", GameResult::BlackWinByIllegalMove),
+            ] {
+                let text = format!(
+                    r#"{{"initial":{{"preset":"HIRATE"}},"moves":[{{}}{moves},{{"special":"{name}"}}]}}"#
+                );
+                let record = parse_jkf_str(&text).unwrap();
+                assert_eq!(record.result(), expected);
+                assert_eq!(record.main_terminal().unwrap().kind(), &SpecialMove::WinByIllegalMove);
+                assert_eq!(record.main_terminal().unwrap().raw(), Some(name));
+                let exported = export_jkf(&record).unwrap();
+                let value: Value = serde_json::from_str(&exported).unwrap();
+                assert_eq!(value["moves"].as_array().unwrap().last().unwrap()["special"], name);
+                let reparsed = parse_jkf_str(&exported).unwrap();
+                assert_eq!(reparsed.result(), expected);
+                let csa = crate::records::formats::csa::export_csa(&reparsed).unwrap();
+                assert!(csa.contains(&format!("\n%{name}\n")), "{csa}");
+                assert_eq!(
+                    crate::records::formats::csa::parse_csa_str(&csa).unwrap().result(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_csa_to_jkf_signed_illegal_actions_preserve_result() {
+        for moves in ["", "+7776FU\n"] {
+            for (name, expected) in [
+                ("+ILLEGAL_ACTION", GameResult::WhiteWinByIllegalMove),
+                ("-ILLEGAL_ACTION", GameResult::BlackWinByIllegalMove),
+            ] {
+                let csa = format!("V2.2\nPI\n+\n{moves}%{name}\n");
+                let record = crate::records::formats::csa::parse_csa_str(&csa).unwrap();
+                let exported = export_jkf(&record).unwrap();
+                let reparsed = parse_jkf_str(&exported).unwrap();
+                assert_eq!(reparsed.result(), expected);
+                let csa = crate::records::formats::csa::export_csa(&reparsed).unwrap();
+                assert_eq!(
+                    crate::records::formats::csa::parse_csa_str(&csa).unwrap().result(),
+                    expected
+                );
+                let value: Value = serde_json::from_str(&exported).unwrap();
+                assert_eq!(value["moves"].as_array().unwrap().last().unwrap()["special"], name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_jkf_unknown_special_preserves_name() {
+        let text = r#"{"moves":[{},{"special":"Unrecognized_Terminal"}]}"#;
+        let record = parse_jkf_str(text).unwrap();
+        let exported = export_jkf(&record).unwrap();
+        let value: Value = serde_json::from_str(&exported).unwrap();
+        assert_eq!(value["moves"][1]["special"], "Unrecognized_Terminal");
+    }
+
+    #[test]
+    fn test_jkf_exports_illegal_winner_without_raw_marker() {
+        for move_text in [None, Some("7g7f")] {
+            for result in [GameResult::BlackWinByIllegalMove, GameResult::WhiteWinByIllegalMove] {
+                for kind in [SpecialMove::WinByIllegalMove, SpecialMove::LoseByIllegalMove] {
+                    let moves = move_text
+                        .map(|text| MoveEntry::new(Move::from_usi(text).unwrap()))
+                        .into_iter()
+                        .collect();
+                    let record = Record::from_main_line(
+                        hirate_position().to_sfen(None),
+                        moves,
+                        Some(SpecialMoveEntry::new(kind, result)),
+                    )
+                    .unwrap();
+                    let exported = export_jkf(&record).unwrap();
+                    let reparsed = parse_jkf_str(&exported).unwrap();
+                    assert_eq!(reparsed.result(), result);
+                    let csa = crate::records::formats::csa::export_csa(&reparsed).unwrap();
+                    assert_eq!(
+                        crate::records::formats::csa::parse_csa_str(&csa).unwrap().result(),
+                        result
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_jkf_keeps_unsigned_and_case_insensitive_specials() {
+        for (name, expected) in [
+            ("ILLEGAL_MOVE", GameResult::WhiteWinByIllegalMove),
+            ("+illegal_action", GameResult::WhiteWinByIllegalMove),
+            ("-illegal_action", GameResult::BlackWinByIllegalMove),
+            ("TORYO", GameResult::WhiteWin),
+        ] {
+            let text = format!(r#"{{"moves":[{{}},{{"special":"{name}"}}]}}"#);
+            let record = parse_jkf_str(&text).unwrap();
+            assert_eq!(record.result(), expected);
+            let exported = export_jkf(&record).unwrap();
+            let value: Value = serde_json::from_str(&exported).unwrap();
+            assert_eq!(value["moves"][1]["special"], name);
+            assert_eq!(parse_jkf_str(&exported).unwrap().result(), expected);
         }
     }
 
@@ -1302,7 +1450,7 @@ mod tests {
             .append_move(first, MoveEntry::new(Move::from_usi("3c3d").unwrap()))
             .expect("append second");
         record
-            .set_main_terminal(SpecialMoveEntry::new(SpecialMove::Resign, GameResult::BlackWin))
+            .set_main_terminal(SpecialMoveEntry::new(SpecialMove::Resign, GameResult::WhiteWin))
             .expect("terminal");
         record
             .append_move(second, MoveEntry::new(Move::from_usi("2g2f").unwrap()))

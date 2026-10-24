@@ -112,7 +112,7 @@ impl Position {
     /// `None` の場合は現在の手数を使用する。
     /// `Some(x)` で負数を指定した場合は手数を出力しない。
     pub fn to_sfen_flipped(&self, game_ply: Option<i32>) -> String {
-        let flipped = self.flipped();
+        let flipped = self.flipped_for_serialization();
 
         let ply = game_ply.unwrap_or_else(|| i32::from(self.ply));
         let ply = if ply < 0 { None } else { Some(ply) };

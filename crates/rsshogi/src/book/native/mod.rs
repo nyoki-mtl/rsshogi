@@ -15,7 +15,10 @@ pub use builder::NativeBookBuilder;
 pub use convert::{NativeBookImportIssue, NativeBookImportOptions, NativeBookImportReport};
 pub use editor::{NativeBookEditedRecords, NativeBookEditor, NativeBookSalvageReport};
 pub use reader::{NativeBook, NativeBookEntries, NativeBookOpenOptions, NativeBookRecords};
-pub use types::{NativeBookEntry, NativeBookMetadata, NativeBound, NativeCandidate, NativeScore};
+pub use types::{
+    DEPTH_KIND_RETROGRADE, DEPTH_KIND_SEARCH, DEPTH_KIND_UNSPECIFIED, NativeBookEntry,
+    NativeBookMetadata, NativeBound, NativeCandidate, NativeScore,
+};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
