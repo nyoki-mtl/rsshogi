@@ -6,6 +6,7 @@ mod control;
 mod database;
 mod error;
 mod native;
+mod patch;
 mod sbk;
 mod writer;
 mod ybb;
@@ -19,6 +20,7 @@ pub use database::{
 };
 pub use error::BookError;
 pub use native::*;
+pub use patch::{BookDatabaseEdit, BookDatabasePatch, BookPatchWritePhase, BookPatchWriteProgress};
 pub use sbk::{
     SbkBook, SbkDiagnostics, SbkEntries, SbkEntry, SbkEval, SbkMove, SbkOpenProgress,
     SbkWriteOptions,

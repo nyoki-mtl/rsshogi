@@ -197,6 +197,25 @@ fn write_sorted_with(
     records: impl IntoIterator<Item = Result<NativeBookPosition, BookError>>,
     replace: bool,
     block_positions: u32,
+    checkpoint: impl FnMut(&'static str) -> Result<(), BookError>,
+) -> Result<(), BookError> {
+    let records = records.into_iter().map(|record| {
+        #[cfg(test)]
+        let _timer = super::profile::measure("writer_normalize", 1);
+        record?.normalized().map(ValidatedRecord)
+    });
+    write_validated_sorted_with(path, metadata, records, replace, block_positions, checkpoint)
+}
+
+// 値は検証と正規化の直後だけに包み、writer に渡すまで変更しない。
+struct ValidatedRecord(NativeBookPosition);
+
+fn write_validated_sorted_with(
+    path: &Path,
+    metadata: NativeBookMetadata,
+    records: impl IntoIterator<Item = Result<ValidatedRecord, BookError>>,
+    replace: bool,
+    block_positions: u32,
     mut checkpoint: impl FnMut(&'static str) -> Result<(), BookError>,
 ) -> Result<(), BookError> {
     if !(1..=wire::MAX_BLOCK_POSITIONS).contains(&block_positions) {
@@ -220,7 +239,13 @@ fn write_sorted_with(
         if entries.is_empty() {
             return Ok(());
         }
-        let (row, compressed) = super::block::encode(entries, *offset)?;
+        #[cfg(test)]
+        let _timer = super::profile::measure("compress_block", entries.len() as u64);
+        let (row, compressed) = {
+            #[cfg(test)]
+            let _timer = super::profile::measure("compression", entries.len() as u64);
+            super::block::encode(entries, *offset)?
+        };
         indexes.writer().write_all(&row.encode())?;
         blocks.writer().write_all(&compressed)?;
         *offset = add(*offset, compressed.len() as u64)?;
@@ -235,7 +260,7 @@ fn write_sorted_with(
     let mut text_bytes = 0;
     let mut previous_key = None;
     for record in records {
-        let record = record?.normalized()?;
+        let ValidatedRecord(record) = record?;
         if previous_key.is_some_and(|key| key >= record.entry.key) {
             return Err(invalid("native sorted input keys are duplicated or unordered"));
         }
@@ -281,21 +306,37 @@ fn write_sorted_with(
     let mut output = Temporary::new(path, "base")?;
     output.writer().write_all(&[0; wire::HEADER_BYTES])?;
     let mut crc = Crc32c::new();
+    #[cfg(test)]
+    let copy_timer = super::profile::measure("copy_crc", node_count);
     for section in [&mut indexes, &mut blocks, &mut comments, &mut text] {
         section.copy_to(output.writer(), &mut crc)?;
     }
     output.writer().write_all(&metadata_bytes)?;
     crc.update(&metadata_bytes);
     header.base_crc = crc.finish();
+    #[cfg(test)]
+    drop(copy_timer);
     output.writer().seek(SeekFrom::Start(0))?;
     output.writer().write_all(&header.encode())?;
     checkpoint("written")?;
-    output.writer().flush()?;
+    {
+        #[cfg(test)]
+        let _timer = super::profile::measure("flush", 1);
+        output.writer().flush()?;
+    }
     checkpoint("flushed")?;
-    output.writer().get_ref().sync_all()?;
+    {
+        #[cfg(test)]
+        let _timer = super::profile::measure("sync", 1);
+        output.writer().get_ref().sync_all()?;
+    }
     checkpoint("synced")?;
     output.close()?;
-    super::NativeBook::open(&output.path)?.validate_full()?;
+    {
+        #[cfg(test)]
+        let _timer = super::profile::measure("final_open_validate", node_count);
+        super::NativeBook::open(&output.path)?.validate_full()?;
+    }
     checkpoint("validated")?;
     if replace {
         fs::rename(&output.path, path)?;
@@ -343,6 +384,8 @@ impl RunCursor {
 }
 
 fn merge_runs(destination: &Path, runs: Vec<Temporary>) -> Result<Temporary, BookError> {
+    #[cfg(test)]
+    let _timer = super::profile::measure("merge_runs", runs.len() as u64);
     let mut output = Temporary::new(destination, "merge")?;
     let mut cursors = runs.into_iter().map(RunCursor::new).collect::<Result<Vec<_>, _>>()?;
     let mut previous = None;
@@ -389,7 +432,7 @@ struct RunRecords {
 }
 
 impl Iterator for RunRecords {
-    type Item = Result<NativeBookPosition, BookError>;
+    type Item = Result<ValidatedRecord, BookError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.failed {
@@ -399,9 +442,13 @@ impl Iterator for RunRecords {
         let result = (|| {
             let mut bytes = vec![0; len as usize];
             self.cursor.input.read_exact(&mut bytes)?;
-            let record = decode_snapshot(key, &bytes)?;
+            let record = {
+                #[cfg(test)]
+                let _timer = super::profile::measure("snapshot_decode_validate", 1);
+                decode_snapshot(key, &bytes)?
+            };
             self.cursor.advance()?;
-            Ok(record)
+            Ok(ValidatedRecord(record))
         })();
         self.failed = result.is_err();
         Some(result)
@@ -590,7 +637,7 @@ impl NativeBookBuilder {
         }
         if let Some(run) = runs.pop() {
             let records = RunRecords { cursor: RunCursor::new(run)?, failed: false };
-            write_sorted_with(
+            write_validated_sorted_with(
                 &self.path,
                 self.metadata,
                 records,
@@ -599,7 +646,7 @@ impl NativeBookBuilder {
                 checkpoint,
             )
         } else {
-            write_sorted_with(
+            write_validated_sorted_with(
                 &self.path,
                 self.metadata,
                 std::iter::empty(),
@@ -658,6 +705,25 @@ mod tests {
         record.comment = Some("position\r\ncomment".into());
         record.move_comments.insert(Move::from_usi("7g7f").unwrap().raw(), "move comment".into());
         record
+    }
+
+    #[test]
+    fn builder_revalidates_run_contents_before_publication() {
+        for corrupt_key in [false, true] {
+            let directory = TestDirectory::new();
+            let path = directory.path("default.book");
+            let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default()).unwrap();
+            builder.push(fixture_record()).unwrap();
+            if corrupt_key {
+                builder.pending[0].0 = [0; 32];
+            } else {
+                builder.pending[0].1[16..18]
+                    .copy_from_slice(&Move::from_usi("5a5b").unwrap().raw().to_le_bytes());
+            }
+            assert!(builder.finish().is_err());
+            assert!(!path.exists());
+            assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+        }
     }
 
     #[test]

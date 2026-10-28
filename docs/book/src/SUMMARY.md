@@ -10,6 +10,7 @@
 - [インストール](getting-started/installation.md)
 - [クイックスタート](getting-started/quickstart.md)
 - [実践レシピ集](getting-started/examples.md)
+- [1.7.1 の変更内容](getting-started/release-1.7.1.md)
 - [1.7.0 への移行](getting-started/migration-1.7.md)
 - [1.6.0 の互換性と 2.0.0 への移行](getting-started/migration-1.6.md)
 

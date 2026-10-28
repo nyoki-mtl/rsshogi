@@ -347,6 +347,34 @@ if let Some(entry) = ybb.lookup_position(&pos)? {
 }
 ```
 
+## 既存 DB2016 の差分保存
+
+`YaneuraOuBook::write_yaneuraou_db2016_with_patch` は、元ファイルと `BookDatabasePatch` を SFEN 順にマージして出力する。
+元データは正規化 SFEN の厳密な昇順を要求し、重複、逆順、不正行は、削除や置換する行も含めて拒否する。
+全件 IR と出力全文を保持せず、候補手順、ponder、count、未設定値、手数の省略と明示的な 0、各コメントを保持する。
+先頭局面より前のコメントも保持するが、任意の `# NOE` は省略する。
+空白と改行コードのバイト一致は保証しない。
+出力コメントの CRLF と単独 CR は LF に正規化し、各行に `# ` を付ける。
+この規則は差分保存と `BookDatabase` からの出力、逐次 writer で共通とする。
+SBK metadata と weight を含む差分は `Unsupported` とする。
+
+```rust,ignore
+use rsshogi::board::InitialPosition;
+use rsshogi::book::{BookDatabasePatch, YaneuraOuBook};
+use std::{fs::File, io::BufWriter};
+
+let source = YaneuraOuBook::open("input.db")?;
+let mut patch = BookDatabasePatch::new();
+patch.remove_entry_by_sfen(InitialPosition::Standard.to_sfen())?;
+let mut output = BufWriter::new(File::create("staged.db")?);
+source.write_yaneuraou_db2016_with_patch(&mut output, &patch)?;
+```
+
+`write_yaneuraou_db2016_with_patch_with_control` は `BookPatchWriteProgress` と `BookControl` で進捗通知と協調キャンセルを行う。
+処理件数は元局面数で、追加局面数や完了率ではない。
+DB2016 の総数は `None` となる。
+部分出力、永続化、入力の寿命の契約は[定跡アーキテクチャ](book-architecture.md)を参照する。
+
 ## 関連項目
 
 - [定跡 3 層アーキテクチャ](book-architecture.md)

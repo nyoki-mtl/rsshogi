@@ -67,6 +67,7 @@ impl Default for YaneuraOuDb2016WriteOptions {
 /// 正規化 SFEN の昇順で DB2016 エントリを逐次出力する writer。
 ///
 /// メモリ使用量は最大エントリのサイズに比例する。I/O エラー後は再利用できない。
+/// コメントの CRLF と単独 CR は LF に正規化し、各行をコメントとして出力する。
 pub struct YaneuraOuDb2016Writer<W: Write> {
     writer: W,
     options: YaneuraOuDb2016WriteOptions,
@@ -170,6 +171,15 @@ impl<W: Write> YaneuraOuDb2016Writer<W> {
             return Err(BookError::InvalidData(
                 "DB2016 writer is poisoned by an I/O failure".into(),
             ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_preamble_comment(&mut self, comment: &str) -> Result<(), BookError> {
+        self.ensure_usable()?;
+        if let Err(error) = writeln!(self.writer, "# {comment}") {
+            self.poisoned = true;
+            return Err(error.into());
         }
         Ok(())
     }
@@ -338,14 +348,20 @@ fn write_optional<T: std::fmt::Display>(output: &mut String, value: Option<T>) {
     }
 }
 
-fn write_comments(output: &mut String, comment: &str) {
+fn write_comments(output: &mut String, mut comment: &str) {
     if comment.is_empty() {
         return;
     }
-    for line in comment.split('\n') {
+    loop {
+        let end = comment.find(['\r', '\n']).unwrap_or(comment.len());
         output.push_str("# ");
-        output.push_str(line);
+        output.push_str(&comment[..end]);
         output.push('\n');
+        if end == comment.len() {
+            break;
+        }
+        let newline_len = if comment[end..].starts_with("\r\n") { 2 } else { 1 };
+        comment = &comment[end + newline_len..];
     }
 }
 

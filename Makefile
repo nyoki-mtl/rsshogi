@@ -4,6 +4,8 @@ else
 POWERSHELL := pwsh -NoProfile -File
 endif
 
+UV_RUN_FLAGS ?= --locked
+
 .PHONY: help format format-check lint lint-fix test test-rust py-format py-lint typecheck check check-public-export clean sync check-env setup-native
 
 help:
@@ -31,19 +33,19 @@ format:
 
 format-check:
 	cargo fmt --all -- --check
-	uv run ruff format --check examples/python
+	uv run $(UV_RUN_FLAGS) ruff format --check examples/python
 
 lint:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
-	uv run ruff check examples/python
+	uv run $(UV_RUN_FLAGS) ruff check examples/python
 
 lint-fix:
 	uv run ruff check examples/python --fix
 
 test:
 	$(MAKE) test-rust
-	uv run maturin develop -m crates/rsshogi-py/Cargo.toml
-	uv run pytest tests/python
+	uv run $(UV_RUN_FLAGS) maturin develop -m crates/rsshogi-py/Cargo.toml
+	uv run $(UV_RUN_FLAGS) pytest tests/python
 
 test-rust:
 ifeq ($(OS),Windows_NT)
@@ -64,10 +66,10 @@ py-format:
 	uv run ruff format examples/python
 
 py-lint:
-	uv run ruff check examples/python
+	uv run $(UV_RUN_FLAGS) ruff check examples/python
 
 typecheck:
-	uv run ty check tests/python/typecheck_record_api.py --extra-search-path crates/rsshogi-py/python --error unused-ignore-comment
+	uv run $(UV_RUN_FLAGS) ty check tests/python/typecheck_record_api.py --extra-search-path crates/rsshogi-py/python --error unused-ignore-comment
 
 check-public-export:
 	$(POWERSHELL) scripts/check_public_export.ps1

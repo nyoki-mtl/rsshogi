@@ -150,6 +150,10 @@ impl NativeBookEntry {
     }
 
     pub(super) fn validate(&self) -> Result<(), BookError> {
+        self.validate_with_position().map(|_| ())
+    }
+
+    pub(super) fn validate_with_position(&self) -> Result<Position, BookError> {
         if self.candidates.len() > usize::from(u16::MAX) {
             return Err(BookError::InvalidData("too many native candidates".into()));
         }
@@ -175,7 +179,7 @@ impl NativeBookEntry {
                 return Err(BookError::InvalidData("illegal native candidate move".into()));
             }
         }
-        Ok(())
+        Ok(position)
     }
 }
 

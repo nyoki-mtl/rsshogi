@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod flipped;
+mod visit;
 
 struct Directory(PathBuf);
 impl Directory {
@@ -485,6 +486,10 @@ fn superseded_log_text_is_validated_and_salvage_stops_before_it() {
     assert!(
         matches!(book.validate_full(), Err(BookError::NativeLog { valid_end, sequence: 0, .. }) if valid_end == base_end as u64)
     );
+    assert!(matches!(
+        book.validate_full_and_visit(|_, _| Ok(()), |_| BookControl::Continue),
+        Err(BookError::NativeLog { valid_end, sequence: 0, .. }) if valid_end == base_end as u64
+    ));
     let report =
         NativeBookEditor::salvage_prefix(&source, directory.path("rescued.book")).expect("salvage");
     assert_eq!(report.sequence, 0);

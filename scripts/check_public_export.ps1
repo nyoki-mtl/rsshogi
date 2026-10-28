@@ -175,7 +175,10 @@ try {
         Pop-Location
     }
 
-    $commitMessage = (Git-Output $exportWork log -1 --format=%B) -join "`n"
+    # Read Unicode text as UTF-8 without relying on native stdout's code page.
+    $commitMessagePath = Join-Path $tmpRoot "commit-message.txt"
+    Invoke-Git $exportWork -c i18n.logOutputEncoding=utf-8 log -1 --format=%B "--output=$commitMessagePath"
+    $commitMessage = Get-Content -LiteralPath $commitMessagePath -Raw -Encoding UTF8
     if ($commitMessage -notmatch [regex]::Escape($unicodeReleaseNote)) {
         throw "relative NotesFile content is missing from the snapshot commit message"
     }
