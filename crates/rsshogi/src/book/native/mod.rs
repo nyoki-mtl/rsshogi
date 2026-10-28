@@ -9,6 +9,8 @@ mod reader;
 mod types;
 mod wire;
 #[cfg(test)]
+mod profile;
+#[cfg(test)]
 mod tests;
 
 pub use builder::NativeBookBuilder;

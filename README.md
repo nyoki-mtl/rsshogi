@@ -4,6 +4,12 @@
 
 `rsshogi` は、将棋局面の表現、合法手生成、1 手詰め判定、棋譜や定跡の入出力、深層学習データの操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージである。
 
+1.7.1 は後方互換な機能追加と内部改善を含む。
+Rust の `NativeBook::validate_full_and_visit()` による完全検証と現在 snapshot の走査、および Native builder の重複検証削減を含む。
+DB2016 と SBK には、変更局面だけを保持して全体を逐次出力する Rust API を追加する。
+SBK open は全ファイルのバイト列を保持せず、局面索引と固定上限のキャッシュを使う。
+利用範囲と制約は [1.7.1 の変更内容](docs/book/src/getting-started/release-1.7.1.md) を参照。
+
 ## インストール
 
 ### Rust
@@ -12,7 +18,7 @@
 
 ```toml
 [dependencies]
-rsshogi = "1.7.0"
+rsshogi = "1.7.1"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
@@ -20,7 +26,7 @@ rsshogi = "1.7.0"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.7.0", features = ["records", "book"] }
+rsshogi = { version = "1.7.1", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
@@ -72,6 +78,15 @@ move = Move.from_usi("7g7f")
 board.apply_move(move)
 print(board.to_sfen())
 ```
+
+## バージョン方針
+
+後方互換な機能追加、不具合修正、内部改善では patch を上げる。
+破壊的変更を含む公開では minor を上げる。
+たとえば、1.7.0 への互換な機能追加は 1.7.1、次の破壊的変更を含む公開は 1.8.0 とする。
+SemVer とは異なり、同じ major 内でも minor 間の互換性は保証しない。
+更新時は [CHANGELOG](CHANGELOG.md) と対象版の移行ガイドを確認する。
+既に 2.0.0 で削除すると告知した非推奨 API は、その移行予定を維持する。
 
 ## ドキュメントと変更履歴
 

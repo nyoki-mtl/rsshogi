@@ -4,6 +4,8 @@ SBK（拡張子 `.sbk`）は、ShogiGUI 由来の定跡バイナリフォーマ�
 Protocol Buffers（Protobuf）をベースとし、局面（state）を頂点、定跡手（move）の遷移先 `nextStateId` を有向辺とする状態グラフ構造を持つ。
 
 `rsshogi` は読み取り専用リーダ `SbkBook`（Rust および Python）と、編集 IR である `BookDatabase` からの全体書き出し API（Rust）を提供する。
+1.7.1 では、既存 reader と変更局面だけの `BookDatabasePatch` から逐次出力する Rust API も追加する。
+IR からの再生成と既存ファイルの差分保存は、ID とリンク、未知フィールドの扱いが異なる。
 
 ## 1. Protobuf ワイヤースキーマ
 
@@ -20,8 +22,8 @@ message SBook {
 // 1 つの登録局面（頂点）
 message SBookState {
   optional int32  id        = 1;   // state の論理 ID（物理配列インデックスとは独立）
-  optional uint64 boardKey  = 2;   // ShogiGUI 固有の盤面キー（rsshogi 読込時は無視、書出時は 0）
-  optional uint32 handKey   = 3;   // ShogiGUI 固有の持駒キー（rsshogi 読込時は無視、書出時は 0）
+  optional uint64 boardKey  = 2;   // ShogiGUI 固有の盤面キー（局面解決には使わない）
+  optional uint32 handKey   = 3;   // ShogiGUI 固有の持駒キー（局面解決には使わない）
   optional int32  games     = 4;   // この局面の出現対局数
   optional int32  wonBlack  = 5;   // 先手勝ち数
   optional int32  wonWhite  = 6;   // 後手勝ち数
@@ -56,6 +58,11 @@ SBK ファイル内の `SBookState` は必ずしも特定の順序で並んで�
 `SbkBook` はオープン時に以下のインデックス構築を行い、検索時の省メモリかつ高速なオンデマンドデコードを実現している。
 
 ### オープン時のインデックス構築
+
+全ファイルのバイト列を RAM に置かず、逐次走査と state 単位の読込を行う。
+索引構築のグラフ走査には本文上限 4 MiB のページキャッシュを使う。
+局面索引と queue は state 数に比例し、キャッシュの管理情報と最大 state の読込バッファ、著者と説明の文字列も必要になる。
+全ファイルを RAM に保持する方式より読込時間が増える場合があり、一定メモリや一定時間での open は保証しない。
 
 1. **オフセットと論理 ID マップの構築**：Protobuf ストリームを走査して各 `SBookState` のファイル内バイトオフセット（物理インデックス `state_index: 0..N`）を記録し、論理 ID（`SBookState.id`）から物理インデックスへの変換マップ（`state_id -> state_index`）を構築する。
 2. **局面の導出と `PackedSfen` 索引の生成**：各 state の明示的な `position`（SFEN）または親 state からの `nextStateId` 辺を辿って各 state の 32 バイト `PackedSfen` を導出し、SBK ワード順（`PackedSfen::cmp_sbk_words`）でソートしたコンパクトな検索インデックスを作成する。不正なグラフ辺が存在してもその分岐のみをスキップし、定跡全体のオープンは継続される。
@@ -134,6 +141,42 @@ for entry_res in book.iter_entries() {
 }
 let sbk_bytes = db.to_sbk_bytes(&SbkWriteOptions::new())?;
 ```
+
+## 5. 既存 SBK の差分保存
+
+`SbkBook::write_sbk_with_patch` は `BookDatabasePatch` の局面置換と削除を反映し、元の物理順を保って出力する。
+新規局面は正規化 SFEN 順で末尾に追加し、ID は `state[i].id == i` へ振り直す。
+全局面の `Position` と全候補手と出力全文は保持せず、索引と最大 state と差分に比例するメモリを使用する。
+open 時もファイル全体のバイト列を保持せず、バッファ付きの入力から局面索引を構築する。
+索引構築時は最大 4 MiB のページ本文キャッシュを使う。
+局面索引、キャッシュの管理情報、最大 state のバッファは別途必要になる。
+
+既存の候補手は、コメントや評価の変更後も元のリンクを保つ。
+削除された子へのリンクは `-1` とし、候補手自体は残す。
+新規候補手は合法手適用で子局面を求め、出力局面集合にあれば接続する。
+既存の終端の先に局面を追加しただけでは自動接続しない。
+元の明示 SFEN を保持し、出力の先頭と復元起点が不足する箇所、および明示的な手数指定のある局面に SFEN を補完する。
+親の削除で孤立した局面や循環成分も保存する。
+
+著者、説明、未変更の統計、評価一覧、未知 wire フィールドを保持する。
+置換対象の state は、コメントだけの変更でも `boardKey` と `handKey` を 0 で出力する。
+未置換の state は元の値を保持し、これらのキーは局面解決には使用しない。
+置換局面でも state の未知フィールドと、同じ指し手に残る未知フィールドを保持する。
+未知フィールド付き評価一覧は、既知の値を変更せずそのまま残せる場合だけ置換できる。
+未知フィールド内の将来の ID 参照の意味までは保証しない。
+
+重複局面、未解決 state、不正な指し手、矛盾する辺、欠けた非終端参照を持つ入力は保存を拒否する。
+これは既存 reader の寛容な受理範囲とは異なる。
+SBK に表現できない ponder、depth、count、DB2016 metadata と、指し手評価 metadata に対応しない score は `Unsupported` とする。
+明示手数は reader が扱う `u16` の範囲を要求する。
+open 時に未訪問の子への着手で手数がこの範囲を超える場合は、子に明示 SFEN があっても `InvalidData` を返す。
+さらに、保存後のグラフ走査で手数加算がその範囲を超える場合も出力前に拒否する。
+全局面削除は空 SBK を reader が拒否するため `InvalidData` とする。
+
+`write_sbk_with_patch_with_control` は `Validating` と `Writing` の段階を通知し、`BookControl::Cancel` で中断する。
+件数は元 state の処理数であり、準備処理や追加局面の出力中は据え置かれるため、全体の完了率や残り時間には使えない。
+出力失敗時も差分を保持する。
+出力の永続化と置換は[定跡アーキテクチャ](book-architecture.md)を参照する。
 
 ## 関連項目
 

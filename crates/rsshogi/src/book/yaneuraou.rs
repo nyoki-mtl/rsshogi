@@ -7,6 +7,8 @@ use crate::board::Position;
 use crate::book::{BookControl, BookError};
 use crate::types::Move;
 
+mod patch;
+
 pub const YANEURAOU_HEADER: &str = "#YANEURAOU-DB2016 1.00";
 const DEFAULT_VALIDATION_LIMIT: usize = 10_000;
 

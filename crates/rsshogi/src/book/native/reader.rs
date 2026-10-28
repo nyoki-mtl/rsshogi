@@ -461,6 +461,14 @@ impl NativeBook {
     }
 
     fn base_entry(&self, index: u64, key: [u8; 32]) -> Result<NativeBookEntry, BookError> {
+        self.base_entry_with_position(index, key).map(|(entry, _)| entry)
+    }
+
+    fn base_entry_with_position(
+        &self,
+        index: u64,
+        key: [u8; 32],
+    ) -> Result<(NativeBookEntry, Position), BookError> {
         let size = u64::from(self.header.block_positions);
         self.with_block((index / size) as usize, |entries| {
             let entry = entries
@@ -468,17 +476,21 @@ impl NativeBook {
                 .filter(|entry| entry.key == key)
                 .cloned()
                 .ok_or_else(|| invalid("invalid native position index"))?;
-            entry.validate()?;
-            Ok(entry)
+            let position = entry.validate_with_position()?;
+            Ok((entry, position))
         })
     }
 
-    fn entry_from_bytes(&self, key: [u8; 32], bytes: &[u8]) -> Result<NativeBookEntry, BookError> {
+    fn entry_from_bytes(
+        &self,
+        key: [u8; 32],
+        bytes: &[u8],
+    ) -> Result<(NativeBookEntry, Position), BookError> {
         let candidates =
             bytes.chunks_exact(16).map(decode_candidate).collect::<Result<Vec<_>, _>>()?;
         let entry = NativeBookEntry { key, candidates };
-        entry.validate()?;
-        Ok(entry)
+        let position = entry.validate_with_position()?;
+        Ok((entry, position))
     }
 
     fn snapshot_layout(&self, offset: u64, len: u64) -> Result<(u64, u64, u64), BookError> {
@@ -521,6 +533,15 @@ impl NativeBook {
         offset: u64,
         len: u64,
     ) -> Result<NativeBookEntry, BookError> {
+        self.snapshot_entry_with_position(key, offset, len).map(|(entry, _)| entry)
+    }
+
+    fn snapshot_entry_with_position(
+        &self,
+        key: [u8; 32],
+        offset: u64,
+        len: u64,
+    ) -> Result<(NativeBookEntry, Position), BookError> {
         // 検索では候補手だけを読み、コメントoffset検査はopen時と完全検証で行う。
         let header = self.file.read(offset, 16)?;
         let count = read_u64(&header, 0)?;
@@ -586,8 +607,17 @@ impl NativeBook {
         offset: u64,
         len: u64,
     ) -> Result<NativeBookPosition, BookError> {
+        self.snapshot_record_with_position(key, offset, len).map(|(record, _)| record)
+    }
+
+    fn snapshot_record_with_position(
+        &self,
+        key: [u8; 32],
+        offset: u64,
+        len: u64,
+    ) -> Result<(NativeBookPosition, Position), BookError> {
         let (count, offsets_offset, text_offset) = self.snapshot_layout(offset, len)?;
-        let entry = self.snapshot_entry(key, offset, len)?;
+        let (entry, position) = self.snapshot_entry_with_position(key, offset, len)?;
         let offsets = self.file.read(offsets_offset, mul(count + 2, 8)?)?;
         let mut record = NativeBookPosition::new(entry);
         for index in 0..count + 1 {
@@ -603,7 +633,7 @@ impl NativeBook {
                 }
             }
         }
-        Ok(record)
+        Ok((record, position))
     }
 
     /// コメントを含む1局面を取得する。
@@ -759,6 +789,43 @@ impl NativeBook {
     /// 進捗通知とキャンセル付きの全件検証。
     pub fn validate_full_with_control(
         &self,
+        control: impl FnMut(NativeBookProgress) -> BookControl,
+    ) -> Result<(), BookError> {
+        self.validate_full_and_visit(|_, _| Ok(()), control)
+    }
+
+    /// 全件を完全検証し、現在の snapshot の各 entry と検証に使った局面を一度ずつ渡す。
+    ///
+    /// 呼出し順は保証しない。削除済みや上書き済みの base、過去の transaction、
+    /// コメント、未完了 tail も検査する。全 entry を追加でメモリに保持しない。
+    /// 局面は手数 1 であり、コールバック中だけ借用できる。
+    /// コールバックはブロックキャッシュのロックを保持せずに呼び出す。
+    ///
+    /// コールバックの結果は、このメソッドが `Ok(())` を返すまで未完成として扱う。
+    /// 後続の破損検出、キャンセル、コールバック失敗時に副作用を巻き戻さない。
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use rsshogi::book::{BookControl, BookError, NativeBook};
+    /// let book = NativeBook::open("input.book")?;
+    /// let mut candidates = 0;
+    /// book.validate_full_and_visit(
+    ///     |entry, _position| {
+    ///         candidates += entry.candidates.len();
+    ///         Ok(())
+    ///     },
+    ///     |_| BookControl::Continue,
+    /// )?;
+    /// println!("validated candidates: {candidates}");
+    /// # Ok::<_, BookError>(())
+    /// ```
+    ///
+    /// # Errors
+    /// データの不正や I/O 失敗、進捗通知からのキャンセル時に返す。
+    /// コールバックのエラーは変換せずに返し、以後の処理を中断する。
+    pub fn validate_full_and_visit(
+        &self,
+        mut visit: impl FnMut(NativeBookEntry, &Position) -> Result<(), BookError>,
         mut control: impl FnMut(NativeBookProgress) -> BookControl,
     ) -> Result<(), BookError> {
         let mut check = |phase, completed, total| {
@@ -787,7 +854,11 @@ impl NativeBook {
             if previous.is_some_and(|previous| previous >= key) {
                 return Err(invalid("base keys not strictly sorted"));
             }
-            moves = add(moves, self.base_entry(index, key)?.candidates.len() as u64)?;
+            let (entry, position) = self.base_entry_with_position(index, key)?;
+            moves = add(moves, entry.candidates.len() as u64)?;
+            if !self.delta.contains_key(&key) {
+                visit(entry, &position)?;
+            }
             previous = Some(key);
             check("positions", index + 1, Some(self.header.node_count))?;
         }
@@ -835,33 +906,41 @@ impl NativeBook {
             let header = self.file.read(offset, 40)?;
             let payload_end = add(offset + 40, read_u64(&header, 16)?)?;
             let count = read_u64(&header, 24)?;
-            let validate = (|| -> Result<(), BookError> {
-                let mut cursor = offset + 40;
-                for _ in 0..count {
+            let mut cursor = offset + 40;
+            for _ in 0..count {
+                let current = (|| {
                     let prefix = self.file.read(cursor, 48)?;
                     let key = prefix[8..40].try_into().expect("key bytes");
                     let len = read_u64(&prefix, 40)?;
                     cursor += 48;
-                    match prefix[0] {
+                    let current = match prefix[0] {
                         1 => {
-                            self.snapshot_record(key, cursor, len)?;
+                            let (record, position) =
+                                self.snapshot_record_with_position(key, cursor, len)?;
+                            if matches!(self.delta.get(&key), Some(Delta::Snapshot { offset, len: current_len }) if *offset == cursor && *current_len == len) {
+                                Some((record.entry, position))
+                            } else {
+                                None
+                            }
                         }
                         3 => {
                             self.metadata_at(cursor, len)?;
+                            None
                         }
-                        _ => {}
-                    }
+                        _ => None,
+                    };
                     cursor = add(cursor, len)?;
-                }
-                Ok(())
-            })();
-            if validate.is_err() {
-                return Err(BookError::NativeLog {
+                    Ok::<_, BookError>(current)
+                })()
+                .map_err(|_| BookError::NativeLog {
                     offset,
                     valid_end: offset,
                     sequence,
                     reason: "invalid historical transaction data",
-                });
+                })?;
+                if let Some((entry, position)) = current {
+                    visit(entry, &position)?;
+                }
             }
             sequence += 1;
             offset = add(payload_end, 24)?;

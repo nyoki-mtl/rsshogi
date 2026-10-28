@@ -1,7 +1,7 @@
 //! SBK 定跡書庫の読み込みと書き出しサポート。
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -12,6 +12,13 @@ use crate::book::{
     SbkEvalMetadata,
 };
 use crate::types::{Color, Move, Move32, PieceType, Square};
+
+mod file;
+mod index;
+mod page;
+mod patch;
+#[cfg(test)]
+mod profile;
 
 const FIELD_SBOOK_AUTHOR: u32 = 1;
 const FIELD_SBOOK_DESCRIPTION: u32 = 2;
@@ -148,8 +155,9 @@ impl SbkBook {
     ///
     /// 状態ペイロードはオンデマンドでデコードされる。インデックスは解決済みステートごとに 1 行を保持する。
     ///
-    /// インデックス構築中はファイル全体をメモリへ読み込むため、オープン時のピークメモリは
-    /// ファイルサイズに比例する。読み込んだバイト列は戻り値には保持されない。
+    /// インデックス構築中はファイルを逐次走査し、ステート単位のバッファを再利用する。
+    /// メモリにはステートの位置と局面のインデックスを保持する。
+    /// 索引構築時のページ本文キャッシュは最大 4 MiB とし、管理情報と最大ステートのバッファは別途保持する。
     pub fn open(path: impl AsRef<Path>) -> Result<Self, BookError> {
         Self::open_with_control(path, |_| BookControl::Continue)
     }
@@ -164,9 +172,8 @@ impl SbkBook {
         mut on_progress: impl FnMut(SbkOpenProgress) -> BookControl,
     ) -> Result<Self, BookError> {
         let path = path.as_ref().to_path_buf();
-        let bytes = fs::read(&path)?;
-
-        let scan = scan_sbook_bytes(&bytes)?;
+        let mut file = file::BufferedFile::new(File::open(&path)?)?;
+        let scan = file::scan_file(&mut file)?;
         if scan.states.is_empty() {
             return Err(BookError::InvalidFormat("sbk contains no states"));
         }
@@ -183,7 +190,8 @@ impl SbkBook {
         };
         book.state_lookup = vec![None; book.states.len()];
         book.build_state_id_index()?;
-        book.build_index(&bytes, &mut on_progress)?;
+        let mut file = page::PageFile::new(file.into_inner(), page::PAGE_BYTES, page::CACHE_BYTES)?;
+        book.build_index(&mut file, &mut on_progress)?;
         Ok(book)
     }
 
@@ -299,7 +307,7 @@ impl SbkBook {
 
     fn build_index(
         &mut self,
-        bytes: &[u8],
+        file: &mut (impl Read + Seek),
         on_progress: &mut impl FnMut(SbkOpenProgress) -> BookControl,
     ) -> Result<(), BookError> {
         let mut pos = Position::from_sfen(InitialPosition::Standard.to_sfen())
@@ -310,14 +318,17 @@ impl SbkBook {
         let mut visited = vec![false; self.states.len()];
         let mut visited_count = 0usize;
         let mut queue = VecDeque::new();
+        let mut payload = Vec::new();
+        let mut moves = Vec::new();
 
         for root_index in 0..self.states.len() {
             if visited[root_index] {
                 continue;
             }
 
-            let raw = self.read_state_from_bytes(bytes, root_index)?;
-            let (root_key, root_ply) = match raw.position.as_deref() {
+            self.read_state_payload(file, root_index, &mut payload)?;
+            let sfen = index::decode(&payload, &mut moves)?;
+            let (root_key, root_ply) = match sfen {
                 Some(position) => {
                     pos.set_sfen(position).map_err(|err| {
                         BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
@@ -334,15 +345,21 @@ impl SbkBook {
             queue.push_back((root_index, root_key, root_ply));
 
             while let Some((state_index, fallback_key, fallback_ply)) = queue.pop_front() {
-                let raw = self.read_state_from_bytes(bytes, state_index)?;
-                let (key, ply, mut pos_synced) = match raw.position.as_deref() {
-                    Some(position) => {
-                        pos.set_sfen(position).map_err(|err| {
-                            BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
-                        })?;
-                        (packed_sfen_of_state(&pos)?, pos.game_ply(), true)
+                let (key, ply, mut pos_synced) = if state_index == root_index {
+                    // 起点は queue 登録直前に解析済みで、payload と moves も残っている。
+                    (root_key, root_ply, true)
+                } else {
+                    self.read_state_payload(file, state_index, &mut payload)?;
+                    let sfen = index::decode(&payload, &mut moves)?;
+                    match sfen {
+                        Some(position) => {
+                            pos.set_sfen(position).map_err(|err| {
+                                BookError::InvalidData(format!("invalid sbk state SFEN: {err}"))
+                            })?;
+                            (packed_sfen_of_state(&pos)?, pos.game_ply(), true)
+                        }
+                        None => (fallback_key, fallback_ply, false),
                     }
-                    None => (fallback_key, fallback_ply, false),
                 };
 
                 let row = SbkLookupRow { key, ply, state_index };
@@ -351,7 +368,7 @@ impl SbkBook {
                 }
                 self.index.push(row);
 
-                for raw_move in &raw.moves {
+                for raw_move in &moves {
                     let Some(next_state_id) = raw_move.next_state_id else {
                         continue;
                     };
@@ -381,11 +398,15 @@ impl SbkBook {
                     if !pos.is_legal_move32(mv32) {
                         continue;
                     }
-                    pos.apply_move32(mv32);
+                    pos.try_apply_move32(mv32).map_err(|err| {
+                        BookError::InvalidData(format!(
+                            "failed to apply SBK traversal move: {err:?}"
+                        ))
+                    })?;
                     let next = packed_sfen_of_state(&pos).map(|key| (key, pos.game_ply()));
-                    // apply_move32 が state を push した直後なので、同じ手の undo は必ず成功する。
+                    // 着手成功で state を push した直後なので、同じ手の undo は必ず成功する。
                     pos.undo_move32(mv32)
-                        .expect("undo must succeed immediately after apply_move32");
+                        .expect("undo must succeed immediately after a successful move");
                     let (next_key, next_ply) = next?;
                     visited[next_state_index] = true;
                     visited_count += 1;
@@ -410,24 +431,20 @@ impl SbkBook {
         Ok(())
     }
 
-    fn read_state_from_bytes(
+    fn read_state_payload(
         &self,
-        bytes: &[u8],
+        file: &mut (impl Read + Seek),
         state_index: usize,
-    ) -> Result<RawSbkState, BookError> {
+        payload: &mut Vec<u8>,
+    ) -> Result<(), BookError> {
         let offset = self
             .states
             .get(state_index)
             .ok_or_else(|| BookError::InvalidData(format!("missing sbk state {state_index}")))?;
-        let start = usize::try_from(offset.payload_offset)
-            .map_err(|_| BookError::InvalidFormat("protobuf position overflow"))?;
-        let end = start
-            .checked_add(offset.payload_bytes)
-            .ok_or(BookError::InvalidFormat("protobuf length overflow"))?;
-        let payload = bytes
-            .get(start..end)
-            .ok_or(BookError::InvalidFormat("truncated length-delimited field"))?;
-        decode_state_payload(payload)
+        file.seek(SeekFrom::Start(offset.payload_offset))?;
+        payload.resize(offset.payload_bytes, 0);
+        file.read_exact(payload)?;
+        Ok(())
     }
 
     fn read_state_from_file(
@@ -435,13 +452,8 @@ impl SbkBook {
         file: &mut File,
         state_index: usize,
     ) -> Result<RawSbkState, BookError> {
-        let offset = self
-            .states
-            .get(state_index)
-            .ok_or_else(|| BookError::InvalidData(format!("missing sbk state {state_index}")))?;
-        file.seek(SeekFrom::Start(offset.payload_offset))?;
-        let mut payload = vec![0u8; offset.payload_bytes];
-        file.read_exact(&mut payload)?;
+        let mut payload = Vec::new();
+        self.read_state_payload(file, state_index, &mut payload)?;
         decode_state_payload(&payload)
     }
 
@@ -1056,6 +1068,7 @@ fn packed_sfen_of_state(pos: &Position) -> Result<PackedSfen, BookError> {
     })
 }
 
+#[cfg(test)]
 fn scan_sbook_bytes(bytes: &[u8]) -> Result<SbkScan, BookError> {
     let mut input = WireInput::new(bytes);
     let mut author = None;
@@ -1087,6 +1100,7 @@ fn scan_sbook_bytes(bytes: &[u8]) -> Result<SbkScan, BookError> {
     Ok(SbkScan { author, description, states })
 }
 
+#[cfg(test)]
 fn read_state_id_from_wire_payload(payload: &[u8]) -> Result<Option<i32>, BookError> {
     let mut input = WireInput::new(payload);
     while !input.is_empty() {
@@ -1430,6 +1444,44 @@ mod tests {
     use crate::book::{BookEntryMetadata, BookMoveMetadata, BookPosition, SbkMoveMetadata};
 
     use super::*;
+
+    #[test]
+    fn open_reports_traversal_ply_overflow_even_with_explicit_child() {
+        board::init();
+        let root = InitialPosition::Standard.to_sfen();
+        let child = next_sfen(root, "7g7f");
+        for explicit_child in [false, true] {
+            let path = temp_path("ply-overflow");
+            for ply in [65534, 65535] {
+                let mut target = vec![field_varint(FIELD_STATE_ID, 1)];
+                if explicit_child {
+                    target.push(field_string(FIELD_STATE_POSITION, &child));
+                }
+                let bytes = encode_sbook(vec![
+                    encode_state(vec![
+                        field_varint(FIELD_STATE_ID, 0),
+                        field_string(
+                            FIELD_STATE_POSITION,
+                            &root.replace(" - 1", &format!(" - {ply}")),
+                        ),
+                        field_message(
+                            FIELD_STATE_MOVES,
+                            encode_move(0x0100_7677, None, None, Some(1)),
+                        ),
+                    ]),
+                    encode_state(target),
+                ]);
+                fs::write(&path, bytes).unwrap();
+                let result = SbkBook::open(&path);
+                if ply == 65534 {
+                    assert_eq!(result.unwrap().len(), 2);
+                } else {
+                    assert!(matches!(result, Err(BookError::InvalidData(_))));
+                }
+            }
+            fs::remove_file(path).unwrap();
+        }
+    }
 
     #[test]
     fn test_sbk_open_lookup_explicit_position() {

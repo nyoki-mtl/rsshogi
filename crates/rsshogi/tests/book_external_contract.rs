@@ -21,6 +21,31 @@ fn temp_path(suffix: &str) -> PathBuf {
 }
 
 #[test]
+fn full_validation_can_visit_entries_with_the_validated_position() {
+    use rsshogi::book::BookControl;
+    let path = temp_path("visit.book");
+    let position = hirate_position();
+    let entry = NativeBookEntry::from_position(&position, vec![]).unwrap();
+    let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default()).unwrap();
+    builder.push(NativeBookPosition::new(entry.clone())).unwrap();
+    builder.finish().unwrap();
+    let book = NativeBook::open(&path).unwrap();
+    let mut entries = Vec::new();
+    book.validate_full_and_visit(
+        |current, position| {
+            assert_eq!(position.try_to_packed_sfen().unwrap().as_bytes(), &current.key);
+            entries.push(current);
+            Ok(())
+        },
+        |_| BookControl::Continue,
+    )
+    .unwrap();
+    assert_eq!(entries, vec![entry]);
+    drop(book);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn native_import_options_are_available_to_external_consumers() {
     let directory = temp_path("native-import");
     fs::create_dir(&directory).unwrap();

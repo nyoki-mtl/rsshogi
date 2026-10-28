@@ -40,6 +40,17 @@ println!("{}", position.to_sfen(None));
 
 データフォーマット仕様と内部設計の詳細は [rsshogi マニュアル](https://nyoki-mtl.github.io/rsshogi/) を参照。
 
+## 1.7.1 の変更内容
+
+1.7.1 は後方互換な機能追加、入力処理の修正と内部改善を含む。
+`book` feature の `NativeBook::validate_full_and_visit()` は完全検証中に現在 snapshot の各 entry と検証に使った局面を一度ずつ渡す。
+呼出し順は保証せず、処理結果はメソッド全体の成功後に確定する。
+Native builder は最終 run で検証済みのレコードを再利用し、公開前の完全検証と保存契約を維持する。
+`BookDatabasePatch` と DB2016 / SBK reader の差分マージ出力は、変更局面だけを所有して元形式の全体を逐次出力する。
+追記保存ではなく、出力の永続化と元ファイルの置換は呼び出し側が行う。
+SBK open は全ファイル配列を保持せず、局面索引と最大 state のバッファに加え、本文上限 4 MiB のページキャッシュを索引構築に使う。
+新しい差分保存 API と検証中の走査 API は Rust 向けであり、Python の公開 API は変更しない。
+
 ## 1.7.0 への移行
 
 Native Book 変換は `NativeBookImportOptions::new().with_*()` で設定を構築し、`write_native_book(path, &options)` に渡す。

@@ -3,7 +3,36 @@
 All notable changes to rsshogi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.7.1] - 2026-10-28
+
+後方互換な機能追加、入力処理の修正と内部改善を含む。
+
+### Added
+
+- Rust の `BookDatabasePatch` と、DB2016/SBK reader の差分マージ出力を追加した。
+  変更局面だけを所有し、元形式を逐次出力する。進捗通知とキャンセルにも対応する。
+  SBK は既存候補手のリンクと未知フィールドを保持し、削除後の局面復元起点を補完する。
+  DB2016 は正規化 SFEN の厳密な昇順を要求し、SBK は未解決 state や不整合グラフの保存を拒否する。
+  全体の書き直しを行う API であり、永続化と元ファイルの置換は呼び出し側が行う。
+  Python の公開 API への追加はない。
+- Rust の `NativeBook::validate_full_and_visit()` を追加した。
+  完全検証中に現在 snapshot の各 entry と検証に使った局面を一度ずつ渡す。
+  呼出し順は保証せず、結果は検証全体の成功後に確定する。
+
+### Changed
+
+- SBK open のファイル全体読み込みを、バッファ付きの state 単位読み込みへ変更した。
+  索引構築は固定上限のページキャッシュと借用デコードを使い、起点 state の重複読み込みを避ける。
+  既存 reader の受理範囲と診断は維持する。
+  局面索引は局面数に比例し、全件 RAM 方式より open が遅くなる場合がある。
+- Native builder の最終 run の復号で検証済みのレコードを内部 writer に引き継ぎ、重複する検証とコメントの再正規化を省いた。
+  入力検証、run 復号時の検証、公開前の完全検証と保存手順は維持する。
+
+### Fixed
+
+- SBK open と差分保存のグラフ検査で、入力由来の手数上限により panic する経路を修正した。
+  open 時の着手不能は `InvalidData` とし、保存前の盤面一致検査と出力後の手数上限検査を分ける。
+- DB2016 の出力コメントに含まれる CRLF と単独 CR を LF に正規化し、各行をコメントとして出力する。
 
 ## [1.7.0] - 2026-10-24
 

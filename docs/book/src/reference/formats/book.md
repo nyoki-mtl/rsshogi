@@ -478,6 +478,31 @@ P=64 の場合、索引は 1 局面あたり約 0.875B となる。
 
 `NativeBook::open` はヘッダーと追記ログを検査し、本体は必要な範囲だけ読む。全本体の整合性を確認するには `validate_full` を実行する。検証は進捗通知とキャンセルに対応する。検証後に外部プロセスがファイル内容を直接書き換える操作はサポートしない。
 
+Rust の `validate_full_and_visit(visit, control)` は完全検証と現在 snapshot の走査をまとめる。
+`visit` は所有値の `NativeBookEntry` と検証に使った `&Position` を受け取り、`Result<(), BookError>` を返す。
+現在 snapshot の各 entry を一度ずつ渡し、呼出し順は保証しない。
+削除済みや上書き済みの base、過去の transaction、コメント、未完了 tail も検査する。
+全 entry を追加で保持せず、局面の借用はコールバック中に限る。
+
+```rust,ignore
+let mut positions = 0_u64;
+book.validate_full_and_visit(
+    |entry, position| {
+        // entry と検証済みの position から、未完成の処理結果を構築する。
+        positions += 1;
+        Ok(())
+    },
+    |_| BookControl::Continue,
+)?;
+// 成功後に positions や構築した結果を確定する。
+```
+
+途中で entry が渡されても、メソッド全体が `Ok(())` を返すまでは結果を確定しない。
+後続の検証失敗、キャンセル、コールバックのエラーによる副作用の巻戻しは行わない。
+コールバックのエラーは変換せずに返し、後続の処理を中断する。
+進捗通知のキャンセルは `BookError::Cancelled` を返す。
+キー順の走査には `entries()` を使う。
+
 reader は wire version 4 だけを受理し、旧 v2 の magic `RSHOGIBK` と固定長 v3 の `RSSHGBK3` を拒否する。
 v2 は局面のハッシュしか持たず、盤面を復元できないため、v2 単独から変換できない。
 元の棋譜、DB2016、SBK、または局面を含む入力から v4 を再生成する。

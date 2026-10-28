@@ -2,6 +2,11 @@
 
 本章は圧縮配置の Native Book v4 と Python API を説明する。
 
+1.7.1 でも Python の公開 API は維持する。
+Rust の `BookDatabasePatch`、DB2016 / SBK の差分保存、`NativeBook::validate_full_and_visit()` は Python には公開しない。
+既存の `SbkBook.open()` と Native builder には Rust core の内部改善が適用される。
+変更範囲は [1.7.1 の変更内容](../getting-started/release-1.7.1.md)を参照。
+
 Native Book v4 と外部定跡の reader を利用できる。形式の詳細は [バイナリ仕様](../reference/formats/book.md) と [定跡アーキテクチャ](../reference/formats/book-architecture.md) を参照。
 
 ## Native Book v4
