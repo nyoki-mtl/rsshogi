@@ -2,54 +2,44 @@
 
 [![crates.io](https://img.shields.io/crates/v/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://crates.io/crates/rsshogi) [![docs.rs](https://img.shields.io/docsrs/rsshogi?style=flat-square&logo=rust&logoColor=white)](https://docs.rs/rsshogi) [![Documentation](https://img.shields.io/badge/docs-mdBook-1f6feb?style=flat-square&logo=readthedocs&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/) [![PyPI](https://img.shields.io/pypi/v/rsshogi?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/rsshogi/) [![Python](https://img.shields.io/pypi/pyversions/rsshogi?style=flat-square&logo=python&logoColor=white)](https://nyoki-mtl.github.io/rsshogi/getting-started/installation.html) [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/nyoki-mtl/rsshogi/blob/main/LICENSE)
 
-`rsshogi` は、将棋局面の表現、合法手生成、1 手詰め判定、棋譜や定跡の入出力、深層学習データの操作を行う MIT ライセンスの Rust ライブラリおよび Python パッケージである。
-
-1.7.1 は後方互換な機能追加と内部改善を含む。
-Rust の `NativeBook::validate_full_and_visit()` による完全検証と現在 snapshot の走査、および Native builder の重複検証削減を含む。
-DB2016 と SBK には、変更局面だけを保持して全体を逐次出力する Rust API を追加する。
-SBK open は全ファイルのバイト列を保持せず、局面索引と固定上限のキャッシュを使う。
-利用範囲と制約は [1.7.1 の変更内容](docs/book/src/getting-started/release-1.7.1.md) を参照。
+`rsshogi` は、将棋局面の表現、合法手生成、棋譜や定跡の入出力など、将棋のコア機能を提供する Rust ライブラリおよび Python パッケージです。
 
 ## インストール
 
 ### Rust
 
-`Cargo.toml` に追加する（Rust 1.95 以降が必要）。
+Rust 1.95 以降で、`Cargo.toml` に追加してください。
 
 ```toml
 [dependencies]
-rsshogi = "1.7.1"
+rsshogi = "1.7.2"
 ```
 
-デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみが有効になる。
-棋譜（`records`）、定跡（`book`）、Policy ラベル（`policy-labels`）、256-bit 局面圧縮（`position-serialization`）、SVG 出力（`svg`）、局面検証（`validation`）、128-bit Zobrist ハッシュ（`hash-128`）は Cargo の `features` で選択できる。
+デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみ有効になっています。
+棋譜（`records`）、定跡（`book`）、Policy ラベル（`policy-labels`）、256-bit 局面圧縮（`position-serialization`）、SVG 出力（`svg`）、局面検証（`validation`）、128-bit Zobrist ハッシュ（`hash-128`）機能を有効にする場合、Cargo の `features` で選択する必要があります。
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.7.1", features = ["records", "book"] }
+rsshogi = { version = "1.7.2", features = ["records", "book"] }
 ```
 
-各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照。
-
-1.7.0 は Rust に YBB の入出力、DB2016 の逐次出力、反転局面の生成、定跡の反転検索、履歴と設定を保持する `Position::clone_compact()` を追加する。
-Native Book 変換 API と `NativeBookBuilder` のエラー分類は破壊的変更を含むため、[1.7.0 への移行](docs/book/src/getting-started/migration-1.7.md) を参照。
-非推奨 API は 2.0.0 で削除予定であり、対象と移行方法は [移行ガイド](docs/book/src/getting-started/migration-1.6.md) を参照。
+各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照してください。
 
 ### Python
 
-Python 3.10 以降で利用できる。
+Python 3.10 以降に対応しています。
 
 ```console
 python -m pip install rsshogi
 ```
 
-AVX2 対応の x86_64 CPU 環境では最適化ビルドを選択できる。
+AVX2 対応の x86_64 CPU 環境では最適化ビルドを選択できます。
 
 ```console
 python -m pip install rsshogi-avx2
 ```
 
-どちらも `rsshogi` として import するため、同一環境には一方のみをインストールする。
+どちらも `rsshogi` として import するため、同一環境には一方のみをインストールしてください。
 
 ## クイックスタート
 
@@ -81,12 +71,9 @@ print(board.to_sfen())
 
 ## バージョン方針
 
-後方互換な機能追加、不具合修正、内部改善では patch を上げる。
-破壊的変更を含む公開では minor を上げる。
-たとえば、1.7.0 への互換な機能追加は 1.7.1、次の破壊的変更を含む公開は 1.8.0 とする。
-SemVer とは異なり、同じ major 内でも minor 間の互換性は保証しない。
-更新時は [CHANGELOG](CHANGELOG.md) と対象版の移行ガイドを確認する。
-既に 2.0.0 で削除すると告知した非推奨 API は、その移行予定を維持する。
+後方互換な機能追加や修正では patch、破壊的変更では minor を更新します。
+SemVer とは異なり、同じ major 内でも minor 間の互換性は保証しません。
+更新時は [CHANGELOG](CHANGELOG.md) と対象版の移行ガイドを確認してください。
 
 ## ドキュメントと変更履歴
 

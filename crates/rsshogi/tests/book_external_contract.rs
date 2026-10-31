@@ -21,6 +21,107 @@ fn temp_path(suffix: &str) -> PathBuf {
 }
 
 #[test]
+fn ybb_patch_save_shares_database_patch_and_progress_contract() {
+    use rsshogi::book::{
+        BookCandidate, BookControl, BookDatabaseEntry, BookDatabasePatch, BookEntryMetadata,
+        BookMoveMetadata, BookPatchWritePhase, BookPosition,
+    };
+    let path = temp_path("ybb-patch");
+    let position = hirate_position();
+    let mut writer =
+        YbbWriter::new(Cursor::new(Vec::new()), 1, YbbWriteOptions::new().with_depth(true))
+            .unwrap();
+    writer.write_entry(&YbbEntry::new(position.to_packed_sfen(), 1, vec![]).unwrap()).unwrap();
+    fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
+    let book = YbbBook::open_with_options(
+        &path,
+        YbbBookOpenOptions::new()
+            .with_storage_mode(YbbStorageMode::File)
+            .with_validation_mode(YbbValidationMode::OnAccess),
+    )
+    .unwrap();
+    let mut patch = BookDatabasePatch::new();
+    patch
+        .upsert_entry(BookDatabaseEntry::new(
+            BookPosition::from_position(&position, Some(0)),
+            vec![BookCandidate::new(
+                Move::from_usi("7g7f").unwrap(),
+                None,
+                Some(32767),
+                Some(0),
+                None,
+                None,
+                BookMoveMetadata::default(),
+            )],
+            BookEntryMetadata::default(),
+        ))
+        .unwrap();
+    let saved_patch = patch.clone();
+    let mut output = Cursor::new(Vec::new());
+    let mut phases = Vec::new();
+    book.write_ybb_with_patch_with_control(&mut output, &patch, |point| {
+        if phases.last() != Some(&point.phase()) {
+            phases.push(point.phase());
+        }
+        assert_eq!(point.total_positions(), Some(1));
+        BookControl::Continue
+    })
+    .unwrap();
+    assert_eq!(phases, [BookPatchWritePhase::Validating, BookPatchWritePhase::Writing]);
+    assert_eq!(patch, saved_patch);
+    let copy_path = temp_path("ybb-patch-copy");
+    fs::write(&copy_path, output.into_inner()).unwrap();
+    let saved = YbbBook::open(&copy_path).unwrap();
+    let entry = saved.lookup_packed_sfen(position.to_packed_sfen(), 0).unwrap().unwrap();
+    assert_eq!(entry.moves()[0].eval(), 32767);
+    assert_eq!(entry.moves()[0].depth(), Some(0));
+    patch.remove_entry_by_sfen(&position.to_sfen(Some(999))).unwrap();
+    let mut output = Cursor::new(Vec::new());
+    book.write_ybb_with_patch(&mut output, &patch).unwrap();
+    fs::write(&copy_path, output.into_inner()).unwrap();
+    assert_eq!(YbbBook::open(&copy_path).unwrap().len(), 0);
+    drop(book);
+    fs::remove_file(path).unwrap();
+    fs::remove_file(copy_path).unwrap();
+}
+
+#[test]
+fn ybb_diagnostics_and_matching_rows_are_available_without_losing_duplicates() {
+    use rsshogi::book::{BookControl, YbbDiagnostics, YbbMatchingEntries};
+    let path = temp_path("ybb-diagnostics");
+    let key = hirate_position().to_packed_sfen();
+    let mut writer = YbbWriter::new(Cursor::new(Vec::new()), 3, YbbWriteOptions::new()).unwrap();
+    for ply in [5, 1, 5] {
+        writer.write_entry(&YbbEntry::new(key, ply, vec![]).unwrap()).unwrap();
+    }
+    fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
+    let book = YbbBook::open_with_options(
+        &path,
+        YbbBookOpenOptions::new()
+            .with_storage_mode(YbbStorageMode::File)
+            .with_validation_mode(YbbValidationMode::OnAccess),
+    )
+    .unwrap();
+    let report: YbbDiagnostics =
+        book.diagnose_full_with_control(|_| BookControl::Continue).unwrap();
+    assert_eq!(
+        (
+            report.row_count(),
+            report.position_count(),
+            report.duplicate_position_count(),
+            report.duplicate_row_count(),
+            report.duplicate_ply_row_count(),
+            report.varying_ply_position_count()
+        ),
+        (3, 1, 1, 2, 1, 1)
+    );
+    let rows: YbbMatchingEntries<'_> = book.iter_entries_by_packed_sfen(key).unwrap();
+    assert_eq!(rows.map(|row| row.unwrap().ply()).collect::<Vec<_>>(), [5, 1, 5]);
+    drop(book);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn full_validation_can_visit_entries_with_the_validated_position() {
     use rsshogi::book::BookControl;
     let path = temp_path("visit.book");

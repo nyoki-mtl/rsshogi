@@ -3,6 +3,23 @@
 All notable changes to rsshogi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.2] - 2026-10-31
+
+### Added
+
+- `YbbBook::write_ybb_with_patch` と制御付き版を追加した。
+  既存の `BookDatabasePatch` を使い、一意キーの YBB を全件ロードせずに差分保存する。
+  出力前に元全行の構造とキー順、差分の表現可能性と合法手を検査し、元の depth 有無を保持する。
+  元行の局面復元と合法手の全件検査は行わず、永続化とファイル置換は呼び出し側が行う。
+- YBB の同一 PackedSfen 全行取得と、重複行や手数違いの全件診断を追加した。
+  診断は進捗通知とキャンセルに対応し、既存 lookup の行選択を変更しない。
+
+### Changed
+
+- `YbbWriter` の全索引保持を上限付きブロック出力へ変更した。
+  保存形式と重複行の順序を維持し、writer の追加メモリを全行数に比例させない。
+  所有 IR と Memory reader の保持領域は別途必要となる。
+
 ## [1.7.1] - 2026-10-28
 
 後方互換な機能追加、入力処理の修正と内部改善を含む。

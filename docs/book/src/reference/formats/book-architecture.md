@@ -11,18 +11,20 @@
 | 外部形式の参照 | `YaneuraOuBook` / `YbbBook` / `SbkBook` | 各形式の値と意味を保持する concrete reader |
 | YBB の出力 | `YbbWriter` / `BookDatabase::write_ybb` | 整列済み行の逐次出力、または所有 IR の検査とソート。情報破棄は明示指定 |
 | 変換用 IR | `BookDatabase` | SFEN と形式固有情報を持つ所有データ。全件ロードは明示的に行う |
-| 外部形式の差分保存 | `BookDatabasePatch` と各 reader の `write_*_with_patch` | 変更局面だけを所有し、DB2016 または SBK 全体を逐次出力する |
+| 外部形式の差分保存 | `BookDatabasePatch` と各 reader の `write_*_with_patch` | 変更局面だけを所有し、DB2016、SBK、YBB 全体を逐次出力する |
 
-DB2016 と SBK の差分保存は、元 reader の上に局面の置換と削除を重ねる。
-この差分保存 API は 1.7.1 で追加する Rust API であり、Python bindings には公開しない。
+外部形式の差分保存は、元 reader の上に局面の置換と削除を重ねる。
+差分保存は Rust API であり、Python bindings には公開しない。
 差分は手数を除いた正規化 SFEN で識別し、同じ局面への最後の操作を保持する。
 `upsert_entry` は候補手とメタデータを含む局面全体を置換するため、値の一部だけを変更する場合も、保持する内容を揃えて渡す。
 検索時は `BookDatabasePatch::edit_by_sfen` を先に確認し、`Upsert` を返し、`Delete` なら未登録とし、差分がなければ reader を検索する。
 差分保存は全文書の書き直しであり、Native Book の transaction 追記とは保存量が異なる。
 DB2016 のメモリは差分と最大局面行に、SBK は差分と局面索引と最大 state に比例する。
+YBB は差分と最大行と固定バッファに比例し、元の depth 有無を継承する。
+YBB の保存は元全行の構造、符号化、一意なキーの昇順を検査し、局面復元と合法手検査は追加と置換の行に行う。
 DB2016 は元局面の正規化 SFEN が厳密な昇順であることを要求する。
 SBK は保存前に全辺を検査し、既存 reader が参照用に受理する未解決 state や不整合を持つファイルでも、保存を拒否する場合がある。
-形式別の保持項目と拒否条件は [DB2016](yaneuraou.md#既存-db2016-の差分保存) と [SBK](sbk.md#5-既存-sbk-の差分保存) を参照。
+形式別の保持項目と拒否条件は [DB2016](yaneuraou.md#既存-db2016-の差分保存)、[SBK](sbk.md#5-既存-sbk-の差分保存)、[YBB](yaneuraou.md#既存-ybb-の差分保存) を参照。
 出力先には元ファイルと別の保存領域を渡し、処理中に元ファイルを変更してはいけない。
 成功時は flush するが、永続化とファイル置換は呼び出し側が行う。
 エラーやキャンセルでは部分出力が残り得るため、公開せず破棄する。

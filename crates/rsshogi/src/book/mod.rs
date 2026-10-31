@@ -31,6 +31,6 @@ pub use yaneuraou::{
     YaneuraOuBookEntry, YaneuraOuBookMove, YaneuraOuBookOpenOptions, YaneuraOuValidationProgress,
 };
 pub use ybb::{
-    YbbBook, YbbBookOpenOptions, YbbEntries, YbbEntry, YbbMove, YbbStorageMode, YbbValidationMode,
-    YbbValidationProgress, YbbWriteOptions, YbbWriter,
+    YbbBook, YbbBookOpenOptions, YbbDiagnostics, YbbEntries, YbbEntry, YbbMatchingEntries, YbbMove,
+    YbbStorageMode, YbbValidationMode, YbbValidationProgress, YbbWriteOptions, YbbWriter,
 };

@@ -82,7 +82,7 @@ pub(crate) fn validate_patch_entry(entry: &BookDatabaseEntry) -> Result<(), Book
 /// 編集保存で通知する処理段階。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BookPatchWritePhase {
-    /// SBK の保存前検査。準備走査中の処理済み件数は 0 のままとなる。
+    /// SBK または YBB の保存前検査。準備処理中の処理済み件数は 0 のままとなる。
     Validating,
     /// 符号化と逐次出力。
     Writing,
