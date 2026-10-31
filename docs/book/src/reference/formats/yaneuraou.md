@@ -194,6 +194,24 @@ callback には `YbbValidationProgress` を渡し、`processed_row_count()` と 
 開始時と各行の検査後に通知し、空の定跡でも開始時に通知する。
 `BookControl::Cancel` を返すと `BookError::Cancelled` で終了し、reader は引き続き利用できる。
 
+`diagnose_full()` は同じ構造検査に加え、重複行と手数違いを `YbbDiagnostics` に集計する。
+やねうら王との通常の相互運用は同じ PackedSfen が一意であることを前提とし、寛容な reader が重複を受理することとは区別する。
+通常の open や lookup で重複警告のための追加走査は行わない。
+`row_count()` は全行数、`position_count()` は異なるキー数、`duplicate_position_count()` は複数行を持つキー数である。
+`duplicate_row_count()` は各キーの先頭以外の行数、`duplicate_ply_row_count()` は同じキーと手数の先頭以外の行数を数える。
+`varying_ply_position_count()` は複数種類の手数を持つキー数を数える。
+手数 `[5, 1, 5]` の一群なら、順に 3、1、1、2、1、1 となる。
+候補手内容の一致は集計条件に含めない。
+`diagnose_full_with_control(callback)` は既存の `YbbValidationProgress` と `BookControl` を使い、開始時と各行検査後に通知する。
+失敗やキャンセルでは部分集計を返さず、正常終了時だけ全件の結果を返す。
+追加メモリは行数に比例せず、局面キーの正準性と候補手の合法性は検査しない。
+診断の成功は編集保存可能性の判定を意味しない。
+
+`iter_entries_by_packed_sfen(key)` は同じキーの全行を保存順に返し、全件をまとめて所有しない。
+手数違い、同一手数の重複、候補手順を保持し、`ignore_ply` と `flipped` は適用しない。
+該当なしは空 iterator、最初のエラーを返した後は終了する。
+索引が整列済みであることが前提であり、`OnAccess` で未検査の入力は全件検査か診断で整列を確認する。
+
 ### 全件走査と書き出し
 
 `YbbBook::iter_entries()` は `Iterator<Item = Result<YbbEntry, BookError>>` を返す。
@@ -219,8 +237,12 @@ callback には `YbbValidationProgress` を渡し、`processed_row_count()` と 
 既定の depth なし出力には全候補手に `None` を必要とし、不一致を暗黙に補正しない。
 予定行数の不一致、未整列入力、`flipped=true` の検索結果、候補手数の `u16` 超過はエラーになる。
 
-writer は候補手を逐次出力し、44バイト/行の索引だけをメモリに保持する。
-ファイルには `BufWriter<File>` を使って小さな書き込みをまとめる。
+writer は索引と候補手を通常それぞれ 64 KiB 以下のブロックにまとめ、各領域へ seek して出力する。
+単一行が大きい場合はその行を収める領域を使い、全索引は保持しない。
+writer の追加メモリは固定バッファと最大の単一行に比例し、行数に比例しない。
+Memory reader の保持領域や、所有 IR とソート領域は別に必要である。
+処理全体の行数比例の保持を避けるには `YbbStorageMode::File` とファイル出力を組み合わせる。
+`BufWriter<File>` は主に `finish` 時のヘッダーフィールドの小さな書き込みをまとめる。
 `finish` は索引とヘッダーを書き込み、出力末尾へ移動して flush し、出力先を返す。
 エラー後の writer は再利用できず、途中出力が残る場合がある。
 `finish` はディスクへの永続化や保存先の置換を保証しないため、必要なら呼び出し側で一時ファイルへの出力と置換を行う。
@@ -228,9 +250,11 @@ writer は候補手を逐次出力し、44バイト/行の索引だけをメモ�
 ```rust
 use std::fs::OpenOptions;
 use std::io::BufWriter;
-use rsshogi::book::{YbbBook, YbbWriteOptions, YbbWriter};
+use rsshogi::book::{YbbBook, YbbBookOpenOptions, YbbStorageMode, YbbWriteOptions, YbbWriter};
 
-let book = YbbBook::open("source.ybb")?;
+let book = YbbBook::open_with_options(
+    "source.ybb", YbbBookOpenOptions::new().with_storage_mode(YbbStorageMode::File),
+)?;
 let file = OpenOptions::new().write(true).create_new(true).open("copy.ybb")?;
 let options = YbbWriteOptions::new().with_depth(book.has_depth());
 let mut writer = YbbWriter::new(BufWriter::new(file), book.len(), options)?;
@@ -245,7 +269,8 @@ writer.finish()?;
 ### `BookDatabase` からの出力
 
 `BookDatabase::write_ybb(&mut output, &options)` は全行を検査し、キー順に出力する。
-ソート用のキーと参照、および writer の索引に O(局面数) の追加メモリを使い、全候補手を変換済みデータとして保持しない。
+ソート用のキーと参照に O(局面数) の追加メモリを使い、全候補手を変換済みデータとして保持しない。
+writer の全索引保持は不要だが、所有 IR とソートによる O(局面数) の領域は残る。
 所有 IR は正規化した局面を一意に扱うため、YBB の手数違いや重複行を保持して再出力する用途には `YbbBook::iter_entries()` と `YbbWriter` を使う。
 
 | 入力 | 出力契約 |
@@ -345,6 +370,61 @@ if let Some(entry) = ybb.lookup_position(&pos)? {
         println!("{} eval={} depth={:?}", mv.mv().to_usi(), mv.eval(), mv.depth());
     }
 }
+```
+
+## 既存 YBB の差分保存
+
+`YbbBook::write_ybb_with_patch(&mut output, &patch)` は `BookDatabasePatch` の局面全体の置換、追加、削除を PackedSfen の byte 順でマージする。
+入力は一意キーの厳密な昇順を要求する。
+手数を変更対象の識別に使わず、upsert の保存値として扱う。
+元にない削除は出力を変えず、全行削除では有効な空の YBB を出力する。
+削除キーも PackedSfen に変換できる SFEN を要求する。
+open や lookup の動作と検査方針は変更しない。
+
+全差分を検査してから、元全行の構造、範囲、候補手の符号化、キー順序を出力前に検査する。
+削除や置換の対象も復号し、構造破損を差分で隠さない。
+元キーは reader と同じバイト列として扱い、全元行の局面復元、正準性、候補手の一意性と合法性までは検査しない。
+元の行は、手数、候補手順、評価値、depth を保持する。
+追加と置換には一意かつ合法な候補手、明示手数と評価値を要求し、保存する数値は切り詰めない。
+
+depth 有無は元ファイルから継承する。
+depth ありなら各変更候補手に `Some(0..=65535)` を、depth なしなら `None` を要求する。
+手数の 0 と depth の 0 を保持し、欠落値の補完を行わない。
+ponder、weight、count、形式固有 metadata は、0 や空でも設定されていれば `BookError::InvalidData` で拒否する。
+情報破棄を許可する設定は設けない。
+
+出力は空で先頭に位置する `Write + Seek` を要求する。
+入力と出力は別の保存領域を使い、処理中は元ファイルを変更しない。
+file-backed reader とファイル出力を使えば、追加メモリは差分、最大行、固定バッファに比例し、全索引や全候補手を保持しない。
+領域配置と余剰バイトの一致は保証せず、候補手領域を詰め直す。
+
+`write_ybb_with_patch_with_control` は通常版の引数の後に callback を受け取り、既存の `BookPatchWriteProgress` と `BookControl` を使う。
+`Validating` で元全行と差分を検査して出力件数を求め、`Writing` で再走査して出力する。
+両段階の総数は元行数であり、処理数は段階切替時に 0 へ戻る。
+追加差分の処理中は処理済み元行数を据え置くため、全体の完了率ではない。
+段階開始時、各元行と追加差分の処理後、最終 finish 前に通知し、差分の準備中にも通知する。
+callback 中に reader のファイルロックを保持しない。
+単一行処理、ソート、finish 中までの中断は保証しない。
+
+事前検査の失敗とキャンセルでは出力へ write、seek、flush を行わない。
+書き込み開始後は部分出力が残り得る。
+差分と reader は成功時も失敗時も変更せず、新しい空の出力へ再試行できる。
+成功時は flush し、永続化とファイル置換は呼び出し側が行う。
+
+```rust,ignore
+use std::fs::OpenOptions;
+use std::io::BufWriter;
+use rsshogi::board::hirate_position;
+use rsshogi::book::{BookDatabasePatch, YbbBook, YbbBookOpenOptions, YbbStorageMode, YbbValidationMode};
+
+let source = YbbBook::open_with_options(
+    "source.ybb", YbbBookOpenOptions::new().with_storage_mode(YbbStorageMode::File)
+        .with_validation_mode(YbbValidationMode::OnAccess),
+)?;
+let mut patch = BookDatabasePatch::new();
+patch.remove_entry_by_sfen(&hirate_position().to_sfen(None))?;
+let file = OpenOptions::new().write(true).create_new(true).open("staged.ybb")?;
+source.write_ybb_with_patch(&mut BufWriter::new(file), &patch)?;
 ```
 
 ## 既存 DB2016 の差分保存
