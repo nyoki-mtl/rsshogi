@@ -3,6 +3,17 @@
 All notable changes to rsshogi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [1.7.3] - 2026-11-02
+
+### Changed
+
+- Native Book の CRC-32C 計算で、AArch64 の `crc` 拡張および x86_64 の SSE4.2 命令によるハードウェア更新に対応した。
+  未対応環境や Miri では従来の 256 要素テーブル実装にフォールバックし、保存形式と検証結果は変更しない。
+- AArch64 の NEON 対応環境では、利きの有無判定で歩、桂、銀系、金系の利きをまとめて処理する。
+  NEON 非対応環境や Miri ではスカラー実装を使う。
+
 ## [1.7.2] - 2026-10-31
 
 ### Added

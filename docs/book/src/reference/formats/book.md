@@ -147,8 +147,9 @@ CRCはCRC-32C（Castagnoli）とする。
 CRCは破損検出用であり、改ざん認証ではない。
 ヘッダーのCRCはopen時に必ず検証し、本体全体のCRCは完全検証とcompactionで検証する。
 開始ヘッダーのCRCも、payload長を使う前に必ず検証する。
-CRC 実装は `book` feature 内の private な portable table 方式とする。
-256要素のテーブルと逐次更新APIを用意し、独立したbit単位の参照計算と既知byte fixtureで照合する。
+CRC 実装は `book` feature 内の private な実装とし、外部クレートには依存しない。
+AArch64 の `crc` 拡張または x86_64 の SSE4.2 命令が利用できる環境ではハードウェア CRC-32C 命令で 8 バイト単位に更新し、それ以外の環境や Miri では 256 要素のテーブル方式へフォールバックする。
+逐次更新 API を用意し、テーブル実装、独立した bit 単位の参照計算および既知 byte fixture で照合する。
 CRC実装手段とwire規約は分離し、将来高速化しても保存byteを変えない。
 
 ### 2.2 ブロック索引と圧縮データ
