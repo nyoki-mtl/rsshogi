@@ -285,3 +285,30 @@ fn test_bitboard_operations_efficiency() {
     let not_all = !all;
     assert_eq!(not_all.count(), 0);
 }
+
+#[test]
+fn test_bitboard_count_matches_parts_and_const_eval() {
+    const CONST_ALL_COUNT: u32 = Bitboard::ALL.count();
+    const CONST_EMPTY_COUNT: u32 = Bitboard::EMPTY.count();
+    assert_eq!(CONST_ALL_COUNT, 81);
+    assert_eq!(CONST_EMPTY_COUNT, 0);
+
+    for raw in 0..81i8 {
+        let single = Bitboard::from_square(Square::new(raw));
+        assert_eq!(single.count(), 1);
+        assert_eq!(single.raw_bits().count_ones(), 1);
+        let complement = !single;
+        assert_eq!(complement.count(), 80);
+        assert_eq!(complement.raw_bits().count_ones(), 80);
+    }
+
+    // 1〜7 筋と 8〜9 筋の境界（index 62 と 63）を跨ぐ組み合わせを確認する。
+    let boundary = Bitboard::from_square(Square::new(0))
+        | Bitboard::from_square(Square::new(62))
+        | Bitboard::from_square(Square::new(63))
+        | Bitboard::from_square(Square::new(80));
+    let parts = boundary.parts();
+    assert_eq!(boundary.count(), parts[0].count_ones() + parts[1].count_ones());
+    assert_eq!(boundary.count(), boundary.raw_bits().count_ones());
+    assert_eq!(boundary.count(), 4);
+}

@@ -134,11 +134,56 @@ impl Position {
         let sq_idx = sq.to_index();
         let bb = self.bitboards();
         let ours = bb.color_pieces(us);
-        let step_attackers = (PAWN_ATTACKS[sq_idx][them.to_index()] & bb.pieces(PieceType::PAWN))
-            | (KNIGHT_ATTACKS[sq_idx][them.to_index()] & bb.pieces(PieceType::KNIGHT))
-            | (SILVER_ATTACKS[sq_idx][them.to_index()] & bb.silver_hdk())
-            | (GOLD_ATTACKS[sq_idx][them.to_index()] & bb.golds_hdk());
-        if !(step_attackers & ours).is_empty() {
+        #[cfg(all(not(miri), target_arch = "aarch64", target_feature = "neon"))]
+        let step_attacker_exists = {
+            use core::arch::aarch64::{
+                uint64x2_t, vandq_u64, vmaxvq_u32, vorrq_u64, vreinterpretq_u32_u64,
+            };
+            let load = |board: Bitboard| {
+                // SAFETY: 同じサイズの初期化済み整数配列と整数ベクトルである。
+                unsafe { core::mem::transmute::<[u64; 2], uint64x2_t>(board.parts()) }
+            };
+            // SAFETY: NEON 有効時だけコンパイルされ、整数ベクトルのみを扱う。
+            let attackers = unsafe {
+                vandq_u64(
+                    vorrq_u64(
+                        vorrq_u64(
+                            vandq_u64(
+                                load(PAWN_ATTACKS[sq_idx][them.to_index()]),
+                                load(bb.pieces(PieceType::PAWN)),
+                            ),
+                            vandq_u64(
+                                load(KNIGHT_ATTACKS[sq_idx][them.to_index()]),
+                                load(bb.pieces(PieceType::KNIGHT)),
+                            ),
+                        ),
+                        vorrq_u64(
+                            vandq_u64(
+                                load(SILVER_ATTACKS[sq_idx][them.to_index()]),
+                                load(bb.silver_hdk()),
+                            ),
+                            vandq_u64(
+                                load(GOLD_ATTACKS[sq_idx][them.to_index()]),
+                                load(bb.golds_hdk()),
+                            ),
+                        ),
+                    ),
+                    load(ours),
+                )
+            };
+            // SAFETY: 整数ベクトルの再解釈と最大値取得であり、NEON は有効である。
+            unsafe { vmaxvq_u32(vreinterpretq_u32_u64(attackers)) != 0 }
+        };
+        #[cfg(not(all(not(miri), target_arch = "aarch64", target_feature = "neon")))]
+        let step_attacker_exists = {
+            let step_attackers = (PAWN_ATTACKS[sq_idx][them.to_index()]
+                & bb.pieces(PieceType::PAWN))
+                | (KNIGHT_ATTACKS[sq_idx][them.to_index()] & bb.pieces(PieceType::KNIGHT))
+                | (SILVER_ATTACKS[sq_idx][them.to_index()] & bb.silver_hdk())
+                | (GOLD_ATTACKS[sq_idx][them.to_index()] & bb.golds_hdk());
+            !(step_attackers & ours).is_empty()
+        };
+        if step_attacker_exists {
             return true;
         }
 

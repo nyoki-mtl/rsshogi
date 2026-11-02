@@ -403,7 +403,7 @@ impl Bitboard {
         }
     }
 
-    /// 立っているビットの数を数える
+    /// 立っているビットの数を数える。
     #[inline]
     #[must_use]
     pub const fn count(&self) -> u32 {
