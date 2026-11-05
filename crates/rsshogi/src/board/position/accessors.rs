@@ -279,19 +279,28 @@ impl Position {
         self.current_cold().last_moved_piece_type()
     }
 
-    /// 現局面の繰り返し回数カウンタを返す。
+    /// 現局面と完全一致する過去局面の出現回数を返す。
+    ///
+    /// 持駒差の判定とは独立して数えるため、正の値でも [`Self::repetition_type`] は
+    /// `Superior` または `Inferior` になり得る。4 回目の判定には `is_repetition(3)` を使う。
     #[must_use]
     pub fn repetition_counter(&self) -> i32 {
         self.current_hot().repetition_counter
     }
 
-    /// 現局面の繰り返し検出距離を返す。
+    /// キャッシュの判定対象までの距離を返す。
+    ///
+    /// 優等・劣等の分類では、持駒が異なる候補までの距離を返す。
+    /// [`Self::repetition_counter`] が正でも、完全一致までの距離とは限らない。
+    /// 4 回目以降の完全一致では、その一致までの距離を負の値で返す。
     #[must_use]
     pub fn repetition_distance(&self) -> i32 {
         self.current_hot().repetition_distance
     }
 
-    /// 現局面の繰り返し回数（- 1）を返す。
+    /// 現局面と完全一致する過去局面の出現回数を返す。
+    ///
+    /// [`Self::repetition_counter`] と同じ値を返す。
     #[must_use]
     pub fn repetition_times(&self) -> i32 {
         self.current_hot().repetition_times()

@@ -11,4 +11,5 @@ mod drops;
 mod helpers;
 mod indexed_repetition;
 mod repetition;
+mod repetition_reference;
 mod split_legality;

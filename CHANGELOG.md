@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-11-06
+
+### Fixed
+
+- 同じ盤面・手番で持駒だけが異なる局面を挟む履歴で、対局や棋譜の千日手判定が完全一致の 4 回目を見落とす問題を修正した。
+  Rust の `is_repetition(3)` と `repetition_state()`、棋譜経路の判定、および Python の `Board` に適用される。
+  成立前の優等・劣等判定を維持し、完全一致の連続王手分類を独立して保持する。
+
 ## [1.7.3] - 2026-11-02
 
 ### Changed
@@ -806,7 +814,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.4...HEAD
+[1.7.4]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.3...v1.7.4
 [1.7.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.0...v1.5.1

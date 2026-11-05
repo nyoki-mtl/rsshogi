@@ -101,6 +101,32 @@ fn apply_and_undo_do_not_allocate() {
     });
 }
 
+fn hand_dominance_repetition_does_not_allocate() {
+    let gain = ["8h8i", "P*8g", "8i9i", "8g8h+", "9i8h", "2b1b", "8h7h", "1b1a", "7h8h", "1a2b"];
+    let lose = ["P*2c", "2b2a", "2c2b+", "2a2b"];
+    for indexed in [false, true] {
+        let mut pos = Position::from_sfen("9/7k1/9/9/9/9/9/1K7/9 b 2Pp 1").unwrap();
+        for usi in gain.iter().chain(&lose).cycle().take(41) {
+            let mv = pos.move32_from_move(rsshogi::types::Move::from_usi(usi).unwrap());
+            pos.try_apply_move32(mv).unwrap();
+        }
+        if indexed {
+            pos = pos.clone_for_search();
+        }
+        pos.prepare_search_state_capacity(1).unwrap();
+        let mv = pos.move32_from_move(rsshogi::types::Move::from_usi("2a2b").unwrap());
+        assert_no_allocation("hand dominance repetition", || {
+            pos.apply_move32(mv);
+            assert!(pos.is_repetition(3));
+            assert_eq!(
+                pos.cached_repetition_state_with_ply(0),
+                rsshogi::types::RepetitionState::Draw
+            );
+            pos.undo_move32(mv).unwrap();
+        });
+    }
+}
+
 #[allow(deprecated)] // 1.x の search null move で予約容量と clone 後の無確保契約を検査する。
 fn prepared_clone_keeps_allocation_free_capacity() {
     let mut source = hirate_position();
@@ -222,6 +248,7 @@ fn hot_paths_do_not_allocate() {
     move_generation_does_not_allocate();
     fresh_move_lists_live_on_the_stack();
     apply_and_undo_do_not_allocate();
+    hand_dominance_repetition_does_not_allocate();
     prepared_clone_keeps_allocation_free_capacity();
     prepared_normal_moves_do_not_allocate();
     clone_from_reuses_prepared_capacity();

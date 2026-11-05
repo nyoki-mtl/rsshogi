@@ -330,15 +330,12 @@ pub struct StateHot {
     /// 先手視点・手駒込みの駒割り評価値。
     pub(crate) material_value: i32,
 
-    /// 同一局面の登場回数（千日手検出用）
+    /// 過去の完全一致の出現回数。`repetition_times()` と共有する。
     pub(crate) repetition_counter: i32,
 
-    /// 同一局面までの距離（千日手検出用）
-    /// 4回目以降の繰り返しは負の値で表す。
+    /// 判定対象の過去局面までの距離。優等・劣等判定の距離も含む。
+    /// 完全一致が 4 回目以降の繰り返しは負の値で表す。
     pub(crate) repetition_distance: i32,
-
-    /// 同一局面の繰り返し回数 - 1
-    pub(crate) repetition_times: i32,
 
     /// null move からの手数
     pub(crate) plies_from_null: Ply,
@@ -355,6 +352,9 @@ pub struct StateHot {
 
     /// 千日手の状態（キャッシュ用）
     pub(crate) repetition_type: RepetitionState,
+
+    /// 持駒も一致する反復の分類。最寄りの優等・劣等判定から独立して保持する。
+    pub(crate) exact_repetition_type: RepetitionState,
 }
 
 impl Default for StateHot {
@@ -369,12 +369,12 @@ impl Default for StateHot {
             material_value: partial.material_value,
             repetition_counter: 0,
             repetition_distance: 0,
-            repetition_times: 0,
             plies_from_null: 0,
             tactical: TacticalCache::EMPTY,
             continuous_check: [0; Color::COUNT],
             hand: Hand::ZERO,
             repetition_type: RepetitionState::None,
+            exact_repetition_type: RepetitionState::None,
         }
     }
 }
@@ -427,7 +427,7 @@ impl StateHot {
     /// 同一局面の繰り返し回数 - 1 を返す。
     #[must_use]
     pub const fn repetition_times(&self) -> i32 {
-        self.repetition_times
+        self.repetition_counter
     }
 
     /// 千日手の状態（キャッシュ）を返す。
@@ -609,8 +609,8 @@ impl StateInfo {
         self.cold.undo.captured = Piece::NONE;
         self.hot.repetition_counter = 0;
         self.hot.repetition_distance = 0;
-        self.hot.repetition_times = 0;
         self.hot.repetition_type = RepetitionState::None;
+        self.hot.exact_repetition_type = RepetitionState::None;
     }
 
     #[inline(always)]
@@ -631,8 +631,8 @@ impl StateInfo {
         self.replace_tactical_cache(state.hot.tactical);
         self.hot.repetition_counter = state.hot.repetition_counter;
         self.hot.repetition_distance = state.hot.repetition_distance;
-        self.hot.repetition_times = state.hot.repetition_times;
         self.hot.repetition_type = state.hot.repetition_type;
+        self.hot.exact_repetition_type = state.hot.exact_repetition_type;
     }
 }
 
@@ -662,8 +662,17 @@ pub(crate) struct StateHotComputed {
     pub(crate) tactical: TacticalCache,
     pub(crate) repetition_counter: i32,
     pub(crate) repetition_distance: i32,
-    pub(crate) repetition_times: i32,
     pub(crate) repetition_type: RepetitionState,
+    pub(crate) exact_repetition_type: RepetitionState,
+}
+
+/// 完全一致の反復と、最寄りの探索用判定を分離した履歴キャッシュ。
+#[derive(Default)]
+pub(in crate::board) struct RepetitionInfo {
+    pub(in crate::board) times: i32,
+    pub(in crate::board) distance: i32,
+    pub(in crate::board) repetition_type: RepetitionState,
+    pub(in crate::board) exact_type: RepetitionState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

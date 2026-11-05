@@ -74,6 +74,7 @@ fn apply_null_move_initializes_null_specific_fields() {
     let mut pos = crate::board::hirate_position();
     // 一手指して captured 以外のフィールドが 0 でない可能性を作る
     apply_usi_move(&mut pos, "7g7f");
+    pos.state_stack_mut().current_mut().exact_repetition_type = crate::types::RepetitionState::Win;
 
     pos.apply_null_move().expect("null move from non-check is legal");
     let state = pos.current_state();
@@ -82,8 +83,9 @@ fn apply_null_move_initializes_null_specific_fields() {
     assert!(state.hot.tactical.checkers().is_empty());
     assert_eq!(state.repetition_counter, 0);
     assert_eq!(state.repetition_distance, 0);
-    assert_eq!(state.repetition_times, 0);
+    assert_eq!(state.repetition_times(), 0);
     assert_eq!(state.repetition_type, crate::types::RepetitionState::None);
+    assert_eq!(state.exact_repetition_type, crate::types::RepetitionState::None);
 }
 
 /// SFEN 経由で読み込んだ局面でも `apply_move32` は plies_from_null を carry-over する。
