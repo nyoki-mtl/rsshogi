@@ -417,8 +417,7 @@ impl Position {
     }
     // ANCHOR_END: position_drop_pawn_mate
 
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::board) fn compute_repetition_info_in_place(
+    pub(in crate::board) fn compute_repetition_info(
         &self,
         stack: &crate::board::state_info::StateStack,
         current_idx: crate::board::state_info::StateIndex,
@@ -426,26 +425,13 @@ impl Position {
         current_hand: Hand,
         current_continuous_check: [u16; 2],
         current_board_key: ZobristKey,
-        out_counter: &mut i32,
-        out_distance: &mut i32,
-        out_times: &mut i32,
-        out_type: &mut RepetitionState,
-    ) {
-        *out_counter = 0;
-        *out_distance = 0;
-        *out_times = 0;
-        *out_type = RepetitionState::None;
-
+    ) -> crate::board::state_info::RepetitionInfo {
+        let mut result = crate::board::state_info::RepetitionInfo::default();
         if plies_from_null < 4 {
-            return;
+            return result;
         }
 
         let limit = stack.repetition_scan_limit(current_idx, plies_from_null, current_board_key);
-        let mut repetition_counter: i32 = 0;
-        let mut repetition_distance: i32 = 0;
-        let mut repetition_times: i32 = 0;
-        let mut repetition_type = RepetitionState::None;
-
         let mut distance: Ply = 4;
 
         // 4手前から 2 手ずつ遡る（同一手番のみ比較）。
@@ -459,16 +445,9 @@ impl Position {
 
             if state.board_key == current_board_key {
                 if state.hand == current_hand {
-                    repetition_times = state.repetition_times + 1;
-                    repetition_counter = repetition_times;
-                    repetition_distance = if repetition_times >= 3 {
-                        -i32::from(distance)
-                    } else {
-                        i32::from(distance)
-                    };
-
+                    result.times = state.repetition_counter + 1;
                     let us = self.turn();
-                    repetition_type = if distance <= current_continuous_check[us.to_index()] {
+                    result.exact_type = if distance <= current_continuous_check[us.to_index()] {
                         RepetitionState::Lose
                     } else if distance <= current_continuous_check[us.flip().to_index()] {
                         RepetitionState::Win
@@ -476,22 +455,36 @@ impl Position {
                         RepetitionState::Draw
                     };
 
-                    if state.repetition_times > 0 && repetition_type != state.repetition_type {
-                        repetition_type = RepetitionState::Draw;
+                    if state.repetition_counter > 0
+                        && result.exact_type != state.exact_repetition_type
+                    {
+                        result.exact_type = RepetitionState::Draw;
+                    }
+                    // 成立前は最寄りの優等・劣等判定を保ち、成立した千日手だけを優先する。
+                    if result.repetition_type == RepetitionState::None || result.times >= 3 {
+                        result.repetition_type = result.exact_type;
+                        result.distance = if result.times >= 3 {
+                            -i32::from(distance)
+                        } else {
+                            i32::from(distance)
+                        };
                     }
                     break;
                 }
 
-                if Hand::is_equal_or_superior(current_hand, state.hand) {
-                    repetition_type = RepetitionState::Superior;
-                    repetition_distance = i32::from(distance);
-                    break;
+                // 最寄りの優劣候補を保持しながら、完全一致の履歴確認は続ける。
+                if result.repetition_type == RepetitionState::None
+                    && Hand::is_equal_or_superior(current_hand, state.hand)
+                {
+                    result.repetition_type = RepetitionState::Superior;
+                    result.distance = i32::from(distance);
                 }
 
-                if Hand::is_equal_or_superior(state.hand, current_hand) {
-                    repetition_type = RepetitionState::Inferior;
-                    repetition_distance = i32::from(distance);
-                    break;
+                if result.repetition_type == RepetitionState::None
+                    && Hand::is_equal_or_superior(state.hand, current_hand)
+                {
+                    result.repetition_type = RepetitionState::Inferior;
+                    result.distance = i32::from(distance);
                 }
             }
 
@@ -505,10 +498,7 @@ impl Position {
             distance = next_distance;
         }
 
-        *out_counter = repetition_counter;
-        *out_distance = repetition_distance;
-        *out_times = repetition_times;
-        *out_type = repetition_type;
+        result
     }
 
     // ANCHOR: position_is_repetition
@@ -590,7 +580,9 @@ impl Position {
                                 RepetitionState::Draw
                             };
 
-                        if state.repetition_times > 0 && repetition_type != state.repetition_type {
+                        if state.repetition_counter > 0
+                            && repetition_type != state.exact_repetition_type
+                        {
                             return Some((RepetitionState::Draw, distance));
                         }
 
@@ -638,6 +630,7 @@ impl Position {
     /// 千日手の詳細な状態を判定
     ///
     /// 同一局面の繰り返しを検出し、連続王手の千日手や優等/劣等局面も判定する。
+    /// 成立前は最寄りの優等/劣等局面を返し、4 回目の完全一致では千日手の分類を優先する。
     #[must_use]
     pub fn repetition_state(&self) -> RepetitionState {
         let stack = self.state_stack();

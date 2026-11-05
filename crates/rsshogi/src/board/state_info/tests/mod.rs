@@ -84,10 +84,11 @@ fn assert_state_info_matches(actual: &StateInfo, expected: &StateInfo) {
     assert_eq!(actual.continuous_check, expected.continuous_check);
     assert_eq!(actual.repetition_counter, expected.repetition_counter);
     assert_eq!(actual.repetition_distance, expected.repetition_distance);
-    assert_eq!(actual.repetition_times, expected.repetition_times);
+    assert_eq!(actual.repetition_times(), expected.repetition_times());
     assert_eq!(actual.plies_from_null, expected.plies_from_null);
     assert_eq!(actual.hand, expected.hand);
     assert_eq!(actual.repetition_type, expected.repetition_type);
+    assert_eq!(actual.exact_repetition_type, expected.exact_repetition_type);
     assert_eq!(actual.last_move(), expected.last_move());
     assert_eq!(actual.last_moved_piece_type(), expected.last_moved_piece_type());
 }
@@ -124,7 +125,7 @@ fn test_state_info_default() {
     assert_eq!(info.material_value, 0);
     assert_eq!(info.repetition_counter, 0);
     assert_eq!(info.repetition_distance, 0);
-    assert_eq!(info.repetition_times, 0);
+    assert_eq!(info.repetition_times(), 0);
     assert_eq!(info.plies_from_null, 0);
     assert_eq!(info.hot.tactical.checkers(), Bitboard::EMPTY);
     assert_eq!(info.hot.tactical.pinners(Color::BLACK), Bitboard::EMPTY);
@@ -145,7 +146,8 @@ fn test_state_info_default() {
 fn test_state_info_check_squares_layout() {
     assert_eq!(core::mem::size_of::<Bitboard>(), 16);
     assert_eq!(core::mem::size_of::<CheckSquares>(), 144);
-    assert!(core::mem::size_of::<StateInfo>() <= 384);
+    let max_state_size = if cfg!(feature = "hash-128") { 368 } else { 320 };
+    assert!(core::mem::size_of::<StateInfo>() <= max_state_size);
 }
 
 #[test]

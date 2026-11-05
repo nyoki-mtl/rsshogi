@@ -3,6 +3,118 @@ use super::*;
 use crate::types::{Color, HandPiece, PieceType, RepetitionState};
 
 #[test]
+fn test_hand_dominance_is_preserved_before_fourfold() {
+    let gain = ["8h8i", "P*8g", "8i9i", "8g8h+", "9i8h", "2b1b", "8h7h", "1b1a", "7h8h", "1a2b"];
+    let lose = ["P*2c", "2b2a", "2c2b+", "2a2b"];
+    for (hand, first, second, dominance) in [
+        ("2Pp", gain.as_slice(), lose.as_slice(), RepetitionState::Inferior),
+        ("3P", lose.as_slice(), gain.as_slice(), RepetitionState::Superior),
+    ] {
+        for indexed in [false, true] {
+            let mut pos =
+                crate::board::position_from_sfen(&format!("9/7k1/9/9/9/9/9/1K7/9 b {hand} 1"))
+                    .unwrap();
+            for repeat in 1..=2 {
+                if indexed {
+                    pos = pos.clone_for_search();
+                }
+                for usi in first.iter().chain(second) {
+                    let mv = move_from_usi(&pos, usi);
+                    pos.try_apply_move32(mv).unwrap();
+                }
+                assert_eq!(pos.repetition_times(), repeat);
+                assert_eq!(pos.repetition_counter(), repeat);
+                assert!(!pos.is_repetition(3));
+                assert_eq!(pos.repetition_type(), dominance);
+                assert_eq!(pos.repetition_state(), dominance);
+                assert_eq!(pos.repetition_state_with_ply(0), RepetitionState::None);
+                assert_eq!(pos.repetition_distance(), second.len() as i32);
+                assert_eq!(
+                    pos.cached_repetition_state_with_ply(second.len()),
+                    RepetitionState::None
+                );
+                assert_eq!(pos.cached_repetition_state_with_ply(second.len() + 1), dominance);
+                assert_eq!(pos.repetition_state_with_ply(second.len()), dominance);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_perpetual_check_uses_exact_classification_beside_hand_dominance() {
+    for (offset, expected) in [(0, RepetitionState::Lose), (1, RepetitionState::Win)] {
+        for mixed in [false, true] {
+            let mut pos =
+                crate::board::position_from_sfen("g3k4/9/4S4/9/9/9/9/9/8K b - 1").unwrap();
+            let cycle = ["5c4b", "5a5b", "4b5c", "5b5a"];
+            for ply in 1..=12 + offset {
+                apply_usi_move(&mut pos, cycle[(ply - 1) % 4]);
+                if ply == 8 + offset {
+                    // 公開分類と完全一致の分類が異なる state を合成し、参照先を分離して検査する。
+                    let state = pos.state_stack_mut().current_mut();
+                    state.repetition_type = RepetitionState::Inferior;
+                    if mixed {
+                        state.exact_repetition_type = RepetitionState::Draw;
+                    }
+                }
+            }
+            let expected = if mixed { RepetitionState::Draw } else { expected };
+            assert_eq!(pos.repetition_state(), expected);
+            assert_eq!(pos.cached_repetition_state_with_ply(0), expected);
+            assert_eq!(pos.repetition_state_with_distance(4), Some((expected, 4)));
+        }
+    }
+}
+
+#[test]
+fn test_fourfold_repetition_across_hand_dominance() {
+    let cycle = ["8h9h", "2b1b", "9h8h", "1b2b"];
+    let gain = ["8h8i", "P*8g", "8i9i", "8g8h+", "9i8h", "2b1b", "8h7h", "1b1a", "7h8h", "1a2b"];
+    let lose = ["P*2c", "2b2a", "2c2b+", "2a2b"];
+    for (hand, first, second, dominance) in [
+        ("2Pp", gain.as_slice(), lose.as_slice(), RepetitionState::Inferior),
+        ("3P", lose.as_slice(), gain.as_slice(), RepetitionState::Superior),
+    ] {
+        for ordinary_repeats in 0..=2 {
+            let transfer_cycle = [first, second].concat();
+            let sequence =
+                [cycle.repeat(ordinary_repeats), transfer_cycle.repeat(3 - ordinary_repeats)]
+                    .concat();
+            // 根の前後の両方に持駒差と完全一致を配置し、索引付き走査も検査する。
+            for split in 0..=sequence.len() {
+                let sfen = format!("9/7k1/9/9/9/9/9/1K7/9 b {hand} 1");
+                let mut pos = crate::board::position_from_sfen(&sfen).unwrap();
+                let initial_key = pos.key();
+                for (ply, usi) in sequence.iter().enumerate() {
+                    if ply == split {
+                        pos = pos.clone_for_search();
+                    }
+                    let mv = move_from_usi(&pos, usi);
+                    pos.try_apply_move32(mv).unwrap();
+                }
+                if split == sequence.len() {
+                    pos = pos.clone_for_search();
+                }
+                assert_eq!(pos.key(), initial_key);
+                assert_eq!(pos.repetition_times(), 3);
+                assert_eq!(pos.repetition_counter(), 3);
+                assert_eq!(pos.repetition_distance(), -14);
+                assert!(pos.is_repetition(3));
+                assert_eq!(pos.repetition_state(), RepetitionState::Draw);
+                assert_eq!(pos.repetition_state_with_ply(0), RepetitionState::Draw);
+                assert_eq!(pos.cached_repetition_state_with_ply(0), RepetitionState::Draw);
+                // 距離付き API は、窓内の最も近い持駒差を引き続き返す。
+                assert_eq!(pos.repetition_state_with_distance(0), None);
+                assert_eq!(
+                    pos.repetition_state_with_distance(100),
+                    Some((dominance, second.len()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 // StateStack初期化時にrepetition_counterとplies_from_nullが0で始まることを確認
 fn test_repetition_state_initializes_to_zero() {
     let pos = crate::board::hirate_position();
@@ -585,8 +697,9 @@ fn test_repetition_state_with_distance_returns_draw_for_mixed_classification() {
     }
     let matched_index = pos.st_index - 4;
     let past = pos.state_stack_mut().get_mut(matched_index);
-    past.repetition_times = 1;
+    past.repetition_counter = 1;
     past.repetition_type = RepetitionState::Win;
+    past.exact_repetition_type = RepetitionState::Win;
 
     assert_eq!(pos.repetition_state_with_distance(4), Some((RepetitionState::Draw, 4)));
 }

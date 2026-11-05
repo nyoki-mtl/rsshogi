@@ -55,10 +55,11 @@ null move より前の保持履歴も残し、保持範囲内の undo と再分�
 ## 2. `StateHot` と `StateColdPayload`（`UndoPayload`）の分離
 
 1 つの局面状態を表す `StateInfo` は、探索ノードごとに毎回アクセスされる **ホットデータ（`StateHot`）** と、指し手を巻き戻す（`undo_move32`）ときや直前手を参照するときにしか使われない **コールドデータ（`StateColdPayload`）** に内部構造を分離している。
+以下は内部型の構造であり、外部からの履歴参照には `Position::state_history()` が返す view を使う。
 
 ```rust
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct StateInfo {
+#[derive(Clone, Debug)]
+pub struct StateInfo {
     pub(crate) cold: StateColdPayload,
     pub(crate) hot: StateHot,
 }
@@ -70,20 +71,26 @@ pub(crate) struct StateInfo {
 | :--- | :--- | :--- | :--- |
 | **`StateHot`** | `key` | `ZobristKey` | 手番と持ち駒を含む局面全体の完全 Zobrist ハッシュ（毎ノード参照）。 |
 | **`StateHot`** | `board_key` | `ZobristKey` | 盤上の駒配置と手番のみのハッシュ（同一盤面の優劣比較や千日手検査で毎ノード参照）。 |
-| **`StateHot`** | `partial_keys` | `PartialKeys` | 歩ハッシュ `pawn` と歩以外の駒割ハッシュ `non_pawn_material: [ZobristKey; 2]`。 |
-| **`StateHot`** | `repetition_count` | `u8` | 同一局面が出現した回数（千日手判定用）。 |
-| **`StateHot`** | `repetition_ply` | `u16` | 前回同一局面が出現した時点からの経過手数。 |
+| **`StateHot`** | `pawn_key`、`minor_piece_key`、`non_pawn_key` | `ZobristKey`、`ZobristKey`、`[ZobristKey; 2]` | 歩、小駒、色別の歩以外の盤上駒の部分ハッシュ。`partial_keys()` からまとめて参照できる。 |
+| **`StateHot`** | `material_value` | `i32` | 先手視点の手駒を含む駒割り評価値。 |
+| **`StateHot`** | `repetition_counter` | `i32` | 過去の完全一致の出現回数。`repetition_times()` もこの値を返す。 |
+| **`StateHot`** | `repetition_distance` | `i32` | 判定対象の過去局面までの距離。成立した千日手の完全一致距離は負で保持する。 |
 | **`StateHot`** | `plies_from_null` | `u16` | 直近の初期局面または Null Move からの連続手数（履歴遡及の上限）。 |
 | **`StateHot`** | `tactical` | `TacticalCache` | 王手駒、絶対ピン、ピンナー、および王手可能マス（指し手生成と合法性検査で毎ノード参照）。 |
-| **`StateHot`** | `continuous_check` | `[u8; 2]` | 先後それぞれの連続王手回数（連続王手の千日手判定用）。 |
+| **`StateHot`** | `continuous_check` | `[u16; 2]` | 先後それぞれの連続王手の継続手数（連続王手の千日手判定用）。 |
 | **`StateHot`** | `hand` | `Hand` | 現手番側の持ち駒スナップショット（千日手遡及時の優劣比較用）。 |
 | **`StateHot`** | `repetition_type` | `RepetitionState` | 現局面の千日手および優劣判定結果キャッシュ。 |
-| **`StateColdPayload`** | `captured` | `Piece` | 直前の手で捕獲された駒（`undo_move32` で盤面に戻す際にのみ参照）。 |
-| **`StateColdPayload`** | `last_move` | `Move` | 直前に指された 16 ビット指し手。 |
-| **`StateColdPayload`** | `last_moved_piece_type` | `PieceType` | 直前に移動または打たれた後の駒種。 |
+| **`StateHot`** | `exact_repetition_type` | `RepetitionState` | 最寄りの優劣判定から分離した、完全一致の連続王手分類。 |
+| **`StateColdPayload`** | `undo.captured` | `Piece` | 直前の手で捕獲された駒（`undo_move32` で盤面に戻す際に参照）。 |
+| **`StateColdPayload`** | `undo.last_move` | `Move32` | 直前に指された駒情報付きの指し手。 |
+| **`StateColdPayload`** | `undo.last_moved_piece_type` | `PieceType` | 直前の手で移動する前の駒種。駒打ちの場合は打った駒種。 |
 
-`apply_move32` で新しい `StateInfo` を構築する際、まず `StateStack::push_Prepared` によって前局面の `hot` から新しい `hot` の骨格を引き継ぎ、捕獲駒や直前手をまとめた `UndoPayload`（`StateColdPayload`）は一括代入で書き込む。
+`apply_move32` で新しい `StateInfo` を構築する際、まず `StateStack::prepare_next_for_move` によって前局面から必要な情報だけを引き継ぎ、計算した `StateHotComputed` と捕獲駒や直前手をまとめた `UndoPayload` を書き込む。
 このようにアクセス頻度の異なるフィールドを構造体レベルで分離することで、キャッシュラインの利用効率とコードの見通しを高めている。
+
+完全一致の回数と分類を独立して保持することで、優等または劣等の候補が近くにあっても、古い完全一致から反復回数を継承できる。
+最寄りの優等または劣等の候補は保持したまま、完全一致を探して走査を続ける。
+null move では反復の回数、距離と分類をリセットする。
 
 ---
 

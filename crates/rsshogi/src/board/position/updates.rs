@@ -426,24 +426,18 @@ impl Position {
         // continuous_check と plies_from_null の更新
         let hand_them = self.hand(them);
 
-        let mut repetition_counter = 0;
-        let mut repetition_distance = 0;
-        let mut repetition_times = 0;
-        let mut repetition_type = crate::types::RepetitionState::None;
-        if new_plies_from_null >= 4 {
-            self.compute_repetition_info_in_place(
+        let repetition = if new_plies_from_null >= 4 {
+            self.compute_repetition_info(
                 self.state_stack(),
                 state_idx,
                 new_plies_from_null,
                 hand_them,
                 new_continuous_check,
                 board_key,
-                &mut repetition_counter,
-                &mut repetition_distance,
-                &mut repetition_times,
-                &mut repetition_type,
-            );
-        }
+            )
+        } else {
+            crate::board::state_info::RepetitionInfo::default()
+        };
 
         let (black_blockers, black_pinners) = self.compute_slider_info_for::<true>();
         let (white_blockers, white_pinners) = self.compute_slider_info_for::<false>();
@@ -504,10 +498,10 @@ impl Position {
                         [black_blockers, white_blockers],
                         check_squares,
                     ),
-                    repetition_counter,
-                    repetition_distance,
-                    repetition_times,
-                    repetition_type,
+                    repetition_counter: repetition.times,
+                    repetition_distance: repetition.distance,
+                    repetition_type: repetition.repetition_type,
+                    exact_repetition_type: repetition.exact_type,
                 },
                 cold: StateColdPayload {
                     undo: UndoPayload::new(captured, mv, last_moved_piece_type),

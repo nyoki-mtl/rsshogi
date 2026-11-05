@@ -16,6 +16,10 @@ fn assert_same_repetition(plain: &Position, indexed: &Position) {
     assert_eq!(plain.repetition_distance(), indexed.repetition_distance());
     assert_eq!(plain.repetition_times(), indexed.repetition_times());
     assert_eq!(plain.repetition_type(), indexed.repetition_type());
+    assert_eq!(
+        plain.current_hot().exact_repetition_type,
+        indexed.current_hot().exact_repetition_type
+    );
     assert_eq!(plain.repetition_state(), indexed.repetition_state());
     for ply in [0, 3, 4, 8, 16, 64, usize::MAX] {
         assert_eq!(

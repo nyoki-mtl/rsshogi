@@ -309,10 +309,14 @@ if board.is_legal_move(candidate):
 | `is_in_check()` | なし | `bool` | 現在手番の玉に王手がかかっていれば `True` を返す。 |
 | `is_mated()` | なし | `bool` | 現在局面が詰み（王手がかかっており合法手が 0 件）であれば `True` を返す。 |
 | `repetition_state()` | なし | `RepetitionState` | 現在局面の千日手および優劣局面判定を `RepetitionState` で返す。 |
-| `is_repetition(threshold=3)` | `threshold: int = 3` | `bool` | 同一局面の出現回数が `threshold` 回以上であれば `True` を返す。 |
+| `is_repetition(threshold=3)` | `threshold: int = 3` | `bool` | 現局面と完全一致する過去局面が `threshold` 回以上あれば `True` を返す。既定値の `3` は現局面を含む 4 回目に対応する。 |
 | `can_declare_win()` | なし | `bool` | 現在手番が入玉宣言勝ちの条件を満たしていれば `True` を返す。 |
 | `evaluate_declaration()` | なし | `dict[str, Any]` | 入玉宣言勝ちの判定結果と内訳を辞書で返す。 |
 | `solve_mate_in_one()` | なし | `Move32 \| None` | 現在局面に 1 手詰めが存在すればその詰め手を `Move32` で返し、存在しなければ `None` を返す。 |
+
+持駒が異なる同一盤面が履歴に挟まっても、完全一致の反復回数を数える。
+`repetition_state()` は 4 回目の完全一致で通常の千日手または連続王手の千日手を返し、成立前は優等または劣等の判定も返し得る。
+千日手判定には指し手を適用して保持した履歴を使うため、現在の SFEN だけを読み込んでも過去の反復は復元されない。
 
 ### `evaluate_declaration()` の戻り値スキーマ
 

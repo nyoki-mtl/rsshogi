@@ -10,6 +10,7 @@
 - [インストール](getting-started/installation.md)
 - [クイックスタート](getting-started/quickstart.md)
 - [実践レシピ集](getting-started/examples.md)
+- [1.7.4 の変更内容](getting-started/release-1.7.4.md)
 - [1.7.3 の変更内容](getting-started/release-1.7.3.md)
 - [1.7.2 の変更内容](getting-started/release-1.7.2.md)
 - [1.7.1 の変更内容](getting-started/release-1.7.1.md)
