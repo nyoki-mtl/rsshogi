@@ -1072,12 +1072,29 @@ impl BookDatabase {
         let mut entries = Vec::with_capacity(self.len());
         for entry in self.entries() {
             let converted = database_ybb_entry(entry, *options)?;
-            entries.push((converted.packed_sfen, entry));
+            entries.push((converted.packed_sfen, converted.ply, entry));
         }
         entries.sort_by(|left, right| left.0.cmp_bytes(&right.0));
         let mut writer = YbbWriter::new(output, self.len() as u64, *options)?;
-        for (_, entry) in entries {
-            writer.write_entry(&database_ybb_entry(entry, *options)?)?;
+        let mut moves = Vec::new();
+        for (packed_sfen, ply, entry) in entries {
+            // 不変の入力は出力開始前に検証済み。局面解析と合法手検査を繰り返さない。
+            moves.clear();
+            moves.extend(entry.candidates().iter().map(|candidate| {
+                YbbMove {
+                    mv: candidate.mv(),
+                    raw_move: candidate.mv().raw(),
+                    eval: i16::try_from(candidate.score().expect("validated YBB score"))
+                        .expect("validated YBB score range"),
+                    depth: options.has_depth.then(|| {
+                        u16::try_from(candidate.depth().expect("validated YBB depth"))
+                            .expect("validated YBB depth range")
+                    }),
+                }
+            }));
+            let row = YbbEntry { packed_sfen, ply, flipped: false, moves };
+            writer.write_entry(&row)?;
+            moves = row.moves;
         }
         writer.finish()?;
         Ok(())

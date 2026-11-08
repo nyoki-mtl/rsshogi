@@ -1,5 +1,50 @@
 use super::*;
 
+#[test]
+fn builder_and_visit_reset_reused_position_across_hands_turns_and_checks() {
+    let directory = Directory::new();
+    let path = directory.path("reused-position.book");
+    let fixtures = [
+        ("4k4/9/9/9/9/9/9/9/4K4 b R2P 77", "R*5b"),
+        ("4k4/9/4R4/9/9/9/9/9/4K4 w P 88", "5a4a"),
+        ("4k4/9/9/9/9/9/9/9/4K4 w r2p 101", "R*4h"),
+        ("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 9", "7g7f"),
+    ];
+    let mut expected = BTreeMap::new();
+    let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default())
+        .unwrap()
+        .with_block_positions(1)
+        .unwrap();
+    for (sfen, usi) in fixtures {
+        let position = Position::from_sfen(sfen).unwrap();
+        let mv = Move::from_usi(usi).unwrap();
+        let entry =
+            NativeBookEntry::from_position(&position, vec![NativeCandidate::new(mv)]).unwrap();
+        expected.insert(entry.key, position);
+        builder.push(NativeBookPosition::new(entry)).unwrap();
+    }
+    builder.finish().unwrap();
+    let book = NativeBook::open(&path).unwrap();
+    let mut visited = 0;
+    book.validate_full_and_visit(
+        |entry, position| {
+            let original = &expected[&entry.key];
+            assert_eq!(position.to_sfen(Some(1)), original.to_sfen(Some(1)));
+            assert_eq!(position.key(), original.key());
+            assert_eq!(position.checkers(), original.checkers());
+            assert_eq!(position.game_ply(), 1);
+            for candidate in entry.candidates {
+                assert!(position.is_legal_move(candidate.mv));
+            }
+            visited += 1;
+            Ok(())
+        },
+        |_| BookControl::Continue,
+    )
+    .unwrap();
+    assert_eq!(visited, expected.len());
+}
+
 fn visit_entries(book: &NativeBook) -> Result<BTreeMap<[u8; 32], NativeBookEntry>, BookError> {
     let mut entries = BTreeMap::new();
     book.validate_full_and_visit(
@@ -201,7 +246,7 @@ fn profiling_and_validated_writer_preserve_saved_bytes() {
     super::super::profile::start();
     create(&profiled);
     let phases = super::super::profile::finish();
-    assert_eq!(phases["snapshot_decode_validate"].units, 1);
+    assert_eq!(phases["snapshot_decode_fields"].units, 1);
     assert!(!phases.contains_key("writer_normalize"));
     let direct = directory.path("direct.book");
     let book = NativeBook::open(&plain).unwrap();

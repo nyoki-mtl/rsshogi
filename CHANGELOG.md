@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-11-08
+
+### Changed
+
+- Native builder の入力検証と reader の全件検証で検証用 Position を再利用し、局面ごとの履歴領域の確保と初期化を削減した。
+  正準形、候補の合法性と公開前の完全検証は維持する。
+- Native builder の中間 run では構造と符号化条件の検査を行い、盤面と合法手の再検証を完成本体の完全検証へ集約した。
+  入力時の検証と公開直前の完全検証、原子的公開は維持し、保存形式と公開 API は変更しない。
+- DB2016 の全件保存と差分保存で、重複する文字列化、未変更行の局面再構築、不要な PackedSfen 生成と一時確保を削減した。
+- YBB の全件保存では出力前の検証結果を再利用し、出力時の局面再解析と合法手の再検査を省いた。
+  差分保存も変更行の変換結果を再利用するため、大量の変更では追加メモリと引き換えに保存時間を短縮する。
+- SBK の全件保存で全局面の `Position` 保持と候補ごとの clone をやめ、全出力バイト列を保持せずブロック単位で書き出す。
+  `to_sbk_bytes()` は従来どおり全バイト列を返す。差分保存でも出力バッファを再利用する。
+
+保存形式、候補順、メタデータ、入力の検証と失敗時の契約、および既存の公開 API は維持する。
+Python の公開 API の追加はない。
+持駒差を挟む履歴の千日手判定修正は 1.7.4 で公開済みであり、今回の新規修正には含めない。
+
 ## [1.7.4] - 2026-11-06
 
 ### Fixed
@@ -814,7 +832,8 @@ identical to 1.0.0.
 
 - The standard and AVX2 Python distributions are mutually exclusive because both provide the same import package.
 
-[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.4...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.5...HEAD
+[1.7.5]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.4...v1.7.5
 [1.7.4]: https://github.com/nyoki-mtl/rsshogi/compare/v1.7.3...v1.7.4
 [1.7.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/nyoki-mtl/rsshogi/compare/v1.5.1...v1.6.0

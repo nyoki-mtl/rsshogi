@@ -65,18 +65,21 @@ impl YbbBook {
         let mut edits = Vec::with_capacity(patch.entries.len());
         let options = YbbWriteOptions::new().with_depth(self.has_depth);
         for (sfen, edit) in &patch.entries {
-            let position = match edit {
+            let (key, entry) = match edit {
                 BookDatabaseEdit::Upsert(entry) => {
                     validate_patch_entry(entry)?;
-                    database_ybb_entry(entry, options)?;
-                    entry.position().clone()
+                    let converted = database_ybb_entry(entry, options)?;
+                    (converted.packed_sfen, Some(converted))
                 }
-                BookDatabaseEdit::Delete => BookPosition::from_sfen(sfen, None)?,
+                BookDatabaseEdit::Delete => {
+                    let position = BookPosition::from_sfen(sfen, None)?;
+                    let key = position.packed_sfen().ok_or_else(|| {
+                        BookError::InvalidData(format!("unencodable YBB patch position: {sfen}"))
+                    })?;
+                    (key, None)
+                }
             };
-            let key = position.packed_sfen().ok_or_else(|| {
-                BookError::InvalidData(format!("unencodable YBB patch position: {sfen}"))
-            })?;
-            edits.push(Edit { key, edit });
+            edits.push(Edit { key, entry });
             progress.notify(&mut control)?;
         }
         edits.sort_by(|a, b| a.key.cmp_bytes(&b.key));
@@ -119,9 +122,9 @@ impl YbbBook {
     }
 }
 
-struct Edit<'a> {
+struct Edit {
     key: PackedSfen,
-    edit: &'a BookDatabaseEdit,
+    entry: Option<YbbEntry>,
 }
 
 fn size_overflow() -> BookError {
@@ -139,22 +142,21 @@ fn key_description(key: PackedSfen) -> String {
 
 fn merge(
     book: &YbbBook,
-    edits: &[Edit<'_>],
+    edits: &[Edit],
     progress: &mut BookPatchWriteProgress,
     control: &mut impl FnMut(BookPatchWriteProgress) -> BookControl,
     mut visit: impl FnMut(&YbbEntry) -> Result<(), BookError>,
 ) -> Result<(), BookError> {
     let mut edits = edits.iter().peekable();
-    let options = YbbWriteOptions::new().with_depth(book.has_depth);
     for source in (StrictEntries { entries: book.iter_entries() }) {
         // 削除・置換される行も復号し、構造破損を差分で隠さない。
         let source = source?;
         while edits.peek().is_some_and(|edit| edit.key.cmp_bytes(&source.packed_sfen).is_lt()) {
-            emit(edits.next().expect("peeked edit").edit, options, &mut visit)?;
+            emit(edits.next().expect("peeked edit"), &mut visit)?;
             progress.notify(control)?;
         }
         if edits.peek().is_some_and(|edit| edit.key == source.packed_sfen) {
-            emit(edits.next().expect("peeked edit").edit, options, &mut visit)?;
+            emit(edits.next().expect("peeked edit"), &mut visit)?;
         } else {
             visit(&source)?;
         }
@@ -162,19 +164,18 @@ fn merge(
         progress.notify(control)?;
     }
     for edit in edits {
-        emit(edit.edit, options, &mut visit)?;
+        emit(edit, &mut visit)?;
         progress.notify(control)?;
     }
     Ok(())
 }
 
 fn emit(
-    edit: &BookDatabaseEdit,
-    options: YbbWriteOptions,
+    edit: &Edit,
     visit: &mut impl FnMut(&YbbEntry) -> Result<(), BookError>,
 ) -> Result<(), BookError> {
-    if let BookDatabaseEdit::Upsert(entry) = edit {
-        visit(&database_ybb_entry(entry, options)?)?;
+    if let Some(entry) = &edit.entry {
+        visit(entry)?;
     }
     Ok(())
 }

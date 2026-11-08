@@ -469,6 +469,17 @@ impl NativeBook {
         index: u64,
         key: [u8; 32],
     ) -> Result<(NativeBookEntry, Position), BookError> {
+        let mut position = Position::empty();
+        let entry = self.base_entry_reusing_position(index, key, &mut position)?;
+        Ok((entry, position))
+    }
+
+    fn base_entry_reusing_position(
+        &self,
+        index: u64,
+        key: [u8; 32],
+        position: &mut Position,
+    ) -> Result<NativeBookEntry, BookError> {
         let size = u64::from(self.header.block_positions);
         self.with_block((index / size) as usize, |entries| {
             let entry = entries
@@ -476,8 +487,8 @@ impl NativeBook {
                 .filter(|entry| entry.key == key)
                 .cloned()
                 .ok_or_else(|| invalid("invalid native position index"))?;
-            let position = entry.validate_with_position()?;
-            Ok((entry, position))
+            entry.validate_reusing_position(position)?;
+            Ok(entry)
         })
     }
 
@@ -849,12 +860,13 @@ impl NativeBook {
         }
         let mut previous = None;
         let mut moves = 0u64;
+        let mut position = Position::empty();
         for index in 0..self.header.node_count {
             let key = self.base_key(index)?;
             if previous.is_some_and(|previous| previous >= key) {
                 return Err(invalid("base keys not strictly sorted"));
             }
-            let (entry, position) = self.base_entry_with_position(index, key)?;
+            let entry = self.base_entry_reusing_position(index, key, &mut position)?;
             moves = add(moves, entry.candidates.len() as u64)?;
             if !self.delta.contains_key(&key) {
                 visit(entry, &position)?;

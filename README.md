@@ -12,7 +12,7 @@ Rust 1.95 以降で、`Cargo.toml` に追加してください。
 
 ```toml
 [dependencies]
-rsshogi = "1.7.4"
+rsshogi = "1.7.5"
 ```
 
 デフォルトでは探索エンジン向けの最小コア（`board`、`mate`、`types`、`movegen`）のみ有効になっています。
@@ -20,7 +20,7 @@ rsshogi = "1.7.4"
 
 ```toml
 [dependencies]
-rsshogi = { version = "1.7.4", features = ["records", "book"] }
+rsshogi = { version = "1.7.5", features = ["records", "book"] }
 ```
 
 各 Feature の詳細は [rsshogi マニュアルの全体アーキテクチャ](https://nyoki-mtl.github.io/rsshogi/architecture.html) および [docs.rs の Feature flags](https://docs.rs/crate/rsshogi/latest/features) を参照してください。

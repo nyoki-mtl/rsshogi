@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::io::Write;
 
-use crate::book::{BookCandidate, BookDatabase, BookDatabaseEntry, BookError};
+use crate::book::{BookCandidate, BookDatabase, BookDatabaseEntry, BookError, YaneuraOuBookEntry};
+use crate::types::Move;
 
 const HEADER: &str = "#YANEURAOU-DB2016 1.00";
 
@@ -183,6 +185,29 @@ impl<W: Write> YaneuraOuDb2016Writer<W> {
         }
         Ok(())
     }
+
+    // 局面は reader、候補は差分保存側で検証済み。中間 DB や PackedSfen を作らず出力する。
+    pub(crate) fn write_source_entry(
+        &mut self,
+        entry: &YaneuraOuBookEntry,
+    ) -> Result<(), BookError> {
+        self.ensure_usable()?;
+        let sfen = entry.sfen();
+        if self.previous_sfen.as_deref().is_some_and(|previous| previous >= sfen) {
+            return Err(BookError::InvalidData(
+                "DB2016 positions must be strictly increasing".into(),
+            ));
+        }
+        self.buffer.clear();
+        write_source_entry(&mut self.buffer, entry)?;
+        if let Err(error) = self.writer.write_all(self.buffer.as_bytes()) {
+            self.poisoned = true;
+            return Err(error.into());
+        }
+        sfen.clone_into(self.previous_sfen.get_or_insert_default());
+        self.entry_count += 1;
+        Ok(())
+    }
 }
 
 impl BookDatabase {
@@ -199,8 +224,7 @@ impl BookDatabase {
         let mut buffer = String::new();
         // 出力先を変更する前に、全エントリの形式検証を済ませる。
         for entry in &entries {
-            buffer.clear();
-            write_entry(&mut buffer, entry, options)?;
+            validate_entry_format(entry)?;
         }
         write_header(w, options, entries.len() as u64)?;
         for entry in entries {
@@ -271,31 +295,17 @@ fn write_entry(
     entry: &BookDatabaseEntry,
     options: &YaneuraOuDb2016WriteOptions,
 ) -> Result<(), BookError> {
+    validate_entry_format(entry)?;
     let position = entry.position();
-    let mut fields = position.sfen().split_ascii_whitespace();
-    let board = fields.next().ok_or(BookError::InvalidData("missing normalized board".into()))?;
-    let side = fields.next().ok_or(BookError::InvalidData("missing normalized side".into()))?;
-    let hands = fields.next().ok_or(BookError::InvalidData("missing normalized hands".into()))?;
-    output.push_str("sfen ");
-    output.push_str(board);
-    output.push(' ');
-    output.push_str(side);
-    output.push(' ');
-    output.push_str(hands);
-    if !options.omit_ply
-        && let Some(ply) = options.fixed_ply.or(position.original_ply())
-    {
-        output.push(' ');
-        output.push_str(&ply.to_string());
-    }
-    output.push('\n');
+    write_position(output, position.sfen(), position.original_ply(), options)?;
 
     if let Some(metadata) = entry.metadata().yaneuraou() {
         write_comments(output, metadata.comment());
     }
 
     if options.preserve_move_order {
-        return write_candidates(output, entry.candidates().iter());
+        write_candidates(output, entry.candidates().iter().map(Candidate::from));
+        return Ok(());
     }
     let mut candidates: Vec<_> = entry.candidates().iter().collect();
     candidates.sort_by(|left, right| match (left.score(), right.score()) {
@@ -305,14 +315,37 @@ fn write_entry(
         (None, None) => std::cmp::Ordering::Equal,
     });
 
-    write_candidates(output, candidates.into_iter())
+    write_candidates(output, candidates.into_iter().map(Candidate::from));
+    Ok(())
 }
 
-fn write_candidates<'a>(
+fn write_position(
     output: &mut String,
-    candidates: impl Iterator<Item = &'a BookCandidate>,
+    sfen: &str,
+    original_ply: Option<u32>,
+    options: &YaneuraOuDb2016WriteOptions,
 ) -> Result<(), BookError> {
-    for candidate in candidates {
+    let [board, side, hands] = normalized_fields(sfen)?;
+    output.push_str("sfen ");
+    output.push_str(board);
+    output.push(' ');
+    output.push_str(side);
+    output.push(' ');
+    output.push_str(hands);
+    if !options.omit_ply
+        && let Some(ply) = options.fixed_ply.or(original_ply)
+    {
+        output.push(' ');
+        write!(output, "{ply}").expect("writing to String cannot fail");
+    }
+    output.push('\n');
+
+    Ok(())
+}
+
+fn validate_entry_format(entry: &BookDatabaseEntry) -> Result<(), BookError> {
+    normalized_fields(entry.position().sfen())?;
+    for candidate in entry.candidates() {
         if !is_valid_db2016_move(candidate.mv()) {
             return Err(BookError::InvalidData(format!(
                 "invalid DB2016 move: {:#06x}",
@@ -322,29 +355,102 @@ fn write_candidates<'a>(
         if candidate.ponder().is_some_and(|ponder| !is_valid_db2016_move(ponder)) {
             return Err(BookError::InvalidData("invalid DB2016 ponder move".into()));
         }
-        output.push_str(&candidate.mv().to_usi());
-        output.push(' ');
-        output.push_str(&candidate.ponder().map_or_else(|| "none".to_string(), |mv| mv.to_usi()));
-        output.push(' ');
-        write_optional(output, candidate.score());
-        output.push(' ');
-        write_optional(output, candidate.depth());
-        if let Some(count) = candidate.count() {
-            output.push(' ');
-            output.push_str(&count.to_string());
-        }
-        output.push('\n');
-        if let Some(metadata) = candidate.metadata().yaneuraou() {
-            write_comments(output, metadata.comment());
-        }
     }
     Ok(())
 }
 
+fn normalized_fields(sfen: &str) -> Result<[&str; 3], BookError> {
+    let mut fields = sfen.split_ascii_whitespace();
+    let board =
+        fields.next().ok_or_else(|| BookError::InvalidData("missing normalized board".into()))?;
+    let side =
+        fields.next().ok_or_else(|| BookError::InvalidData("missing normalized side".into()))?;
+    let hands =
+        fields.next().ok_or_else(|| BookError::InvalidData("missing normalized hands".into()))?;
+    Ok([board, side, hands])
+}
+
+struct Candidate<'a> {
+    mv: Move,
+    ponder: Option<Move>,
+    score: Option<i32>,
+    depth: Option<u32>,
+    count: Option<u64>,
+    comment: &'a str,
+}
+
+impl<'a> From<&'a BookCandidate> for Candidate<'a> {
+    fn from(candidate: &'a BookCandidate) -> Self {
+        Self {
+            mv: candidate.mv(),
+            ponder: candidate.ponder(),
+            score: candidate.score(),
+            depth: candidate.depth(),
+            count: candidate.count(),
+            comment: candidate.metadata().yaneuraou().map_or("", |metadata| metadata.comment()),
+        }
+    }
+}
+
+fn write_source_entry(output: &mut String, entry: &YaneuraOuBookEntry) -> Result<(), BookError> {
+    write_position(
+        output,
+        entry.sfen(),
+        entry.original_ply(),
+        &YaneuraOuDb2016WriteOptions::new(),
+    )?;
+    write_comments(output, entry.comment());
+    write_candidates(
+        output,
+        entry.moves().iter().map(|candidate| Candidate {
+            mv: candidate.mv(),
+            ponder: (candidate.ponder() != Move::MOVE_NONE).then_some(candidate.ponder()),
+            score: candidate.score(),
+            depth: candidate.depth(),
+            count: candidate.count(),
+            comment: candidate.comment(),
+        }),
+    );
+    Ok(())
+}
+
+fn write_candidates<'a>(output: &mut String, candidates: impl Iterator<Item = Candidate<'a>>) {
+    for candidate in candidates {
+        write_move(output, candidate.mv);
+        output.push(' ');
+        if let Some(ponder) = candidate.ponder {
+            write_move(output, ponder);
+        } else {
+            output.push_str("none");
+        }
+        output.push(' ');
+        write_optional(output, candidate.score);
+        output.push(' ');
+        write_optional(output, candidate.depth);
+        if let Some(count) = candidate.count {
+            output.push(' ');
+            write!(output, "{count}").expect("writing to String cannot fail");
+        }
+        output.push('\n');
+        write_comments(output, candidate.comment);
+    }
+}
+
 fn write_optional<T: std::fmt::Display>(output: &mut String, value: Option<T>) {
     match value {
-        Some(value) => output.push_str(&value.to_string()),
+        Some(value) => write!(output, "{value}").expect("writing to String cannot fail"),
         None => output.push_str("none"),
+    }
+}
+
+fn write_move(output: &mut String, mv: Move) {
+    if let Some(piece) = mv.dropped_piece() {
+        write!(output, "{piece}*{}", mv.to_sq()).expect("writing to String cannot fail");
+    } else {
+        write!(output, "{}{}", mv.from_sq(), mv.to_sq()).expect("writing to String cannot fail");
+        if mv.is_promotion() {
+            output.push('+');
+        }
     }
 }
 

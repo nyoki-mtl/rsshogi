@@ -137,6 +137,11 @@ impl NativeBookEntry {
     /// キーが復号不能または正規形でない場合に返す。
     pub fn position(&self) -> Result<Position, BookError> {
         let mut position = Position::empty();
+        self.restore_position(&mut position)?;
+        Ok(position)
+    }
+
+    fn restore_position(&self, position: &mut Position) -> Result<(), BookError> {
         position
             .set_packed_sfen(&PackedSfen::from_bytes(self.key), false, 1)
             .map_err(|error| BookError::InvalidData(format!("invalid native key: {error}")))?;
@@ -146,7 +151,7 @@ impl NativeBookEntry {
         if packed.as_bytes() != &self.key {
             return Err(BookError::InvalidData("noncanonical native key".into()));
         }
-        Ok(position)
+        Ok(())
     }
 
     pub(super) fn validate(&self) -> Result<(), BookError> {
@@ -154,10 +159,20 @@ impl NativeBookEntry {
     }
 
     pub(super) fn validate_with_position(&self) -> Result<Position, BookError> {
+        let mut position = Position::empty();
+        self.validate_reusing_position(&mut position)?;
+        Ok(position)
+    }
+
+    // 根局面へ戻してから全項目を検証し、前の局面の履歴やキャッシュを残さない。
+    pub(super) fn validate_reusing_position(
+        &self,
+        position: &mut Position,
+    ) -> Result<(), BookError> {
         if self.candidates.len() > usize::from(u16::MAX) {
             return Err(BookError::InvalidData("too many native candidates".into()));
         }
-        let position = self.position()?;
+        self.restore_position(position)?;
         let mut orders = vec![false; self.candidates.len()];
         let mut previous = None;
         for candidate in &self.candidates {
@@ -179,7 +194,7 @@ impl NativeBookEntry {
                 return Err(BookError::InvalidData("illegal native candidate move".into()));
             }
         }
-        Ok(position)
+        Ok(())
     }
 }
 

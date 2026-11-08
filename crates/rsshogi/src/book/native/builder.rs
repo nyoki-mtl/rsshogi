@@ -10,6 +10,7 @@ use super::{
     NativeBookEntry, NativeBookMetadata, NativeBookPosition, add, invalid, mul, sync_parent,
     temporary_path,
 };
+use crate::board::Position;
 use crate::book::BookError;
 
 const BUFFER_BYTES: usize = 64 * 1024;
@@ -111,11 +112,9 @@ fn encode_normalized_snapshot(record: &NativeBookPosition) -> Result<Vec<u8>, Bo
     Ok(bytes)
 }
 
-/// snapshot の構造と意味を検証して復号する。
-pub(super) fn decode_snapshot(
-    key: [u8; 32],
-    bytes: &[u8],
-) -> Result<NativeBookPosition, BookError> {
+// builder の一時 run 専用。構造と符号化条件を検査して復号する。
+// 盤面と合法手の意味検証は完成本体で行い、成功するまで公開しない。
+fn decode_run_snapshot(key: [u8; 32], bytes: &[u8]) -> Result<NativeBookPosition, BookError> {
     if bytes.len() as u64 > wire::MAX_TX_BYTES - 112 {
         return Err(invalid("native position snapshot exceeds transaction limit"));
     }
@@ -135,7 +134,6 @@ pub(super) fn decode_snapshot(
         candidates.push(decode_candidate(&bytes[offset..offset + wire::MOVE_BYTES])?);
     }
     let entry = NativeBookEntry { key, candidates };
-    entry.validate()?;
     let mut record = NativeBookPosition::new(entry);
     let mut previous = read_u64(bytes, offsets_start as usize)?;
     if previous != 0 {
@@ -202,18 +200,19 @@ fn write_sorted_with(
     let records = records.into_iter().map(|record| {
         #[cfg(test)]
         let _timer = super::profile::measure("writer_normalize", 1);
-        record?.normalized().map(ValidatedRecord)
+        record?.normalized().map(EncodableRecord)
     });
-    write_validated_sorted_with(path, metadata, records, replace, block_positions, checkpoint)
+    write_encodable_sorted_with(path, metadata, records, replace, block_positions, checkpoint)
 }
 
-// 値は検証と正規化の直後だけに包み、writer に渡すまで変更しない。
-struct ValidatedRecord(NativeBookPosition);
+// 構造と符号化条件を検査済みのレコード。run 由来の値も信用せず、
+// 完成本体の盤面と合法手を公開直前に必ず完全検証する。
+struct EncodableRecord(NativeBookPosition);
 
-fn write_validated_sorted_with(
+fn write_encodable_sorted_with(
     path: &Path,
     metadata: NativeBookMetadata,
-    records: impl IntoIterator<Item = Result<ValidatedRecord, BookError>>,
+    records: impl IntoIterator<Item = Result<EncodableRecord, BookError>>,
     replace: bool,
     block_positions: u32,
     mut checkpoint: impl FnMut(&'static str) -> Result<(), BookError>,
@@ -260,7 +259,7 @@ fn write_validated_sorted_with(
     let mut text_bytes = 0;
     let mut previous_key = None;
     for record in records {
-        let ValidatedRecord(record) = record?;
+        let EncodableRecord(record) = record?;
         if previous_key.is_some_and(|key| key >= record.entry.key) {
             return Err(invalid("native sorted input keys are duplicated or unordered"));
         }
@@ -432,7 +431,7 @@ struct RunRecords {
 }
 
 impl Iterator for RunRecords {
-    type Item = Result<ValidatedRecord, BookError>;
+    type Item = Result<EncodableRecord, BookError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.failed {
@@ -444,11 +443,13 @@ impl Iterator for RunRecords {
             self.cursor.input.read_exact(&mut bytes)?;
             let record = {
                 #[cfg(test)]
-                let _timer = super::profile::measure("snapshot_decode_validate", 1);
-                decode_snapshot(key, &bytes)?
+                let _timer = super::profile::measure("snapshot_decode_fields", 1);
+                // 構造と候補の符号化はここで検査する。盤面と合法手の意味検証は
+                // 完成本体の validate_full まで遅らせ、成功するまで公開しない。
+                decode_run_snapshot(key, &bytes)?
             };
             self.cursor.advance()?;
-            Ok(ValidatedRecord(record))
+            Ok(EncodableRecord(record))
         })();
         self.failed = result.is_err();
         Some(result)
@@ -466,6 +467,8 @@ pub struct NativeBookBuilder {
     pending_bytes: usize,
     pending: Vec<([u8; 32], Vec<u8>)>,
     levels: Vec<Vec<Temporary>>,
+    // Position の 64 byte alignment を builder と Python binding に伝播させない。
+    validation_position: Box<Position>,
     failed: bool,
 }
 
@@ -495,6 +498,7 @@ impl NativeBookBuilder {
             pending_bytes: 0,
             pending: Vec::new(),
             levels: Vec::new(),
+            validation_position: Box::new(Position::empty()),
             failed: false,
         })
     }
@@ -573,7 +577,9 @@ impl NativeBookBuilder {
             // 退避中のエラーは過去の入力に属するため、現在行の文脈を付けない。
             self.spill()?;
         }
-        let record = record.normalized().map_err(&input_error)?;
+        let record = record
+            .normalized_reusing_position(&mut self.validation_position)
+            .map_err(&input_error)?;
         let bytes = encode_normalized_snapshot(&record).map_err(input_error)?;
         self.pending_bytes += charge;
         self.pending.push((record.entry.key, bytes));
@@ -616,6 +622,9 @@ impl NativeBookBuilder {
 
     /// run を逐次 merge して新しい本体を公開する。
     ///
+    /// 入力は [`Self::push`] で検証する。run の再読込みでは構造と符号化条件を検査し、
+    /// 完成本体の盤面と合法手を完全検証してから公開する。
+    ///
     /// # Errors
     /// 重複局面はキーを含む [`BookError::InvalidData`] を返す。
     /// 保存先の競合は [`BookError::Io`] の [`std::io::ErrorKind::AlreadyExists`] を返す。
@@ -637,7 +646,7 @@ impl NativeBookBuilder {
         }
         if let Some(run) = runs.pop() {
             let records = RunRecords { cursor: RunCursor::new(run)?, failed: false };
-            write_validated_sorted_with(
+            write_encodable_sorted_with(
                 &self.path,
                 self.metadata,
                 records,
@@ -646,7 +655,7 @@ impl NativeBookBuilder {
                 checkpoint,
             )
         } else {
-            write_validated_sorted_with(
+            write_encodable_sorted_with(
                 &self.path,
                 self.metadata,
                 std::iter::empty(),
@@ -664,6 +673,12 @@ mod tests {
     use crate::board::{self, MoveList, NonEvasionsAll, generate_moves};
     use crate::book::native::{NativeBook, NativeCandidate};
     use crate::types::Move;
+
+    #[test]
+    fn builder_preserves_pointer_alignment_for_python_ownership() {
+        // PyO3 が所有する値へ Position の 64 byte alignment を伝播させない。
+        assert!(std::mem::align_of::<NativeBookBuilder>() <= std::mem::align_of::<usize>());
+    }
 
     struct TestDirectory(PathBuf);
 
@@ -708,11 +723,29 @@ mod tests {
     }
 
     #[test]
-    fn builder_revalidates_run_contents_before_publication() {
+    fn builder_rejects_corrupt_run_semantics_at_final_validation() {
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        static STAGES: AtomicU8 = AtomicU8::new(0);
+        fn checkpoint(stage: &str) -> Result<(), BookError> {
+            let bit = match stage {
+                "written" => 1,
+                "flushed" => 2,
+                "synced" => 4,
+                "validated" => 8,
+                "published" => 16,
+                _ => 0,
+            };
+            STAGES.fetch_or(bit, Ordering::Relaxed);
+            Ok(())
+        }
+
         for corrupt_key in [false, true] {
+            STAGES.store(0, Ordering::Relaxed);
             let directory = TestDirectory::new();
             let path = directory.path("default.book");
             let mut builder = NativeBookBuilder::new(&path, NativeBookMetadata::default()).unwrap();
+            builder.checkpoint = checkpoint;
             builder.push(fixture_record()).unwrap();
             if corrupt_key {
                 builder.pending[0].0 = [0; 32];
@@ -720,10 +753,24 @@ mod tests {
                 builder.pending[0].1[16..18]
                     .copy_from_slice(&Move::from_usi("5a5b").unwrap().raw().to_le_bytes());
             }
-            assert!(builder.finish().is_err());
+            assert!(matches!(builder.finish(), Err(BookError::InvalidData(_))));
+            assert_eq!(STAGES.load(Ordering::Relaxed), 7);
             assert!(!path.exists());
             assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
         }
+    }
+
+    #[test]
+    fn run_decoder_defers_only_semantics_and_keeps_encoding_checks() {
+        let record = fixture_record().normalized().unwrap();
+        let mut bytes = encode_normalized_snapshot(&record).unwrap();
+        bytes[16..18].copy_from_slice(&Move::from_usi("5a5b").unwrap().raw().to_le_bytes());
+        let deferred = decode_run_snapshot(record.entry.key, &bytes).unwrap();
+        assert!(deferred.entry.validate().is_err());
+
+        // 符号化が不正な候補は、意味検証を遅らせる経路でも受理しない。
+        bytes[18] = 255;
+        assert!(decode_run_snapshot(record.entry.key, &bytes).is_err());
     }
 
     #[test]
@@ -739,22 +786,22 @@ mod tests {
         assert_eq!(offsets[1], 16);
         assert_eq!(offsets[3], 28);
         assert_eq!(
-            decode_snapshot(record.entry.key, &bytes).unwrap(),
+            decode_run_snapshot(record.entry.key, &bytes).unwrap(),
             record.normalized().unwrap()
         );
         for len in 0..bytes.len() {
-            assert!(decode_snapshot(fixture_record().entry.key, &bytes[..len]).is_err());
+            assert!(decode_run_snapshot(fixture_record().entry.key, &bytes[..len]).is_err());
         }
         for (offset, value) in [(0, u64::MAX), (8, 0), (48, 1), (56, 29), (72, 27)] {
             let mut corrupt = bytes.clone();
             corrupt[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-            assert!(decode_snapshot(fixture_record().entry.key, &corrupt).is_err());
+            assert!(decode_run_snapshot(fixture_record().entry.key, &corrupt).is_err());
         }
         let mut corrupt = bytes;
         corrupt[80] = 255;
-        assert!(decode_snapshot(fixture_record().entry.key, &corrupt).is_err());
+        assert!(decode_run_snapshot(fixture_record().entry.key, &corrupt).is_err());
         corrupt[80] = b'\r';
-        assert!(decode_snapshot(fixture_record().entry.key, &corrupt).is_err());
+        assert!(decode_run_snapshot(fixture_record().entry.key, &corrupt).is_err());
     }
 
     #[test]
