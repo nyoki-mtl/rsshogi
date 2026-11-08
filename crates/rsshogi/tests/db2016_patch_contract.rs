@@ -170,22 +170,76 @@ fn validates_all_source_rows_even_when_deleted_or_replaced() {
         format!("sfen {C}\nsfen {A}\n"),
         format!("sfen {A}\nbad-move none 0 1 2\n"),
         format!("sfen {A}\n5i4i none 0 1 2\n5i4i none 0 1 2\n"),
+        format!("sfen {A}\nresign none 0 1 2\n"),
+        format!("sfen {A}\nnone none 0 1 2\n"),
+        format!("sfen {A}\n5i4i resign 0 1 2\n"),
         format!("sfen {A}\nsfen invalid\n"),
         "stray data\n".to_owned(),
     ] {
         let source = Source::new(&body);
-        let mut patch = BookDatabasePatch::new();
-        patch.remove_entry_by_sfen(&format!("{A} 1")).unwrap();
-        patch.remove_entry_by_sfen(&format!("{C} 1")).unwrap();
-        let mut output = Vec::new();
-        assert!(
-            matches!(
-                source.open().write_yaneuraou_db2016_with_patch(&mut output, &patch),
-                Err(BookError::InvalidData(_))
-            ),
-            "{body}"
-        );
+        for replace in [false, true] {
+            let mut patch = BookDatabasePatch::new();
+            for sfen in [A, C] {
+                if replace {
+                    patch.upsert_entry(entry(sfen, None, vec![])).unwrap();
+                } else {
+                    patch.remove_entry_by_sfen(&format!("{sfen} 1")).unwrap();
+                }
+            }
+            let mut output = Vec::new();
+            assert!(
+                matches!(
+                    source.open().write_yaneuraou_db2016_with_patch(&mut output, &patch),
+                    Err(BookError::InvalidData(_))
+                ),
+                "{body}, replace={replace}"
+            );
+        }
     }
+}
+
+#[test]
+fn source_formatting_preserves_all_normal_drop_and_promotion_encodings() {
+    use rsshogi::book::{BookDatabase, YaneuraOuDb2016WriteOptions};
+    use std::fmt::Write as _;
+
+    let squares: Vec<_> =
+        (1..=9).flat_map(|file| ('a'..='i').map(move |rank| format!("{file}{rank}"))).collect();
+    let mut moves = Vec::new();
+    for from in &squares {
+        for to in &squares {
+            if from != to {
+                moves.push(format!("{from}{to}"));
+                moves.push(format!("{from}{to}+"));
+            }
+        }
+    }
+    for piece in ['P', 'L', 'N', 'S', 'G', 'B', 'R'] {
+        for to in &squares {
+            moves.push(format!("{piece}*{to}"));
+        }
+    }
+    let mut body = format!("sfen {A} 0\n# entry\n");
+    let mut expected = format!("{HEADER}{body}");
+    for (i, mv) in moves.iter().enumerate() {
+        let ponder = &moves[(i + 1) % moves.len()];
+        let line = format!("{mv} {ponder} {} {} {}\n# move\n", i32::MIN, u32::MAX, u64::MAX);
+        body.push_str(&line);
+        expected.push_str(&line);
+    }
+    writeln!(body, "sfen {B}").unwrap();
+    writeln!(expected, "sfen {B}").unwrap();
+    let source = Source::new(&body);
+    let book = source.open();
+    let entries = book
+        .iter_entries()
+        .unwrap()
+        .map(|entry| BookDatabaseEntry::from_yaneuraou(&entry.unwrap()).unwrap())
+        .collect();
+    let database = BookDatabase::try_from_entries(entries).unwrap();
+    let options = YaneuraOuDb2016WriteOptions::new().with_preserved_move_order();
+    assert_eq!(database.to_yaneuraou_db2016_string(&options).unwrap(), expected);
+    assert_eq!(save(&book, &BookDatabasePatch::new()), expected.as_bytes());
 }
 
 #[test]

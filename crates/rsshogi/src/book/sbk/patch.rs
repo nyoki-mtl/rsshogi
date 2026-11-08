@@ -426,10 +426,12 @@ impl<'a> Plan<'a> {
         input.rewind()?;
         let size = input.len();
         let mut source = 0;
+        let mut output = Vec::new();
+        let mut header = Vec::new();
         while let Some(field) = super::file::next_field(input, size)? {
             if field.field == FIELD_SBOOK_STATE && field.wire_type == 2 {
                 if let Some(index) = self.old_to_new[source] {
-                    self.write_node(input, writer, buffer, index)?;
+                    self.write_node(input, writer, buffer, index, &mut output, &mut header)?;
                 }
                 source += 1;
                 notify(control, BookPatchWritePhase::Writing, source, total)?;
@@ -440,7 +442,7 @@ impl<'a> Plan<'a> {
         }
         for (index, node) in self.nodes.iter().enumerate() {
             if node.source.is_none() {
-                self.write_node(input, writer, buffer, index)?;
+                self.write_node(input, writer, buffer, index, &mut output, &mut header)?;
                 notify(control, BookPatchWritePhase::Writing, total, total)?;
             }
         }
@@ -455,14 +457,16 @@ impl<'a> Plan<'a> {
         writer: &mut impl Write,
         buffer: &mut Vec<u8>,
         index: usize,
+        output: &mut Vec<u8>,
+        header: &mut Vec<u8>,
     ) -> Result<(), BookError> {
         let raw = self.raw(input, buffer, index)?;
         let links = self.links_from_raw(index, &raw)?;
         let node = &self.nodes[index];
-        let mut output = Vec::new();
-        write_field_i32(&mut output, FIELD_STATE_ID, usize_to_i32(index, "SBK state id")?);
+        output.clear();
+        write_field_i32(output, FIELD_STATE_ID, usize_to_i32(index, "SBK state id")?);
         if let Some(edit) = node.edit {
-            encode_edit(&mut output, buffer, &raw, edit, &links)?;
+            encode_edit(output, buffer, &raw, edit, &links)?;
         } else {
             for field in fields(buffer)? {
                 match field.number {
@@ -476,7 +480,7 @@ impl<'a> Plan<'a> {
                 .enumerate()
             {
                 let payload = replace_link(field.payload, links[i])?;
-                write_field_message(&mut output, FIELD_STATE_MOVES, &payload)?;
+                write_field_message(output, FIELD_STATE_MOVES, &payload)?;
             }
         }
         if self.roots[index] {
@@ -491,13 +495,13 @@ impl<'a> Plan<'a> {
                     i32::try_from(node.ply).map_err(|_| invalid("SBK ply is too large"))?,
                 ))
             };
-            write_field_string(&mut output, FIELD_STATE_POSITION, &sfen)?;
+            write_field_string(output, FIELD_STATE_POSITION, &sfen)?;
         }
-        let mut header = Vec::new();
-        write_field_tag(&mut header, FIELD_SBOOK_STATE, 2);
-        write_varint(&mut header, output.len() as u64);
-        writer.write_all(&header)?;
-        writer.write_all(&output)?;
+        header.clear();
+        write_field_tag(header, FIELD_SBOOK_STATE, 2);
+        write_varint(header, output.len() as u64);
+        writer.write_all(header)?;
+        writer.write_all(output)?;
         Ok(())
     }
 }

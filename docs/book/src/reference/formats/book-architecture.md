@@ -114,6 +114,10 @@ builder の予算は既定 256 MiB、ブロック局面数は既定 64 とする
 予算は 1 MiB 以上、ブロック局面数は `1..=16384` を入力走査前に検査する。
 reader の保持領域や単一入力行のメモリは builder の予算に含めない。
 
+`NativeBookBuilder::push` は入力局面の正準形と候補の合法性を検証する。
+中間 run の再読込みでは構造と符号化条件を検査し、完成本体に対する `validate_full()` が成功してから公開する。
+builder の入力検証と reader の本体全件検証は作業用 `Position` を再利用するが、各局面の復元時に履歴とキャッシュを初期化する。
+
 既定の `allow_lossy = false` は保存できない情報があれば新規出力を公開せず失敗する。
 `allow_lossy = true` を明示すると、`NativeBookImportReport` に出力件数、除外局面数、フィールド別の欠落件数、入力位置と SFEN 付きの先頭 32 件の例、省略例数を返す。
 `dropped_fields` の既存キー名と件数の意味は維持する。

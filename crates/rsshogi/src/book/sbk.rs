@@ -692,20 +692,17 @@ impl BookDatabase {
     /// `NextStateId` は候補手を合法に適用して得られる子 SFEN から再構築する。子局面が
     /// `BookDatabase` に存在しない場合は `-1` を出力し、leaf state は追加しない。
     /// 出力 state は root を先に並べ、`BookStates[i].Id == i` になるよう再採番する。
+    /// 局面と候補、出力順を検証後に state 単位で書き出し、全出力バイト列は保持しない。
     pub fn write_sbk(
         &self,
         w: &mut impl Write,
         options: &SbkWriteOptions,
     ) -> Result<(), BookError> {
-        w.write_all(&self.to_sbk_bytes(options)?)?;
-        Ok(())
-    }
-
-    /// 便宜的な `Vec<u8>` 版。内部で [`Self::write_sbk`] と同じ full export を行う。
-    pub fn to_sbk_bytes(&self, options: &SbkWriteOptions) -> Result<Vec<u8>, BookError> {
         let (states, roots) = prepare_sbk_states(self)?;
         let (order, input_to_output) = sbk_output_order(&states, &roots)?;
-        let mut bytes = Vec::new();
+        // state とリンクの ID 範囲を、出力先を変更する前に確認する。
+        usize_to_i32(states.len() - 1, "SBK state id")?;
+        let mut block = Vec::with_capacity(64 * 1024);
         for (output_index, input_index) in order.iter().copied().enumerate() {
             let state = &states[input_index];
             let payload = encode_sbk_state(
@@ -715,15 +712,28 @@ impl BookDatabase {
                 &input_to_output,
                 options,
             )?;
-            write_field_message(&mut bytes, FIELD_SBOOK_STATE, &payload)?;
+            write_field_message(&mut block, FIELD_SBOOK_STATE, &payload)?;
+            if block.len() >= 64 * 1024 {
+                w.write_all(&block)?;
+                block.clear();
+            }
         }
+        if !block.is_empty() {
+            w.write_all(&block)?;
+        }
+        Ok(())
+    }
+
+    /// 便宜的な `Vec<u8>` 版。内部で [`Self::write_sbk`] と同じ full export を行う。
+    pub fn to_sbk_bytes(&self, options: &SbkWriteOptions) -> Result<Vec<u8>, BookError> {
+        let mut bytes = Vec::new();
+        self.write_sbk(&mut bytes, options)?;
         Ok(bytes)
     }
 }
 
 struct PreparedSbkState<'a> {
     entry: &'a BookDatabaseEntry,
-    position: Position,
     moves: Vec<PreparedSbkMove>,
 }
 
@@ -755,16 +765,20 @@ fn prepare_sbk_states(
                 "book database position is not normalized: {sfen}"
             )));
         }
-        if sfen_to_id.insert(normalized, index).is_some() {
+        if sfen_to_id.insert(sfen, index).is_some() {
             return Err(BookError::InvalidData(format!(
                 "duplicate book database position: {sfen}"
             )));
         }
-        states.push(PreparedSbkState { entry, position, moves: Vec::new() });
+        states.push(PreparedSbkState { entry, moves: Vec::new() });
     }
 
+    let mut seen_moves = HashSet::new();
     for state in &mut states {
-        let mut seen_moves = HashSet::new();
+        // 全局面の検証を先に済ませ、候補処理中の局面だけを保持する。
+        let mut position = Position::from_sfen(state.entry.position().sfen())
+            .expect("SBK position was validated before candidate processing");
+        seen_moves.clear();
         for candidate in state.entry.candidates() {
             if !seen_moves.insert(candidate.mv()) {
                 return Err(BookError::InvalidData(format!(
@@ -773,16 +787,16 @@ fn prepare_sbk_states(
                 )));
             }
 
-            let mv32 = checked_move32(&state.position, candidate.mv())?;
-            let raw_move = sbk_move_word_from_position_move(&state.position, candidate.mv())?;
-            let mut child = state.position.clone();
-            child.apply_move32(mv32);
-            let child_sfen = child.to_sfen(Some(1));
+            let mv32 = checked_move32(&position, candidate.mv())?;
+            let raw_move = sbk_move_word_from_position_move(&position, candidate.mv())?;
+            position.apply_move32(mv32);
+            let child_sfen = position.to_sfen(Some(1));
+            position.undo_move32(mv32).expect("SBK candidate was just applied");
             state.moves.push(PreparedSbkMove {
                 raw_move,
                 evaluation: sbk_candidate_evaluation(candidate),
                 weight: sbk_candidate_weight(candidate),
-                next_state_index: sfen_to_id.get(&child_sfen).copied(),
+                next_state_index: sfen_to_id.get(child_sfen.as_str()).copied(),
             });
         }
     }
@@ -940,8 +954,10 @@ fn encode_sbk_state(
     if let Some(comment) = metadata.and_then(SbkEntryMetadata::comment) {
         write_field_string(&mut bytes, FIELD_STATE_COMMENT, comment)?;
     }
+    let mut payload = Vec::new();
     for mv in &state.moves {
-        let payload = encode_sbk_move(mv, input_to_output)?;
+        payload.clear();
+        encode_sbk_move(&mut payload, mv, input_to_output)?;
         write_field_message(&mut bytes, FIELD_STATE_MOVES, &payload)?;
     }
     if let Some(metadata) = metadata {
@@ -953,12 +969,15 @@ fn encode_sbk_state(
     Ok(bytes)
 }
 
-fn encode_sbk_move(mv: &PreparedSbkMove, input_to_output: &[usize]) -> Result<Vec<u8>, BookError> {
-    let mut bytes = Vec::new();
-    write_field_i32(&mut bytes, FIELD_MOVE_MOVE, mv.raw_move);
-    write_field_i32(&mut bytes, FIELD_MOVE_EVALUATION, mv.evaluation);
+fn encode_sbk_move(
+    bytes: &mut Vec<u8>,
+    mv: &PreparedSbkMove,
+    input_to_output: &[usize],
+) -> Result<(), BookError> {
+    write_field_i32(bytes, FIELD_MOVE_MOVE, mv.raw_move);
+    write_field_i32(bytes, FIELD_MOVE_EVALUATION, mv.evaluation);
     if let Some(weight) = mv.weight {
-        write_field_i32(&mut bytes, FIELD_MOVE_WEIGHT, weight);
+        write_field_i32(bytes, FIELD_MOVE_WEIGHT, weight);
     }
     let next_state_id = match mv.next_state_index {
         Some(input_index) => usize_to_i32(
@@ -969,8 +988,8 @@ fn encode_sbk_move(mv: &PreparedSbkMove, input_to_output: &[usize]) -> Result<Ve
         )?,
         None => -1,
     };
-    write_field_i32(&mut bytes, FIELD_MOVE_NEXT_STATE_ID, next_state_id);
-    Ok(bytes)
+    write_field_i32(bytes, FIELD_MOVE_NEXT_STATE_ID, next_state_id);
+    Ok(())
 }
 
 fn encode_sbk_eval(eval: &SbkEvalMetadata) -> Result<Vec<u8>, BookError> {
@@ -2070,6 +2089,97 @@ mod tests {
             illegal.to_sbk_bytes(&SbkWriteOptions::new()),
             Err(BookError::InvalidData(message)) if message.contains("illegal SBK move")
         ));
+    }
+
+    #[test]
+    fn test_book_database_write_sbk_rejects_late_invalid_entry_before_output() {
+        board::init();
+        let root = InitialPosition::Standard.to_sfen();
+        let child = next_sfen(root, "7g7f");
+        let database = BookDatabase::try_from_entries(vec![
+            database_entry(
+                root,
+                vec![db_candidate("7g7f", None, None, None, None)],
+                BookEntryMetadata::new(),
+            ),
+            database_entry(
+                &child,
+                vec![db_candidate("7g7f", None, None, None, None)],
+                BookEntryMetadata::new(),
+            ),
+        ])
+        .unwrap();
+        let mut output = b"prefix".to_vec();
+        assert!(matches!(
+            database.write_sbk(&mut output, &SbkWriteOptions::new()),
+            Err(BookError::InvalidData(_))
+        ));
+        assert_eq!(output, b"prefix");
+    }
+
+    #[test]
+    fn test_book_database_write_sbk_handles_short_writes_and_io_failure() {
+        struct ShortWriter {
+            bytes: Vec<u8>,
+            limit: usize,
+        }
+
+        impl Write for ShortWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let remaining = self.limit.saturating_sub(self.bytes.len());
+                if remaining == 0 {
+                    return Err(std::io::ErrorKind::BrokenPipe.into());
+                }
+                let count = bytes.len().min(remaining).min(997);
+                self.bytes.extend_from_slice(&bytes[..count]);
+                Ok(count)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        board::init();
+        let root = InitialPosition::Standard.to_sfen();
+        let child = next_sfen(root, "7g7f");
+        let comment = "定跡".repeat(12_000);
+        let metadata = BookEntryMetadata::from_sbk(SbkEntryMetadata::new(
+            None,
+            0,
+            None,
+            None,
+            None,
+            Some(comment.clone()),
+            vec![],
+        ));
+        let database = BookDatabase::try_from_entries(vec![
+            database_entry(
+                root,
+                vec![db_candidate("7g7f", None, None, None, None)],
+                metadata.clone(),
+            ),
+            database_entry(&child, vec![], metadata),
+        ])
+        .unwrap();
+        let options = SbkWriteOptions::new();
+        let mut output = ShortWriter { bytes: Vec::new(), limit: usize::MAX };
+        database.write_sbk(&mut output, &options).unwrap();
+        let (book, path) = open_written_sbk("short-writes", &output.bytes);
+        let entry = book.lookup_sfen(root).unwrap().unwrap();
+        assert_eq!(entry.comment(), Some(comment.as_str()));
+        assert_eq!(entry.moves()[0].next_state_id(), Some(1));
+        assert_eq!(book.lookup_sfen(&child).unwrap().unwrap().comment(), Some(comment.as_str()));
+        drop(book);
+        fs::remove_file(path).unwrap();
+
+        // 最初の大きな state の出力後に失敗させ、部分出力とエラー伝播を確認する。
+        let mut failed = ShortWriter { bytes: Vec::new(), limit: 80_000 };
+        assert!(matches!(
+            database.write_sbk(&mut failed, &options),
+            Err(BookError::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe
+        ));
+        assert_eq!(failed.bytes, output.bytes[..80_000]);
     }
 
     #[test]

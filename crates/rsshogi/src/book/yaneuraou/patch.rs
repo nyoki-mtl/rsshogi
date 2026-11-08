@@ -1,9 +1,9 @@
 //! DB2016 の差分整列マージ出力。
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use super::{YaneuraOuBook, clean_line, is_header, strip_comment};
-use crate::book::patch::validate_patch_entry;
 use crate::book::{
     BookControl, BookDatabaseEdit, BookDatabaseEntry, BookDatabasePatch, BookError,
     BookPatchWritePhase, BookPatchWriteProgress, YaneuraOuDb2016WriteOptions,
@@ -66,6 +66,7 @@ impl YaneuraOuBook {
         self.copy_patch_preamble(&mut output)?;
         let mut edits = patch.entries.iter().peekable();
         let mut previous: Option<String> = None;
+        let mut candidate_moves = HashSet::new();
         for source in self.iter_entries()? {
             let source = source?;
             let key = source.sfen();
@@ -75,8 +76,7 @@ impl YaneuraOuBook {
                 ));
             }
             // 削除・置換される行も検査し、差分で不正入力を隠さない。
-            let entry = BookDatabaseEntry::from_yaneuraou(&source)?;
-            validate_patch_entry(&entry)?;
+            validate_source_entry(&source, &mut candidate_moves)?;
             while edits.peek().is_some_and(|(patch_key, _)| patch_key.as_str() < key) {
                 let (_, edit) = edits.next().expect("peeked patch entry");
                 write_edit(&mut output, edit)?;
@@ -86,9 +86,9 @@ impl YaneuraOuBook {
                 let (_, edit) = edits.next().expect("peeked patch entry");
                 write_edit(&mut output, edit)?;
             } else {
-                output.write_entry(&entry)?;
+                output.write_source_entry(&source)?;
             }
-            previous = Some(key.to_owned());
+            key.clone_into(previous.get_or_insert_default());
             progress.processed_positions += 1;
             progress.notify(&mut on_progress)?;
         }
@@ -135,6 +135,26 @@ impl YaneuraOuBook {
         }
         Ok(())
     }
+}
+
+// 局面と通常手の符号化は reader が検証済み。削除対象でも特殊手と重複を拒否する。
+pub(super) fn validate_source_entry(
+    entry: &super::YaneuraOuBookEntry,
+    moves: &mut HashSet<crate::types::Move>,
+) -> Result<(), BookError> {
+    moves.clear();
+    for candidate in entry.moves() {
+        if !candidate.mv().is_normal()
+            || (candidate.ponder() != crate::types::Move::MOVE_NONE
+                && !candidate.ponder().is_normal())
+        {
+            return Err(BookError::InvalidData("invalid book patch move encoding".into()));
+        }
+        if !moves.insert(candidate.mv()) {
+            return Err(BookError::InvalidData("duplicate book patch candidate".into()));
+        }
+    }
+    Ok(())
 }
 
 fn validate_db_patch(entry: &BookDatabaseEntry) -> Result<(), BookError> {

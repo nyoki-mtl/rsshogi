@@ -45,8 +45,20 @@ impl NativeBookPosition {
         Self { entry, comment: None, move_comments: BTreeMap::new() }
     }
 
-    pub(super) fn normalized(mut self) -> Result<Self, BookError> {
+    pub(super) fn normalized(self) -> Result<Self, BookError> {
         self.entry.validate()?;
+        self.normalize_comments()
+    }
+
+    pub(super) fn normalized_reusing_position(
+        self,
+        position: &mut crate::board::Position,
+    ) -> Result<Self, BookError> {
+        self.entry.validate_reusing_position(position)?;
+        self.normalize_comments()
+    }
+
+    fn normalize_comments(mut self) -> Result<Self, BookError> {
         self.comment = types::normalize_text(self.comment)?;
         let mut comments = BTreeMap::new();
         for (mv, text) in self.move_comments {
